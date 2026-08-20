@@ -7,12 +7,42 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum SourceType { UPLOAD YOUTUBE }
-enum OutputType { VIDEO THUMBNAIL }
-enum JobStatus { QUEUED ACQUIRING_SOURCE PROCESSING RENDERING COMPLETED FAILED EXPIRED }
-enum PublicationProvider { YOUTUBE }
-enum PublicationStatus { QUEUED UPLOADING COMPLETED FAILED }
-enum PrivacyState { PRIVATE UNLISTED PUBLIC }
+enum SourceType {
+  UPLOAD
+  YOUTUBE
+}
+
+enum OutputType {
+  VIDEO
+  THUMBNAIL
+}
+
+enum JobStatus {
+  QUEUED
+  ACQUIRING_SOURCE
+  PROCESSING
+  RENDERING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum PublicationProvider {
+  YOUTUBE
+}
+
+enum PublicationStatus {
+  QUEUED
+  UPLOADING
+  COMPLETED
+  FAILED
+}
+
+enum PrivacyState {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
 
 model Project {
   id String @id @default(cuid())

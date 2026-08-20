@@ -8,7 +8,7 @@ const patchSchema = z.object({
   gospelRef: z.string().trim().max(200).nullable().optional(),
   gospelText: z.string().nullable().optional(),
   templateKey: z.string().trim().min(1).max(100).optional(),
-  definition: z.unknown().optional(),
+  definition: z.record(z.string(), z.any()).optional(),
 });
 
 function jsonSafe(value: unknown) {
@@ -26,7 +26,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   try {
     const input = patchSchema.parse(await request.json());
-    const project = await prisma.project.update({ where: { id }, data: input, select: { id: true, title: true, preacher: true, gospelRef: true, gospelText: true, templateKey: true, definition: true, updatedAt: true } });
+    // Filter out undefined definition to avoid Prisma type issues
+    const data = Object.fromEntries(
+      Object.entries(input).filter(([_, v]) => v !== undefined)
+    ) as Partial<typeof input>;
+    const project = await prisma.project.update({ where: { id }, data, select: { id: true, title: true, preacher: true, gospelRef: true, gospelText: true, templateKey: true, definition: true, updatedAt: true } });
     return NextResponse.json(jsonSafe(project));
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid request" }, { status: 400 });

@@ -25,6 +25,7 @@ export const slateSchema = z.object({
   template: z.string().min(1),
   durationSeconds: z.number().positive(),
   data: z.record(z.string(), z.string()).default({}),
+  transitionIn: transitionSchema.optional(),
   transitionOut: transitionSchema.optional(),
 });
 
@@ -47,15 +48,27 @@ export const compositionSchema = z.object({
   items: z.array(timelineItemSchema),
 });
 
+export const templateSchema = z.object({
+  key: z.string().min(1),
+  width: z.number().int().positive().default(1920),
+  height: z.number().int().positive().default(1080),
+  fps: z.number().positive().default(30),
+  fontFile: z.string().optional(),
+  backgroundColor: z.string().default("black"),
+  textColor: z.string().default("white"),
+});
+
 export const projectDefinitionSchema = z.object({
   version: z.literal(1),
   semanticSegments: z.array(semanticSegmentSchema),
+  template: templateSchema.optional(),
   composition: compositionSchema,
 });
 
 export type Transition = z.infer<typeof transitionSchema>;
 export type TimelineItem = z.infer<typeof timelineItemSchema>;
 export type SemanticSegment = z.infer<typeof semanticSegmentSchema>;
+export type TemplateDefinition = z.infer<typeof templateSchema>;
 export type ProjectDefinition = z.infer<typeof projectDefinitionSchema>;
 
 export function createProjectDefinition(input: Omit<ProjectDefinition, "version">): ProjectDefinition {
