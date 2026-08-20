@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { mkdir, stat, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -34,11 +35,18 @@ export async function uploadToYouTube(input: YouTubeUpload): Promise<{ videoId: 
   if (!init.ok) throw new Error(`YouTube upload initialization failed (${init.status}): ${await init.text()}`);
   const uploadUrl = init.headers.get("location");
   if (!uploadUrl) throw new Error("YouTube did not return an upload URL");
-  const video = await readFile(input.filePath);
-  const upload = await fetch(uploadUrl, { method: "PUT", headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "video/mp4", "Content-Length": String(video.length) }, body: video });
+
+  const upload = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "video/mp4", "Content-Length": String(size) },
+    // Node's fetch supports streaming request bodies with duplex=half.
+    body: createReadStream(input.filePath) as unknown as BodyInit,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
   if (!upload.ok) throw new Error(`YouTube video upload failed (${upload.status}): ${await upload.text()}`);
   const result = await upload.json() as { id?: string };
   if (!result.id) throw new Error("YouTube upload response did not contain a video ID");
+
   if (input.thumbnailPath) {
     const thumbnail = await readFile(input.thumbnailPath);
     const thumb = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(result.id)}`, { method: "POST", headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "image/jpeg", "Content-Length": String(thumbnail.length) }, body: thumbnail });
