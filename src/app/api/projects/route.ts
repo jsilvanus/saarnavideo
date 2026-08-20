@@ -23,12 +23,12 @@ function definitionFor(segments: z.infer<typeof segmentSchema>[]) {
   return createProjectDefinition({ semanticSegments: segments, composition: {
     sourceStartSeconds: segments.length ? Math.min(...segments.map((s) => s.startSeconds)) : 0,
     sourceEndSeconds: segments.length ? Math.max(...segments.map((s) => s.endSeconds)) : 0.001,
-    items: segments.map((segment) => ({ type: "source-clip" as const, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds })),
+    items: segments.map((segment) => ({ type: "source-clip" as const, sourceId: "source-0", startSeconds: segment.startSeconds, endSeconds: segment.endSeconds })),
   }});
 }
 
 export async function GET() {
-  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { source: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
+  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
   return NextResponse.json(jsonSafe(projects));
 }
 
@@ -43,8 +43,8 @@ export async function POST(request: Request) {
     })() : undefined;
     const project = await prisma.project.create({ data: {
       title: input.title, preacher: input.preacher || null, gospelRef: input.gospelRef || null, gospelText: input.gospelText || null, templateKey: "sermon", definition,
-      ...(sourceData ? { source: { create: sourceData } } : {}),
-    }, include: { source: true } });
+      ...(sourceData ? { sources: { create: [sourceData] } } : {}),
+    }, include: { sources: true } });
     return NextResponse.json(jsonSafe(project), { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid request" }, { status: 400 });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 const patchSchema = z.object({
@@ -17,7 +18,7 @@ function jsonSafe(value: unknown) {
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const project = await prisma.project.findUnique({ where: { id }, include: { source: true, jobs: { orderBy: { createdAt: "desc" }, take: 10 }, outputs: { orderBy: { createdAt: "desc" } }, publications: { orderBy: { createdAt: "desc" } } } });
+  const project = await prisma.project.findUnique({ where: { id }, include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 10 }, outputs: { orderBy: { createdAt: "desc" } }, publications: { orderBy: { createdAt: "desc" } } } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   return NextResponse.json(jsonSafe(project));
 }
@@ -26,7 +27,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   try {
     const input = patchSchema.parse(await request.json());
-    const project = await prisma.project.update({ where: { id }, data: input, select: { id: true, title: true, preacher: true, gospelRef: true, gospelText: true, templateKey: true, definition: true, updatedAt: true } });
+    const data: Prisma.ProjectUpdateInput = {
+      title: input.title,
+      preacher: input.preacher,
+      gospelRef: input.gospelRef,
+      gospelText: input.gospelText,
+      templateKey: input.templateKey,
+      ...(input.definition !== undefined ? { definition: input.definition as Prisma.InputJsonValue } : {}),
+    };
+    const project = await prisma.project.update({ where: { id }, data, select: { id: true, title: true, preacher: true, gospelRef: true, gospelText: true, templateKey: true, definition: true, updatedAt: true } });
     return NextResponse.json(jsonSafe(project));
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid request" }, { status: 400 });

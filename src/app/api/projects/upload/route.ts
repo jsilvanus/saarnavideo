@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       composition: {
         sourceStartSeconds: Math.min(...segments.map((s) => s.startSeconds)),
         sourceEndSeconds: Math.max(...segments.map((s) => s.endSeconds)),
-        items: segments.map((s) => ({ type: "source-clip" as const, startSeconds: s.startSeconds, endSeconds: s.endSeconds })),
+        items: segments.map((s) => ({ type: "source-clip" as const, sourceId: "source-0", startSeconds: s.startSeconds, endSeconds: s.endSeconds })),
       },
     });
 
@@ -58,15 +58,15 @@ export async function POST(request: Request) {
         preacher: fields.preacher || null,
         templateKey: "sermon",
         definition,
-        source: {
-          create: {
+        sources: {
+          create: [{
             type: "UPLOAD",
             originalName: file.name,
             storagePath,
             mimeType: file.type || "application/octet-stream",
             sizeBytes: file.size,
             expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          },
+          }],
         },
       },
       select: { id: true },

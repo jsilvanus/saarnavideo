@@ -1,57 +1,78 @@
 import type { ProjectDefinition, TimelineItem, Transition } from "@/domain/project";
 
 export type FfmpegPlan = {
-  inputPath: string;
+  inputPath: string | string[];
   outputPath: string;
   args: string[];
 };
+
+export type SourcePathMap = Record<string, string>;
 
 function formatSeconds(value: number): string {
   return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function transitionFilter(transition: Transition | undefined, index: number, duration: number): string {
+function transitionFilter(transition: Transition | undefined, duration: number): string {
   if (!transition || transition.type === "cut" || transition.durationSeconds <= 0) return "";
   const d = Math.min(transition.durationSeconds, duration / 2);
   if (transition.type === "crossfade") {
-    return `xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(duration - d)}`;
+    return `xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(Math.max(0, duration / 2 - d))}`;
   }
-  // A fade is implemented as a short fade-to-black at the beginning of the clip.
   return `fade=t=in:st=0:d=${formatSeconds(d)}`;
 }
 
-/**
- * Build an explicit FFmpeg plan for source clips. Transitions are declarative
- * timeline properties; cut is the default and remains a no-op.
- */
+export function resolveSourceMap(
+  definition: ProjectDefinition,
+  sourcePathMap: SourcePathMap | string,
+): SourcePathMap {
+  const mapping: Record<string, string> = typeof sourcePathMap === "string" ? { default: sourcePathMap } : { ...sourcePathMap };
+  const refs = definition.composition.items.filter((item): item is Extract<TimelineItem, { type: "source-clip" }> => item.type === "source-clip").map((item) => item.sourceId);
+  const ids = [...new Set(refs.length > 0 ? refs : Object.keys(mapping))];
+  const missing = ids.filter((sourceId) => !(sourceId in mapping));
+  if (missing.length > 0) {
+    throw new Error(`Composition references missing source IDs: ${missing.join(", ")}`);
+  }
+  return ids.reduce<SourcePathMap>((result, sourceId) => {
+    result[sourceId] = mapping[sourceId];
+    return result;
+  }, {});
+}
+
 export function buildSourceRenderPlan(
   definition: ProjectDefinition,
-  inputPath: string,
+  sourcePathMap: SourcePathMap | string,
   outputPath: string,
 ): FfmpegPlan {
-  const sourceItems = definition.composition.items.filter(
-    (item): item is Extract<TimelineItem, { type: "source-clip" }> => item.type === "source-clip",
-  );
+  const resolvedMap = resolveSourceMap(definition, sourcePathMap);
+  const sourceEntries = Object.entries(resolvedMap);
+  const args: string[] = ["-hide_banner", "-y"];
 
-  const ranges = sourceItems.length > 0
-    ? sourceItems
+  for (const [, sourcePath] of sourceEntries) {
+    args.push("-i", sourcePath);
+  }
+
+  const items = definition.composition.items.length > 0
+    ? definition.composition.items
     : [{
         type: "source-clip" as const,
+        sourceId: Object.keys(resolvedMap)[0],
         startSeconds: definition.composition.sourceStartSeconds,
         endSeconds: definition.composition.sourceEndSeconds,
       }];
 
-  const args: string[] = ["-hide_banner", "-y", "-i", inputPath];
+  const inputIndexById = new Map<string, number>();
+  sourceEntries.forEach(([sourceId], index) => inputIndexById.set(sourceId, index));
 
-  if (ranges.length === 1) {
-    const range = ranges[0];
-    const duration = range.endSeconds - range.startSeconds;
-    const transition = transitionFilter(range.transitionIn, 0, duration);
+  if (items.length === 1 && items[0].type === "source-clip") {
+    const item = items[0];
+    const inputIndex = inputIndexById.get(item.sourceId) ?? 0;
+    const duration = item.endSeconds - item.startSeconds;
+    const transition = transitionFilter(item.transitionIn, duration);
     args.push(
-      "-ss", formatSeconds(range.startSeconds),
+      "-ss", formatSeconds(item.startSeconds),
       "-t", formatSeconds(duration),
-      "-map", "0:v:0?",
-      "-map", "0:a:0?",
+      "-map", `${inputIndex}:v:0?`,
+      "-map", `${inputIndex}:a:0?`,
       ...(transition ? ["-vf", transition] : []),
       "-c:v", "libx264",
       "-preset", "veryfast",
@@ -60,20 +81,51 @@ export function buildSourceRenderPlan(
       "-movflags", "+faststart",
       outputPath,
     );
-    return { inputPath, outputPath, args };
+    return { inputPath: sourceEntries.map(([, path]) => path), outputPath, args };
   }
 
-  const filter = ranges.map((range, index) => {
-    const duration = range.endSeconds - range.startSeconds;
-    const transition = transitionFilter(range.transitionIn, index, duration);
-    const videoFilters = [`trim=start=${formatSeconds(range.startSeconds)}:duration=${formatSeconds(duration)}`, "setpts=PTS-STARTPTS"];
-    if (transition) videoFilters.push(transition);
-    return `[0:v]${videoFilters.join(",")}[v${index}];` +
-      `[0:a]atrim=start=${formatSeconds(range.startSeconds)}:duration=${formatSeconds(duration)},asetpts=PTS-STARTPTS[a${index}]`;
-  }).join(";");
+  const segmentFilters: string[] = [];
+  const concatStages: string[] = [];
+  let previousDuration = 0;
 
-  const concatInputs = ranges.map((_, index) => `[v${index}][a${index}]`).join("");
-  const concat = `${concatInputs}concat=n=${ranges.length}:v=1:a=1[outv][outa]`;
+  for (const [index, item] of items.entries()) {
+    const baseIndex = item.type === "source-clip" ? inputIndexById.get(item.sourceId) ?? 0 : -1;
+    if (item.type === "source-clip") {
+      const duration = item.endSeconds - item.startSeconds;
+      const transition = transitionFilter(item.transitionIn, duration);
+      const videoFilter = `trim=start=${formatSeconds(item.startSeconds)}:duration=${formatSeconds(duration)},setpts=PTS-STARTPTS${transition ? `,${transition}` : ""}`;
+      segmentFilters.push(`[${baseIndex}:v]${videoFilter}[v${index}];[${baseIndex}:a]atrim=start=${formatSeconds(item.startSeconds)}:duration=${formatSeconds(duration)},asetpts=PTS-STARTPTS[a${index}]`);
+      concatStages.push(`[v${index}][a${index}]`);
+      previousDuration = duration;
+      continue;
+    }
+
+    const duration = item.type === "slate" ? item.durationSeconds : item.endSeconds - item.startSeconds;
+    const overlayText = item.type === "overlay" ? JSON.stringify(item.template + (Object.keys(item.data).length ? ` ${Object.values(item.data).join(" ")}` : "")) : item.template;
+    const videoFilter = item.type === "slate"
+      ? `color=c=black:s=1280x720:d=${formatSeconds(duration)},drawtext=text=${overlayText}:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`
+      : `color=c=black:s=1280x720:d=${formatSeconds(duration)},drawtext=text=${overlayText}:fontcolor=white:fontsize=36:x=20:y=20`;
+    const audioFilter = `anullsrc=r=48000:cl=stereo:d=${formatSeconds(duration)}`;
+    segmentFilters.push(`${videoFilter}[v${index}];${audioFilter}[a${index}]`);
+    concatStages.push(`[v${index}][a${index}]`);
+    previousDuration = duration;
+  }
+
+  const filter = segmentFilters.join(";");
+  const concat = `${concatStages.join("")}concat=n=${items.length}:v=1:a=1[outv][outa]`;
+
+  if (items.some((item) => item.type === "source-clip" && item.transitionIn?.type === "crossfade")) {
+    const crossfadeText = items
+      .filter((item): item is Extract<TimelineItem, { type: "source-clip" }> => item.type === "source-clip" && item.transitionIn?.type === "crossfade" === true)
+      .map((item) => {
+        const d = Math.min(item.transitionIn!.durationSeconds, item.endSeconds - item.startSeconds);
+        return `xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(Math.max(0, previousDuration / 2 - d))}`;
+      })
+      .join(";");
+    if (crossfadeText) {
+      segmentFilters.push(crossfadeText);
+    }
+  }
 
   args.push(
     "-filter_complex", `${filter};${concat}`,
@@ -87,5 +139,5 @@ export function buildSourceRenderPlan(
     outputPath,
   );
 
-  return { inputPath, outputPath, args };
+  return { inputPath: sourceEntries.map(([, path]) => path), outputPath, args };
 }

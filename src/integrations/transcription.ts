@@ -1,9 +1,6 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
-import { promisify } from "node:util";
 import { transcriptionResultSchema, type TranscriptionProvider, type TranscriptionResult } from "@/domain/transcription";
-
-const accessAsync = promisify(access);
 
 export type PythonTranscriptionOptions = {
   python?: string;
@@ -17,7 +14,7 @@ export class PythonTranscriptionProvider implements TranscriptionProvider {
   constructor(private readonly options: PythonTranscriptionOptions = {}) {}
 
   async transcribe(inputPath: string, language?: string): Promise<TranscriptionResult> {
-    await accessAsync(inputPath);
+    await access(inputPath);
     const python = this.options.python ?? "python3";
     const workerPath = this.options.workerPath ?? "transcription/transcribe.py";
     const request = JSON.stringify({
