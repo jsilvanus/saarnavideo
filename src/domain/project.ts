@@ -7,6 +7,7 @@ export const transitionSchema = z.object({
 
 export const sourceClipSchema = z.object({
   type: z.literal("source-clip"),
+  sourceId: z.string().min(1),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
   transitionIn: transitionSchema.optional(),

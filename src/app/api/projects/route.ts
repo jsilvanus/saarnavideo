@@ -20,6 +20,9 @@ function extractYouTubeId(urlString: string): string | null {
 function jsonSafe(value: unknown) { return JSON.parse(JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item)); }
 
 function definitionFor(segments: z.infer<typeof segmentSchema>[], sourceId: string, templateKey: string = "sermon") {
+  const sourceStartSeconds = segments.length ? Math.min(...segments.map((s) => s.startSeconds)) : 0;
+  const sourceEndSeconds = segments.length ? Math.max(...segments.map((s) => s.endSeconds)) : 0.001;
+  
   return createProjectDefinition({ 
     template: { 
       key: templateKey,
@@ -31,13 +34,15 @@ function definitionFor(segments: z.infer<typeof segmentSchema>[], sourceId: stri
     },
     semanticSegments: segments, 
     composition: {
+      sourceStartSeconds,
+      sourceEndSeconds,
       items: segments.map((segment) => ({ type: "source-clip" as const, sourceId, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds })),
     }
   });
 }
 
 export async function GET() {
-  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
+  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { source: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
   return NextResponse.json(jsonSafe(projects));
 }
 
@@ -61,10 +66,10 @@ export async function POST(request: Request) {
       gospelText: input.gospelText || null, 
       templateKey: input.templateKey,
       definition: {},
-      sources: sourceData ? { create: [sourceData] } : undefined,
-    }, include: { sources: true } });
+      source: sourceData ? { create: sourceData } : undefined,
+    }, include: { source: true } });
     
-    // Create definition with the first source (if available)
+    // Create definition with the source (if available)
     let definition = createProjectDefinition({ 
       template: { 
         key: input.templateKey,
@@ -75,13 +80,17 @@ export async function POST(request: Request) {
         textColor: "white",
       },
       semanticSegments: segments, 
-      composition: { items: [] }
+      composition: { 
+        sourceStartSeconds: 0,
+        sourceEndSeconds: 0.001,
+        items: [] 
+      }
     });
-    if (project.sources.length > 0) {
-      definition = definitionFor(segments, project.sources[0].id, input.templateKey);
+    if (project.source) {
+      definition = definitionFor(segments, project.source.id, input.templateKey);
     }
     
-    const updatedProject = await prisma.project.update({ where: { id: project.id }, data: { definition, templateKey: input.templateKey }, include: { sources: true } });
+    const updatedProject = await prisma.project.update({ where: { id: project.id }, data: { definition, templateKey: input.templateKey }, include: { source: true } });
     return NextResponse.json(jsonSafe(updatedProject), { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid request" }, { status: 400 });

@@ -42,14 +42,6 @@ export async function POST(request: Request) {
       { id: "gospel", label: "Gospel", startSeconds: fields.gospelStart, endSeconds: fields.gospelEnd },
       { id: "sermon", label: "Sermon", startSeconds: fields.sermonStart, endSeconds: fields.sermonEnd },
     ];
-    const definition = createProjectDefinition({
-      semanticSegments: segments,
-      composition: {
-        sourceStartSeconds: Math.min(...segments.map((s) => s.startSeconds)),
-        sourceEndSeconds: Math.max(...segments.map((s) => s.endSeconds)),
-        items: segments.map((s) => ({ type: "source-clip" as const, startSeconds: s.startSeconds, endSeconds: s.endSeconds })),
-      },
-    });
 
     const project = await prisma.project.create({
       data: {
@@ -57,7 +49,7 @@ export async function POST(request: Request) {
         title: fields.title,
         preacher: fields.preacher || null,
         templateKey: "sermon",
-        definition,
+        definition: {},
         source: {
           create: {
             type: "UPLOAD",
@@ -69,10 +61,28 @@ export async function POST(request: Request) {
           },
         },
       },
+      include: { source: true },
+    });
+
+    // Now create the definition with the source ID
+    const sourceId = project.source?.id;
+    const definition = createProjectDefinition({
+      semanticSegments: segments,
+      composition: {
+        sourceStartSeconds: Math.min(...segments.map((s) => s.startSeconds)),
+        sourceEndSeconds: Math.max(...segments.map((s) => s.endSeconds)),
+        items: sourceId ? segments.map((s) => ({ type: "source-clip" as const, sourceId, startSeconds: s.startSeconds, endSeconds: s.endSeconds })) : [],
+      },
+    });
+
+    // Update project with the correct definition
+    const updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data: { definition },
       select: { id: true },
     });
 
-    return NextResponse.json(project, { status: 201 });
+    return NextResponse.json(updatedProject, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid upload" }, { status: 400 });
     console.error(error);
