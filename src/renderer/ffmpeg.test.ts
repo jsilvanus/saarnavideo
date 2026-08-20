@@ -6,12 +6,18 @@ const base = {
   semanticSegments: [],
 };
 
+const baseComposition = {
+  sourceStartSeconds: 0,
+  sourceEndSeconds: 1000,
+};
+
 describe("buildCompositionRenderPlan", () => {
   it("renders a single source clip", () => {
     const plan = buildCompositionRenderPlan(
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 40 },
           ],
@@ -33,6 +39,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
             { type: "source-clip", sourceId: "source-b", startSeconds: 0, endSeconds: 30 },
@@ -62,6 +69,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
             { type: "source-clip", sourceId: "source-a", startSeconds: 40, endSeconds: 50 },
@@ -87,6 +95,7 @@ describe("buildCompositionRenderPlan", () => {
         {
           ...base,
           composition: {
+            ...baseComposition,
             items: [
               { type: "source-clip", sourceId: "missing-source", startSeconds: 10, endSeconds: 20 },
             ],
@@ -104,6 +113,7 @@ describe("buildCompositionRenderPlan", () => {
         {
           ...base,
           composition: {
+            ...baseComposition,
             items: [],
           },
         },
@@ -118,6 +128,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
             { type: "source-clip", sourceId: "source-a", startSeconds: 40, endSeconds: 50, transitionIn: { type: "cut", durationSeconds: 0 } },
@@ -138,6 +149,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
             { type: "source-clip", sourceId: "source-a", startSeconds: 40, endSeconds: 50, transitionIn: { type: "fade", durationSeconds: 0.5 } },
@@ -157,6 +169,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
             { type: "source-clip", sourceId: "source-a", startSeconds: 40, endSeconds: 50, transitionIn: { type: "crossfade", durationSeconds: 0.5 } },
@@ -176,6 +189,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
             { type: "source-clip", sourceId: "source-b", startSeconds: 0, endSeconds: 15, transitionIn: { type: "crossfade", durationSeconds: 0.5 } },
@@ -200,8 +214,7 @@ describe("buildCompositionRenderPlan", () => {
     const plan = buildCompositionRenderPlan(
       {
         ...base,
-        composition: {
-          items: [
+        composition: {          ...baseComposition,          items: [
             { type: "slate", template: "sermon", durationSeconds: 3, data: { title: "Gospel", subtitle: "Matthew 5" } },
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
           ],
@@ -231,6 +244,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 30 },
             { type: "overlay", template: "gospel", startSeconds: 15, endSeconds: 25, data: { text: "John 3:16" } },
@@ -253,6 +267,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {
+          ...baseComposition,
           items: [
             { type: "slate", template: "sermon", durationSeconds: 2, data: { title: "Opening" }, transitionIn: { type: "fade", durationSeconds: 0.5 } },
             { type: "source-clip", sourceId: "source-a", startSeconds: 0, endSeconds: 10 },
@@ -280,6 +295,7 @@ describe("buildCompositionRenderPlan", () => {
           textColor: "gold",
         },
         composition: {
+          ...baseComposition,
           items: [
             { type: "slate", template: "custom", durationSeconds: 2, data: { title: "4K Title" } },
           ],

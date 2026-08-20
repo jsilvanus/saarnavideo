@@ -2,6 +2,7 @@ import type { ProjectDefinition, TimelineItem, Transition } from "@/domain/proje
 
 export type FfmpegPlan = {
   sourcePaths: Map<string, string>;
+  assetPaths?: Map<string, string>; // assetKey -> file path for images
   outputPath: string;
   args: string[];
 };
@@ -39,10 +40,11 @@ function slateFilters(
   item: Extract<TimelineItem, { type: "slate" }>,
   label: string,
   height: number,
+  width: number,
   textColor: string,
   fontFile?: string,
 ): string[] {
-  const filters = [`[${inputIndex}:v]setpts=PTS-STARTPTS[${label}base]`];
+  const filters = [`[${inputIndex}:v]scale=w=${width}:h=${height},setpts=PTS-STARTPTS[${label}base]`];
   const text = item.data.title ?? item.data.text;
   const subtitle = item.data.subtitle;
   const font = fontFile ? `:fontfile='${escapeFilterText(fontFile)}'` : "";
@@ -69,12 +71,13 @@ function slateFilters(
 
 /**
  * Build an explicit FFmpeg plan for compositions with multiple sources, slates, and overlays.
- * Handles multi-source video files, generated slates (with text), and text overlays.
+ * Handles multi-source video files, generated slates (with text), image-based slates, and image/text overlays.
  */
 export function buildCompositionRenderPlan(
   definition: ProjectDefinition,
   sourcePaths: Map<string, string>,
   outputPath: string,
+  assetPaths?: Map<string, string>, // assetKey -> file path for images
 ): FfmpegPlan {
   const template = (definition.template ?? {}) as Partial<Record<string, unknown>>;
   const width = (template.width as number | undefined) ?? 1920;
@@ -113,7 +116,7 @@ export function buildCompositionRenderPlan(
     }
   }
 
-  // Add generated inputs for slates (color + audio)
+  // Add generated inputs for slates (color or image backgrounds + audio)
   const slateItems = baseItems.filter((item): item is Extract<TimelineItem, { type: "slate" }> => item.type === "slate");
   const slateInputIndices = new Map<number, { videoIndex: number; audioIndex: number }>();
   let currentInputIndex = uniqueSourceIds.length;
@@ -121,16 +124,29 @@ export function buildCompositionRenderPlan(
   for (let i = 0; i < baseItems.length; i++) {
     const item = baseItems[i];
     if (item.type === "slate") {
+      const slateItem = item as Extract<TimelineItem, { type: "slate" }>;
       const videoIndex = currentInputIndex++;
       const audioIndex = currentInputIndex++;
       slateInputIndices.set(i, { videoIndex, audioIndex });
       const duration = item.durationSeconds;
-      args.push(
-        "-f",
-        "lavfi",
-        "-i",
-        `color=c=${backgroundColor}:s=${width}x${height}:r=${fps}:d=${formatSeconds(duration)}`,
-      );
+
+      // Image-based slate: use asset image as background
+      if (slateItem.backgroundImage && assetPaths?.has(slateItem.backgroundImage)) {
+        const imagePath = assetPaths.get(slateItem.backgroundImage);
+        if (imagePath) {
+          args.push("-i", imagePath);
+        }
+      } else {
+        // Text-based slate: use generated color background
+        args.push(
+          "-f",
+          "lavfi",
+          "-i",
+          `color=c=${backgroundColor}:s=${width}x${height}:r=${fps}:d=${formatSeconds(duration)}`,
+        );
+      }
+
+      // Add audio track
       args.push(
         "-f",
         "lavfi",
@@ -159,9 +175,10 @@ export function buildCompositionRenderPlan(
       filters.push(sourceVideoFilter(inputIndex, item.startSeconds, duration, videoLabel));
       filters.push(sourceAudioFilter(inputIndex, item.startSeconds, duration, audioLabel));
     } else if (item.type === "slate") {
+      const slateItem = item as Extract<TimelineItem, { type: "slate" }>;
       const indices = slateInputIndices.get(index);
       if (!indices) throw new Error(`Missing input indices for slate at index ${index}`);
-      filters.push(...slateFilters(indices.videoIndex, item, videoLabel, height, textColor, template.fontFile as string | undefined));
+      filters.push(...slateFilters(indices.videoIndex, slateItem, videoLabel, height, width, textColor, template.fontFile as string | undefined));
       filters.push(
         `[${indices.audioIndex}:a]atrim=duration=${formatSeconds(duration)},asetpts=PTS-STARTPTS[${audioLabel}]`,
       );
@@ -209,20 +226,49 @@ export function buildCompositionRenderPlan(
     }
   }
 
-  // Apply overlays
+  // Apply overlays (text and image)
   let outputVideo = currentVideo;
   let overlayIndex = 0;
+
+  // First pass: collect image overlays and add them as inputs
+  const imageOverlays = overlays.filter((item) => item.imageAsset && assetPaths?.has(item.imageAsset));
+  let imageInputStartIndex = currentInputIndex;
+
+  for (const overlay of imageOverlays) {
+    if (overlay.imageAsset) {
+      const imagePath = assetPaths?.get(overlay.imageAsset);
+      if (imagePath) {
+        args.push("-i", imagePath);
+        imageInputStartIndex++;
+      }
+    }
+  }
+
+  // Second pass: apply overlays
+  let imageInputIndex = currentInputIndex;
   for (const item of overlays) {
-    const text = item.data.text ?? item.data.gospelText ?? item.data.title;
-    if (!text) continue;
-    const boxColor = item.data.boxColor ?? "black@0.55";
-    const fontSize = Number(item.data.fontSize ?? Math.round(height * 0.035));
-    const font = (template.fontFile as string | undefined) ? `:fontfile='${escapeFilterText(template.fontFile as string)}'` : "";
-    const next = `overlay${overlayIndex++}`;
-    filters.push(
-      `[${outputVideo}]drawtext=text='${escapeFilterText(text)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=${boxColor}:boxborderw=20:enable='between(t,${formatSeconds(item.startSeconds)},${formatSeconds(item.endSeconds)})'${font}[${next}]`,
-    );
-    outputVideo = next;
+    // Image overlay
+    if (item.imageAsset && assetPaths?.has(item.imageAsset)) {
+      const next = `overlay${overlayIndex++}`;
+      // Overlay image with timing
+      filters.push(
+        `[${outputVideo}][${imageInputIndex}:v]overlay=x=10:y=10:enable='between(t,${formatSeconds(item.startSeconds)},${formatSeconds(item.endSeconds)})'[${next}]`,
+      );
+      outputVideo = next;
+      imageInputIndex++;
+    } else {
+      // Text overlay
+      const text = item.data.text ?? item.data.gospelText ?? item.data.title;
+      if (!text) continue;
+      const boxColor = item.data.boxColor ?? "black@0.55";
+      const fontSize = Number(item.data.fontSize ?? Math.round(height * 0.035));
+      const font = (template.fontFile as string | undefined) ? `:fontfile='${escapeFilterText(template.fontFile as string)}'` : "";
+      const next = `overlay${overlayIndex++}`;
+      filters.push(
+        `[${outputVideo}]drawtext=text='${escapeFilterText(text)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=${boxColor}:boxborderw=20:enable='between(t,${formatSeconds(item.startSeconds)},${formatSeconds(item.endSeconds)})'${font}[${next}]`,
+      );
+      outputVideo = next;
+    }
   }
 
   args.push(
@@ -245,7 +291,7 @@ export function buildCompositionRenderPlan(
     outputPath,
   );
 
-  return { sourcePaths, outputPath, args };
+  return { sourcePaths, assetPaths, outputPath, args };
 }
 
 /**
@@ -260,7 +306,7 @@ export function buildSourceRenderPlan(definition: ProjectDefinition, inputPath: 
 
   if (definition.composition.items && definition.composition.items.length > 0) {
     // Has explicit items, use composition plan
-    return buildCompositionRenderPlan(definition, sourcePaths, outputPath);
+    return buildCompositionRenderPlan(definition, sourcePaths, outputPath, undefined);
   }
 
   // Fall back to simple source range rendering (legacy format)

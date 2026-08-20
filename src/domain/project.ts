@@ -18,6 +18,7 @@ export const overlaySchema = z.object({
   template: z.string().min(1),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
+  imageAsset: z.string().optional(), // Reference to Asset.assetKey (image with transparency)
   data: z.record(z.string(), z.string()).default({}),
 }).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
 
@@ -25,6 +26,7 @@ export const slateSchema = z.object({
   type: z.literal("slate"),
   template: z.string().min(1),
   durationSeconds: z.number().positive(),
+  backgroundImage: z.string().optional(), // Reference to Asset.assetKey (background with or without transparency)
   data: z.record(z.string(), z.string()).default({}),
   transitionIn: transitionSchema.optional(),
   transitionOut: transitionSchema.optional(),

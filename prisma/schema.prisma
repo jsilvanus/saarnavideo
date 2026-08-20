@@ -25,6 +25,15 @@ enum JobStatus {
   COMPLETED
   FAILED
   EXPIRED
+  CANCELLATION_REQUESTED
+  CANCELLED
+}
+
+enum JobLogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
 }
 
 enum PublicationProvider {
@@ -44,6 +53,13 @@ enum PrivacyState {
   PUBLIC
 }
 
+enum AssetType {
+  OVERLAY
+  BACKGROUND
+  LOGO
+  FONT
+}
+
 model Project {
   id String @id @default(cuid())
   title String
@@ -59,6 +75,7 @@ model Project {
   jobs GenerationJob[]
   outputs Output[]
   publications Publication[]
+  assets Asset[]
 }
 model Source {
   id String @id @default(cuid())
@@ -81,10 +98,15 @@ model GenerationJob {
   status JobStatus @default(QUEUED)
   progress Int @default(0)
   error String?
+  cancellationRequested Boolean @default(false)
+  cancelledAt DateTime?
   createdAt DateTime @default(now())
   startedAt DateTime?
   completedAt DateTime?
+  estimatedDurationSeconds Int?
+  resourceMetrics Json? @default("{}")
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  logs JobLog[]
   @@index([status, createdAt])
 }
 model Output {
@@ -116,6 +138,17 @@ model Publication {
   output Output? @relation(fields: [outputId], references: [id], onDelete: SetNull)
   @@index([projectId, createdAt])
 }
+
+model JobLog {
+  id String @id @default(cuid())
+  jobId String
+  level JobLogLevel
+  message String
+  data Json?
+  createdAt DateTime @default(now())
+  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  @@index([jobId, createdAt])
+}
 model YouTubeConnection {
   id String @id @default(cuid())
   provider String @unique @default("youtube")
@@ -125,4 +158,25 @@ model YouTubeConnection {
   scope String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Asset {
+  id String @id @default(cuid())
+  projectId String
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assetKey String
+  type AssetType
+  storagePath String
+  mimeType String
+  width Int?
+  height Int?
+  sizeBytes BigInt
+  hasAlpha Boolean @default(false)
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, assetKey])
+  @@unique([projectId, assetKey])
 }
