@@ -12,11 +12,20 @@ services:
 
   app:
     build: .
-    environment:
+    environment: &app-env
       DATABASE_URL: postgresql://saarnavideo:saarnavideo@postgres:5432/saarnavideo
       MEDIA_ROOT: /data/media
     ports:
       - "3000:3000"
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      - postgres
+
+  worker:
+    build: .
+    command: ["npm", "run", "worker"]
+    environment: *app-env
     volumes:
       - media_data:/data/media
     depends_on:
