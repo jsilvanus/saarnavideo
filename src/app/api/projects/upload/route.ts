@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     });
 
     const projectId = crypto.randomUUID();
+    const sourceId = crypto.randomUUID();
     const mediaRoot = process.env.MEDIA_ROOT ?? "/data/media";
     const projectDir = path.join(mediaRoot, "sources", projectId);
     await mkdir(projectDir, { recursive: true });
@@ -45,9 +46,7 @@ export async function POST(request: Request) {
     const definition = createProjectDefinition({
       semanticSegments: segments,
       composition: {
-        sourceStartSeconds: Math.min(...segments.map((s) => s.startSeconds)),
-        sourceEndSeconds: Math.max(...segments.map((s) => s.endSeconds)),
-        items: segments.map((s) => ({ type: "source-clip" as const, startSeconds: s.startSeconds, endSeconds: s.endSeconds })),
+        items: segments.map((s) => ({ type: "source-clip" as const, sourceId, startSeconds: s.startSeconds, endSeconds: s.endSeconds })),
       },
     });
 
@@ -58,8 +57,9 @@ export async function POST(request: Request) {
         preacher: fields.preacher || null,
         templateKey: "sermon",
         definition,
-        source: {
+        sources: {
           create: {
+            id: sourceId,
             type: "UPLOAD",
             originalName: file.name,
             storagePath,

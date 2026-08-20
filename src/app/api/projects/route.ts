@@ -19,32 +19,35 @@ function extractYouTubeId(urlString: string): string | null {
 
 function jsonSafe(value: unknown) { return JSON.parse(JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item)); }
 
-function definitionFor(segments: z.infer<typeof segmentSchema>[]) {
+function definitionFor(segments: z.infer<typeof segmentSchema>[], sourceId?: string) {
   return createProjectDefinition({ semanticSegments: segments, composition: {
-    sourceStartSeconds: segments.length ? Math.min(...segments.map((s) => s.startSeconds)) : 0,
-    sourceEndSeconds: segments.length ? Math.max(...segments.map((s) => s.endSeconds)) : 0.001,
-    items: segments.map((segment) => ({ type: "source-clip" as const, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds })),
+    items: sourceId ? segments.map((segment) => ({ type: "source-clip" as const, sourceId, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds })) : [],
   }});
 }
 
 export async function GET() {
-  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { source: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
+  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
   return NextResponse.json(jsonSafe(projects));
 }
 
 export async function POST(request: Request) {
   try {
     const input = requestSchema.parse(await request.json());
-    const definition = definitionFor(input.segments);
     const sourceData = input.sourceUrl ? (() => {
       const youtubeVideoId = extractYouTubeId(input.sourceUrl!);
       if (!youtubeVideoId) throw new Error("Unsupported YouTube URL");
-      return { type: "YOUTUBE" as const, youtubeVideoId, youtubeUrl: input.sourceUrl };
+      return { id: crypto.randomUUID(), type: "YOUTUBE" as const, youtubeVideoId, youtubeUrl: input.sourceUrl };
     })() : undefined;
+    const definition = definitionFor(input.segments, sourceData?.id);
     const project = await prisma.project.create({ data: {
-      title: input.title, preacher: input.preacher || null, gospelRef: input.gospelRef || null, gospelText: input.gospelText || null, templateKey: "sermon", definition,
-      ...(sourceData ? { source: { create: sourceData } } : {}),
-    }, include: { source: true } });
+      title: input.title,
+      preacher: input.preacher || null,
+      gospelRef: input.gospelRef || null,
+      gospelText: input.gospelText || null,
+      templateKey: "sermon",
+      definition,
+      ...(sourceData ? { sources: { create: sourceData } } : {}),
+    }, include: { sources: true } });
     return NextResponse.json(jsonSafe(project), { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
