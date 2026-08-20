@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: saarnavideo
+      POSTGRES_USER: saarnavideo
+      POSTGRES_PASSWORD: saarnavideo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    environment: &app-env
+      DATABASE_URL: postgresql://saarnavideo:saarnavideo@postgres:5432/saarnavideo
+      MEDIA_ROOT: /data/media
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REDIRECT_URI: ${YOUTUBE_REDIRECT_URI:-http://localhost:3000/api/integrations/youtube/callback}
+    ports:
+      - "3000:3000"
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      - postgres
+
+  worker:
+    build: .
+    command: ["npm", "run", "worker"]
+    environment: *app-env
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+  media_data:
