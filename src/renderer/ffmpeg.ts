@@ -1,4 +1,4 @@
-import { migrateProjectDefinition, type ProjectDefinition, type TimelineItem, type Transition, validateCompositionSources } from "@/domain/project";
+import { migrateProjectDefinition, type ProjectDefinition, type TimelineItem, type Transition, validateCompositionSources } from "../domain/project";
 
 export type SourcePathMap = Record<string, string>;
 

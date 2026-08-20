@@ -90,6 +90,8 @@ export function createProjectDefinition(input: Omit<ProjectDefinition, "version"
 }
 
 export function migrateProjectDefinition(input: unknown, fallbackSourceId?: string): ProjectDefinition {
+  const parsedCurrent = projectDefinitionSchema.safeParse(input);
+  if (parsedCurrent.success) return parsedCurrent.data;
   const parsed = legacyProjectDefinitionSchema.parse(input);
   const migratedItems = parsed.composition.items.map((item) => {
     if (item.type !== "source-clip") return item;

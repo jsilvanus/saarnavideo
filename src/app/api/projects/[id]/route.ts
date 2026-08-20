@@ -1,3 +1,4 @@
+import { type Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -8,7 +9,7 @@ const patchSchema = z.object({
   gospelRef: z.string().trim().max(200).nullable().optional(),
   gospelText: z.string().nullable().optional(),
   templateKey: z.string().trim().min(1).max(100).optional(),
-  definition: z.unknown().optional(),
+  definition: z.custom<Prisma.InputJsonValue>().optional(),
 });
 
 function jsonSafe(value: unknown) {

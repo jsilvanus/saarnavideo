@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { migrateProjectDefinition, validateCompositionSources } from "@/domain/project";
+import { migrateProjectDefinition, validateCompositionSources } from "../domain/project";
 
 export type WorkerSource = {
   id: string;
