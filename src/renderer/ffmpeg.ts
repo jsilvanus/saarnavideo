@@ -37,9 +37,10 @@ export function buildSourceRenderPlan(
 
   if (ranges.length === 1) {
     const range = ranges[0];
+    const duration = range.endSeconds - range.startSeconds;
     args.push(
       "-ss", formatSeconds(range.startSeconds),
-      "-to", formatSeconds(range.endSeconds),
+      "-t", formatSeconds(duration),
       "-map", "0:v:0?",
       "-map", "0:a:0?",
       "-c:v", "libx264",
@@ -52,8 +53,6 @@ export function buildSourceRenderPlan(
     return { inputPath, outputPath, args };
   }
 
-  // Multiple clips are composed through a filter graph. The initial renderer
-  // intentionally keeps audio/video streams optional for camera-only fixtures.
   const filter = ranges.map((range, index) => {
     const duration = range.endSeconds - range.startSeconds;
     return `[0:v]trim=start=${formatSeconds(range.startSeconds)}:duration=${formatSeconds(duration)},setpts=PTS-STARTPTS[v${index}];` +
