@@ -25,14 +25,14 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   expiresAt DateTime?
-  source Source?
+  sources Source[]
   jobs GenerationJob[]
   outputs Output[]
   publications Publication[]
 }
 model Source {
   id String @id @default(cuid())
-  projectId String @unique
+  projectId String
   type SourceType
   youtubeVideoId String?
   youtubeUrl String?
@@ -44,6 +44,7 @@ model Source {
   createdAt DateTime @default(now())
   expiresAt DateTime?
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, createdAt])
 }
 model GenerationJob {
   id String @id @default(cuid())

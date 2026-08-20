@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { buildSourceRenderPlan } from "@/renderer/ffmpeg";
-import type { ProjectDefinition } from "@/domain/project";
+import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { downloadYouTubeSource, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 
@@ -23,16 +23,28 @@ async function createOutput(projectId: string, jobId: string, type: "VIDEO" | "T
   let sizeBytes: number | undefined; try { sizeBytes = (await stat(storagePath)).size; } catch { /* recorded below */ }
   return prisma.output.create({ data: { projectId, jobId, type, storagePath, mimeType, sizeBytes, expiresAt: new Date(Date.now() + RETENTION_MS) } });
 }
-async function acquireSource(project: { id: string; source: { id: string; type: "UPLOAD" | "YOUTUBE"; storagePath: string | null; youtubeVideoId: string | null; youtubeUrl: string | null } | null }): Promise<string> {
-  if (!project.source) throw new Error("Project has no source");
-  if (project.source.storagePath) return project.source.storagePath;
-  if (project.source.type !== "YOUTUBE" || !project.source.youtubeUrl || !project.source.youtubeVideoId) throw new Error("Source has no usable media or YouTube URL");
-  const directory = path.join(MEDIA_ROOT, "sources", project.id);
-  const storagePath = path.join(directory, `${project.source.youtubeVideoId}.mp4`);
-  await downloadYouTubeSource({ videoId: project.source.youtubeVideoId, url: project.source.youtubeUrl }, storagePath);
+async function acquireSource(source: { id: string; type: "UPLOAD" | "YOUTUBE"; storagePath: string | null; youtubeVideoId: string | null; youtubeUrl: string | null }, projectId: string): Promise<string> {
+  if (source.storagePath) return source.storagePath;
+  if (source.type !== "YOUTUBE" || !source.youtubeUrl || !source.youtubeVideoId) throw new Error("Source has no usable media or YouTube URL");
+  const directory = path.join(MEDIA_ROOT, "sources", projectId);
+  const storagePath = path.join(directory, `${source.youtubeVideoId}.mp4`);
+  await downloadYouTubeSource({ videoId: source.youtubeVideoId, url: source.youtubeUrl }, storagePath);
   const sizeBytes = (await stat(storagePath)).size;
-  await prisma.source.update({ where: { id: project.source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes, expiresAt: new Date(Date.now() + RETENTION_MS) } });
+  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes, expiresAt: new Date(Date.now() + RETENTION_MS) } });
   return storagePath;
+}
+
+/**
+ * Extract all unique source IDs from a composition's items.
+ */
+function extractSourceIds(definition: ProjectDefinition): string[] {
+  const sourceIds = new Set<string>();
+  definition.composition.items.forEach(item => {
+    if (item.type === "source-clip" && item.sourceId) {
+      sourceIds.add(item.sourceId);
+    }
+  });
+  return Array.from(sourceIds);
 }
 
 async function processPublication() {
@@ -55,15 +67,31 @@ async function processPublication() {
 async function processJob() {
   const job = await claimJob(); if (!job) return false;
   try {
-    const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { source: true } });
+    const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true } });
     if (!project) throw new Error("Project not found");
-    const sourcePath = await acquireSource(project);
+    
+    const definition = project.definition as unknown as ProjectDefinition;
+    const requiredSourceIds = extractSourceIds(definition);
+    
+    // Acquire all required sources and build source map
+    const sourceMap: Record<string, string> = {};
+    for (const sourceId of requiredSourceIds) {
+      const source = project.sources.find((s: typeof project.sources[0]) => s.id === sourceId);
+      if (!source) throw new Error(`Source ${sourceId} not found in project`);
+      sourceMap[sourceId] = await acquireSource(source, project.id);
+    }
+    
     await prisma.generationJob.update({ where: { id: job.id }, data: { status: "RENDERING", progress: 25 } });
     await mkdir(MEDIA_ROOT, { recursive: true });
-    const definition = project.definition as unknown as ProjectDefinition;
+    
     const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.mp4`);
     const thumbnailPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`);
-    await execFileAsync("ffmpeg", buildSourceRenderPlan(definition, sourcePath, outputPath).args);
+    
+    const plan = requiredSourceIds.length > 0
+      ? buildSourceRenderPlan(definition, "", outputPath, sourceMap)
+      : buildSourceRenderPlan(definition, "", outputPath);
+    
+    await execFileAsync("ffmpeg", plan.args);
     await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4");
     await prisma.generationJob.update({ where: { id: job.id }, data: { progress: 85 } });
     await execFileAsync("ffmpeg", ["-hide_banner", "-y", "-ss", "1", "-i", outputPath, "-frames:v", "1", "-q:v", "2", thumbnailPath]);

@@ -37,13 +37,14 @@ describe("buildSourceRenderPlan", () => {
           sourceStartSeconds: 0,
           sourceEndSeconds: 100,
           items: [
-            { type: "source-clip", startSeconds: 10, endSeconds: 20 },
-            { type: "source-clip", startSeconds: 40, endSeconds: 50 },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 10, endSeconds: 20 },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 40, endSeconds: 50 },
           ],
         },
       },
       "/tmp/source.mp4",
       "/tmp/output.mp4",
+      { "source-1": "/tmp/source.mp4" },
     );
 
     const filter = plan.args[plan.args.indexOf("-filter_complex") + 1];
@@ -60,13 +61,14 @@ describe("buildSourceRenderPlan", () => {
           sourceStartSeconds: 0,
           sourceEndSeconds: 100,
           items: [
-            { type: "source-clip", startSeconds: 10, endSeconds: 20, transitionIn: { type: "cut", durationSeconds: 0 } },
-            { type: "source-clip", startSeconds: 40, endSeconds: 50, transitionIn: { type: "cut", durationSeconds: 0 } },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 10, endSeconds: 20, transitionIn: { type: "cut", durationSeconds: 0 } },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 40, endSeconds: 50, transitionIn: { type: "cut", durationSeconds: 0 } },
           ],
         },
       },
       "/tmp/source.mp4",
       "/tmp/output.mp4",
+      { "source-1": "/tmp/source.mp4" },
     );
 
     const filter = plan.args[plan.args.indexOf("-filter_complex") + 1];
@@ -82,13 +84,14 @@ describe("buildSourceRenderPlan", () => {
           sourceStartSeconds: 0,
           sourceEndSeconds: 100,
           items: [
-            { type: "source-clip", startSeconds: 10, endSeconds: 20 },
-            { type: "source-clip", startSeconds: 40, endSeconds: 50, transitionIn: { type: "fade", durationSeconds: 0.5 } },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 10, endSeconds: 20 },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 40, endSeconds: 50, transitionIn: { type: "fade", durationSeconds: 0.5 } },
           ],
         },
       },
       "/tmp/source.mp4",
       "/tmp/output.mp4",
+      { "source-1": "/tmp/source.mp4" },
     );
 
     const filter = plan.args[plan.args.indexOf("-filter_complex") + 1];
@@ -103,16 +106,78 @@ describe("buildSourceRenderPlan", () => {
           sourceStartSeconds: 0,
           sourceEndSeconds: 100,
           items: [
-            { type: "source-clip", startSeconds: 10, endSeconds: 20 },
-            { type: "source-clip", startSeconds: 40, endSeconds: 50, transitionIn: { type: "crossfade", durationSeconds: 0.5 } },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 10, endSeconds: 20 },
+            { type: "source-clip", sourceId: "source-1", startSeconds: 40, endSeconds: 50, transitionIn: { type: "crossfade", durationSeconds: 0.5 } },
           ],
         },
       },
       "/tmp/source.mp4",
       "/tmp/output.mp4",
+      { "source-1": "/tmp/source.mp4" },
     );
 
     const filter = plan.args[plan.args.indexOf("-filter_complex") + 1];
-    expect(filter).toContain("xfade=transition=fade:duration=0.5:offset=4.5");
+    expect(filter).toContain("xfade=transition=fade:duration=0.5:offset=9.5");
+  });
+
+  it("handles multiple sources in composition", () => {
+    const plan = buildSourceRenderPlan(
+      {
+        ...base,
+        composition: {
+          items: [
+            { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 30 },
+            { type: "source-clip", sourceId: "source-b", startSeconds: 0, endSeconds: 20 },
+            { type: "source-clip", sourceId: "source-a", startSeconds: 100, endSeconds: 130 },
+          ],
+        },
+      },
+      "/tmp/unused.mp4",
+      "/tmp/output.mp4",
+      { "source-a": "/tmp/source-a.mp4", "source-b": "/tmp/source-b.mp4" },
+    );
+
+    expect(plan.args).toContain("-i");
+    expect(plan.args).toContain("/tmp/source-a.mp4");
+    expect(plan.args).toContain("/tmp/source-b.mp4");
+    const filter = plan.args[plan.args.indexOf("-filter_complex") + 1];
+    expect(filter).toContain("concat=n=3");
+  });
+
+  it("validates that sourceMap is provided for multi-source compositions", () => {
+    expect(() => {
+      buildSourceRenderPlan(
+        {
+          ...base,
+          composition: {
+            items: [
+              { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 30 },
+            ],
+          },
+        },
+        "/tmp/source.mp4",
+        "/tmp/output.mp4",
+        // no sourceMap provided
+      );
+    }).toThrow("sourceMap is required for multi-source compositions");
+  });
+
+  it("throws error when sourceMap is missing a source", () => {
+    expect(() => {
+      buildSourceRenderPlan(
+        {
+          ...base,
+          composition: {
+            items: [
+              { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 30 },
+              { type: "source-clip", sourceId: "source-b", startSeconds: 0, endSeconds: 20 },
+            ],
+          },
+        },
+        "/tmp/unused.mp4",
+        "/tmp/output.mp4",
+        { "source-a": "/tmp/source-a.mp4" }, // missing source-b
+      );
+    }).toThrow("No file path provided for source source-b");
   });
 });

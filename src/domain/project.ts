@@ -7,6 +7,7 @@ export const transitionSchema = z.object({
 
 export const sourceClipSchema = z.object({
   type: z.literal("source-clip"),
+  sourceId: z.string().min(1),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
   transitionIn: transitionSchema.optional(),
@@ -42,8 +43,8 @@ export const semanticSegmentSchema = z.object({
 }).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
 
 export const compositionSchema = z.object({
-  sourceStartSeconds: z.number().nonnegative(),
-  sourceEndSeconds: z.number().positive(),
+  sourceStartSeconds: z.number().nonnegative().optional(),
+  sourceEndSeconds: z.number().positive().optional(),
   items: z.array(timelineItemSchema),
 });
 
