@@ -23,8 +23,8 @@ describe("buildSourceRenderPlan", () => {
 
     expect(plan.args).toContain("-ss");
     expect(plan.args).toContain("10");
-    expect(plan.args).toContain("-to");
-    expect(plan.args).toContain("40");
+    expect(plan.args).toContain("-t");
+    expect(plan.args).toContain("30");
     expect(plan.args.at(-1)).toBe("/tmp/output.mp4");
   });
 
