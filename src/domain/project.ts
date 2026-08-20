@@ -1,9 +1,15 @@
 import { z } from "zod";
 
+export const transitionSchema = z.object({
+  type: z.enum(["cut", "fade", "crossfade"]),
+  durationSeconds: z.number().nonnegative().default(0),
+});
+
 export const sourceClipSchema = z.object({
   type: z.literal("source-clip"),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
+  transitionIn: transitionSchema.optional(),
 }).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
 
 export const overlaySchema = z.object({
@@ -19,6 +25,7 @@ export const slateSchema = z.object({
   template: z.string().min(1),
   durationSeconds: z.number().positive(),
   data: z.record(z.string(), z.string()).default({}),
+  transitionOut: transitionSchema.optional(),
 });
 
 export const timelineItemSchema = z.discriminatedUnion("type", [
@@ -46,6 +53,7 @@ export const projectDefinitionSchema = z.object({
   composition: compositionSchema,
 });
 
+export type Transition = z.infer<typeof transitionSchema>;
 export type TimelineItem = z.infer<typeof timelineItemSchema>;
 export type SemanticSegment = z.infer<typeof semanticSegmentSchema>;
 export type ProjectDefinition = z.infer<typeof projectDefinitionSchema>;
