@@ -15,6 +15,9 @@ services:
     environment: &app-env
       DATABASE_URL: postgresql://saarnavideo:saarnavideo@postgres:5432/saarnavideo
       MEDIA_ROOT: /data/media
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REDIRECT_URI: ${YOUTUBE_REDIRECT_URI:-http://localhost:3000/api/integrations/youtube/callback}
     ports:
       - "3000:3000"
     volumes:
