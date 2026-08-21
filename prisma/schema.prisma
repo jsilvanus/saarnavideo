@@ -12,6 +12,11 @@ enum SourceType {
   YOUTUBE
 }
 
+enum SourceStatus {
+  PENDING
+  AVAILABLE
+}
+
 enum OutputType {
   VIDEO
   THUMBNAIL
@@ -81,6 +86,7 @@ model Project {
 model Source {
   id String @id @default(cuid())
   type SourceType
+  status SourceStatus @default(AVAILABLE)
   youtubeVideoId String?
   youtubeUrl String?
   originalName String?
