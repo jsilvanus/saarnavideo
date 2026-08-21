@@ -16,6 +16,12 @@ function extractYouTubeId(urlString: string): string | null {
   return null;
 }
 
+function parseDurationMs(value: FormDataEntryValue | null): number | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const duration = Number(value);
+  return Number.isFinite(duration) && duration >= 0 ? Math.round(duration) : undefined;
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const project = await prisma.project.findUnique({ where: { id } });
@@ -27,9 +33,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const body = await request.json() as { youtubeUrl?: string; localFileName?: string };
       if (body.localFileName?.trim()) {
         const originalName = path.basename(body.localFileName.trim());
-        const source = await prisma.source.create({
-          data: { type: "UPLOAD", status: "PENDING", originalName, projects: { connect: { id } } },
-        });
+        const source = await prisma.source.create({ data: { type: "UPLOAD", status: "PENDING", originalName, projects: { connect: { id } } } });
         return NextResponse.json({ id: source.id, type: source.type, status: source.status, originalName }, { status: 201 });
       }
       const youtubeUrl = body.youtubeUrl?.trim();
@@ -48,6 +52,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!(file instanceof File)) return NextResponse.json({ error: "A file is required" }, { status: 400 });
   if (file.size <= 0) return NextResponse.json({ error: "File is empty" }, { status: 400 });
   if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: "File is too large" }, { status: 413 });
+  const durationMs = parseDurationMs(form.get("durationMs"));
 
   const root = process.env.MEDIA_ROOT ?? "/data/media";
   const directory = path.join(root, "sources", id);
@@ -57,7 +62,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
 
   const source = await prisma.source.create({
-    data: { type: "UPLOAD", status: "AVAILABLE", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, projects: { connect: { id } } },
+    data: { type: "UPLOAD", status: "AVAILABLE", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, ...(durationMs !== undefined ? { durationMs, referenceDurationMs: durationMs } : {}), projects: { connect: { id } } },
   });
-  return NextResponse.json({ id: source.id, type: source.type, status: source.status, originalName: source.originalName, sizeBytes: source.sizeBytes?.toString() }, { status: 201 });
+  return NextResponse.json({ id: source.id, type: source.type, status: source.status, originalName: source.originalName, sizeBytes: source.sizeBytes?.toString(), durationMs: source.durationMs }, { status: 201 });
 }
