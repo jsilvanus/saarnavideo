@@ -156,7 +156,7 @@ model JobLog {
   message String
   data Json?
   createdAt DateTime @default(now())
-  job Project @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   @@index([jobId, createdAt])
 }
 
