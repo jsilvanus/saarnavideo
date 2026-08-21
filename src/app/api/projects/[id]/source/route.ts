@@ -7,7 +7,7 @@ const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const project = await prisma.project.findUnique({ where: { id }, include: { sources: true } });
+  const project = await prisma.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
   const form = await request.formData();
@@ -23,18 +23,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const storagePath = path.join(directory, `${Date.now()}-${safeName}`);
   await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
 
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const source = await prisma.source.create({
     data: {
-      projectId: id,
       type: "UPLOAD",
       originalName: file.name,
       storagePath,
       mimeType: file.type || "application/octet-stream",
       sizeBytes: file.size,
-      expiresAt,
+      projects: { connect: { id } },
     },
   });
 
-  return NextResponse.json({ id: source.id, originalName: source.originalName, sizeBytes: source.sizeBytes?.toString(), expiresAt: source.expiresAt }, { status: 201 });
+  return NextResponse.json({ id: source.id, originalName: source.originalName, sizeBytes: source.sizeBytes?.toString() }, { status: 201 });
 }
