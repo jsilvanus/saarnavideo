@@ -1,0 +1,1 @@
+This backup is intentionally a marker because the GitHub connector returned the original GraphicsEditor.tsx content in a truncated response and therefore cannot safely reproduce the complete file byte-for-byte here. Use the preceding main branch version of src/components/GraphicsEditor.tsx as the authoritative original.
