@@ -31,8 +31,7 @@ DROP INDEX IF EXISTS "Asset_projectId_idx";
 DROP INDEX IF EXISTS "Asset_projectId_assetKey_key";
 ALTER TABLE "Asset" DROP COLUMN IF EXISTS "projectId";
 
--- Projects and media assets no longer expire automatically. Generated outputs
--- retain their existing retention policy.
-ALTER TABLE "Project" DROP COLUMN IF EXISTS "expiresAt";
-ALTER TABLE "Source" DROP COLUMN IF EXISTS "expiresAt";
-ALTER TABLE "Asset" DROP COLUMN IF EXISTS "expiresAt";
+-- Projects, sources and reusable assets are now persistent. Their legacy
+-- nullable expiration columns remain for compatibility, but new project/source
+-- and asset creation no longer assigns expiry values. Generated outputs retain
+-- their existing retention policy.
