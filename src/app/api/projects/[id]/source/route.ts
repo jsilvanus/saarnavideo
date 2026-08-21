@@ -24,15 +24,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
     try {
-      const body = await request.json() as { youtubeUrl?: string };
+      const body = await request.json() as { youtubeUrl?: string; localFileName?: string };
+      if (body.localFileName?.trim()) {
+        const originalName = path.basename(body.localFileName.trim());
+        const source = await prisma.source.create({
+          data: { type: "UPLOAD", status: "PENDING", originalName, projects: { connect: { id } } },
+        });
+        return NextResponse.json({ id: source.id, type: source.type, status: source.status, originalName }, { status: 201 });
+      }
       const youtubeUrl = body.youtubeUrl?.trim();
       if (!youtubeUrl) return NextResponse.json({ error: "YouTube URL is required" }, { status: 400 });
       const youtubeVideoId = extractYouTubeId(youtubeUrl);
       if (!youtubeVideoId) return NextResponse.json({ error: "Unsupported YouTube URL" }, { status: 400 });
-      const source = await prisma.source.create({ data: { type: "YOUTUBE", youtubeVideoId, youtubeUrl, projects: { connect: { id } } } });
-      return NextResponse.json({ id: source.id, type: source.type, youtubeVideoId, youtubeUrl }, { status: 201 });
+      const source = await prisma.source.create({ data: { type: "YOUTUBE", status: "AVAILABLE", youtubeVideoId, youtubeUrl, projects: { connect: { id } } } });
+      return NextResponse.json({ id: source.id, type: source.type, status: source.status, youtubeVideoId, youtubeUrl }, { status: 201 });
     } catch {
-      return NextResponse.json({ error: "Invalid YouTube source" }, { status: 400 });
+      return NextResponse.json({ error: "Invalid source" }, { status: 400 });
     }
   }
 
@@ -50,7 +57,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
 
   const source = await prisma.source.create({
-    data: { type: "UPLOAD", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, projects: { connect: { id } } },
+    data: { type: "UPLOAD", status: "AVAILABLE", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, projects: { connect: { id } } },
   });
-  return NextResponse.json({ id: source.id, originalName: source.originalName, sizeBytes: source.sizeBytes?.toString() }, { status: 201 });
+  return NextResponse.json({ id: source.id, type: source.type, status: source.status, originalName: source.originalName, sizeBytes: source.sizeBytes?.toString() }, { status: 201 });
 }
