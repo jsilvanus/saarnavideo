@@ -1,0 +1,53 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+
+type Project = {
+  id: string; title: string; preacher?: string | null;
+  jobs?: { id: string; status: string; progress: number }[];
+  outputs?: { id: string; type: string }[];
+};
+
+type Segment = { id: string; label: string; startSeconds: number; endSeconds: number };
+
+const TEMPLATES = [
+  { key: "sermon", label: "Sermon" },
+  { key: "liturgy", label: "Liturgy" },
+  { key: "vespers", label: "Vespers" },
+];
+
+const SEGMENT_TYPES = [
+  { id: "gospel", label: "Gospel", enabled: true },
+  { id: "epistle", label: "Epistle", enabled: true },
+  { id: "sermon", label: "Sermon", enabled: true },
+  { id: "creed", label: "Creed", enabled: true },
+  { id: "intercessions", label: "Intercessions", enabled: true },
+];
+
+export default function HomePage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [title, setTitle] = useState("");
+  const [preacher, setPreacher] = useState("");
+  const [templateKey, setTemplateKey] = useState("sermon");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [segments, setSegments] = useState<Segment[]>(SEGMENT_TYPES.filter(s => s.enabled).map(s => ({ ...s, startSeconds: 0, endSeconds: 0 })));
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function refresh() { const response = await fetch("/api/projects", { cache: "no-store" }); if (response.ok) setProjects(await response.json()); }
+  useEffect(() => { void refresh(); const interval = setInterval(refresh, 5000); return () => clearInterval(interval); }, []);
+  function updateSegment(index: number, field: "startSeconds" | "endSeconds", value: string) { const updated = [...segments]; updated[index] = { ...updated[index], [field]: Number(value) || 0 }; setSegments(updated); }
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setMessage(""); setError("");
+    if (files.length === 0 && !sourceUrl.trim()) { setError("Choose a source video or paste a YouTube URL"); return; }
+    const validSegments = segments.filter(s => Number.isFinite(s.startSeconds) && Number.isFinite(s.endSeconds) && s.endSeconds > s.startSeconds);
+    const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, preacher, templateKey, sourceUrl: sourceUrl.trim() || undefined, semanticSegments: validSegments }) });
+    const data = await response.json(); if (!response.ok) { setError(data.error ?? "Project creation failed"); return; }
+    for (const file of files) { const form = new FormData(); form.set("file", file); const upload = await fetch(`/api/projects/${data.id}/source`, { method: "POST", body: form }); if (!upload.ok) { setError((await upload.json()).error ?? "Upload failed"); return; } }
+    const generated = await fetch(`/api/projects/${data.id}/generate`, { method: "POST" }); if (!generated.ok) { setError((await generated.json()).error ?? "Unable to queue generation"); return; }
+    setMessage(`Project "${title}" created and queued for generation.`); setFiles([]); setSourceUrl(""); setTitle(""); setPreacher(""); setTemplateKey("sermon"); await refresh();
+  }
+  const statusColor = (status: string) => status === "COMPLETED" ? "#4caf50" : status === "FAILED" ? "#f44336" : status === "RENDERING" ? "#ff9800" : "#2196f3";
+  return <main><header><h1>SaarnaVideo</h1><p className="muted">Create a publishable worship-service video from a recording.</p></header><form onSubmit={createProject}><section className="card"><h2>Project</h2><div className="grid two"><div><label>Title</label><input value={title} onChange={e => setTitle(e.target.value)} required /></div><div><label>Preacher</label><input value={preacher} onChange={e => setPreacher(e.target.value)} /></div></div></section><section className="card"><h2>Template</h2><label>Composition Template</label><select value={templateKey} onChange={e => setTemplateKey(e.target.value)}>{TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></section><section className="card"><h2>Sources</h2><input type="file" accept="video/*" multiple onChange={e => setFiles(Array.from(e.target.files ?? []))} /><label>YouTube URL (optional)</label><input type="url" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} /><p className="muted">Upload one or more video files or reference a YouTube URL.</p></section><section className="card"><h2>Semantic Sections</h2><p className="muted">Mark the start and end times.</p><div className="grid two">{segments.map((segment, idx) => <fieldset key={segment.id}><legend>{segment.label}</legend><label>Start (sec)<input type="number" min="0" step="0.1" value={segment.startSeconds || ""} onChange={e => updateSegment(idx, "startSeconds", e.target.value)} /></label><label>End (sec)<input type="number" min="0" step="0.1" value={segment.endSeconds || ""} onChange={e => updateSegment(idx, "endSeconds", e.target.value)} /></label></fieldset>)}</div></section><button type="submit">Create &amp; Generate</button>{message && <p style={{color:"#4caf50"}}>{message}</p>}{error && <p style={{color:"#f44336"}}>{error}</p>}</form><section className="card"><h2>Projects</h2>{projects.map(project => <article className="project-row" key={project.id}><strong>{project.title}</strong><span>{project.jobs?.[0]?.status ?? "No job"}</span>{project.outputs?.map(output => <a key={output.id} href={`/api/outputs/${output.id}`}>{output.type}</a>)}</article>)}</section></main>;
+}
