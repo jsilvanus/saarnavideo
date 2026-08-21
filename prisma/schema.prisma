@@ -131,5 +131,4 @@ model Asset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   projects Project[]
-  @@unique([assetKey])
 }
