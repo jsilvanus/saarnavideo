@@ -1,13 +1,40 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024);
+
+export async function PUT(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
+  const { id, sourceId } = await context.params;
+  const source = await prisma.source.findFirst({ where: { id: sourceId, type: "UPLOAD", projects: { some: { id } } } });
+  if (!source) return NextResponse.json({ error: "Pending upload source not found" }, { status: 404 });
+  const form = await request.formData();
+  const file = form.get("file");
+  if (!(file instanceof File)) return NextResponse.json({ error: "A file is required" }, { status: 400 });
+  if (file.size <= 0) return NextResponse.json({ error: "File is empty" }, { status: 400 });
+  if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: "File is too large" }, { status: 413 });
+
+  const root = process.env.MEDIA_ROOT ?? "/data/media";
+  const directory = path.join(root, "sources", id);
+  await mkdir(directory, { recursive: true });
+  const safeName = path.basename(file.name).replace(/[^a-zA-Z0-9._-]/g, "_") || "source";
+  const storagePath = path.join(directory, `${Date.now()}-${safeName}`);
+  await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
+
+  const updated = await prisma.source.update({
+    where: { id: sourceId },
+    data: { status: "AVAILABLE", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size },
+  });
+  return NextResponse.json({ id: updated.id, status: updated.status, originalName: updated.originalName, sizeBytes: updated.sizeBytes?.toString() });
+}
+
 export async function GET(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
   const { id, sourceId } = await context.params;
   const source = await prisma.source.findFirst({ where: { id: sourceId, projects: { some: { id } } } });
-  if (!source || source.type !== "UPLOAD" || !source.storagePath) return NextResponse.json({ error: "Uploaded source not found" }, { status: 404 });
+  if (!source || source.type !== "UPLOAD" || !source.storagePath || source.status !== "AVAILABLE") return NextResponse.json({ error: "Uploaded source not found" }, { status: 404 });
   const info = await stat(source.storagePath); const size = info.size; const range = request.headers.get("range");
   const headers = new Headers({ "Content-Type": source.mimeType || "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=60" });
   const stream = (start?: number, end?: number) => Readable.toWeb(createReadStream(source.storagePath!, start === undefined ? undefined : { start, end })) as ReadableStream;
