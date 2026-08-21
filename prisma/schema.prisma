@@ -26,6 +26,7 @@ model Project {
   definition Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  expiresAt DateTime?
   sources Source[]
   jobs GenerationJob[]
   outputs Output[]
@@ -44,6 +45,7 @@ model Source {
   sizeBytes BigInt?
   durationMs Int?
   createdAt DateTime @default(now())
+  expiresAt DateTime?
   projects Project[]
 }
 
@@ -128,6 +130,7 @@ model Asset {
   height Int?
   sizeBytes BigInt
   hasAlpha Boolean @default(false)
+  expiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   projects Project[]
