@@ -1,450 +1,75 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 
-type Project = {
-  id: string; title: string; preacher?: string | null;
-  jobs?: { id: string; status: string; progress: number }[];
-  outputs?: { id: string; type: string }[];
-};
-
-type Segment = { id: string; label: string; startSeconds: number; endSeconds: number };
-
-const TEMPLATES = [
-  { key: "sermon", label: "Sermon" },
-  { key: "liturgy", label: "Liturgy" },
-  { key: "vespers", label: "Vespers" },
-];
-
-const SEGMENT_TYPES = [
-  { id: "gospel", label: "Gospel", enabled: true },
-  { id: "epistle", label: "Epistle", enabled: true },
-  { id: "sermon", label: "Sermon", enabled: true },
-  { id: "creed", label: "Creed", enabled: true },
-  { id: "intercessions", label: "Intercessions", enabled: true },
-];
+type Project = { id: string; title: string; preacher?: string | null; jobs?: { id: string; status: string; progress: number }[]; outputs?: { id: string; type: string }[]; };
+type Section = "Sources" | "Sections" | "Graphics" | "Composition" | "Preview" | "Transcription" | "Generate" | "Download";
+const sections: Section[] = ["Sources", "Sections", "Graphics", "Composition", "Preview", "Transcription", "Generate", "Download"];
 
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [active, setActive] = useState<Section>("Sources");
+  const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [preacher, setPreacher] = useState("");
-  const [templateKey, setTemplateKey] = useState("sermon");
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  const [segments, setSegments] = useState<Segment[]>(
-    SEGMENT_TYPES.filter(s => s.enabled).map(s => ({ ...s, startSeconds: 0, endSeconds: 0 }))
-  );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
+  const selected = projects.find(p => p.id === selectedId) ?? null;
 
-  async function refresh() {
-    const response = await fetch("/api/projects", { cache: "no-store" });
-    if (response.ok) setProjects(await response.json());
+  async function refresh() { const r = await fetch("/api/projects", { cache: "no-store" }); if (r.ok) { const data = await r.json(); setProjects(data); if (!selectedId && data[0]) setSelectedId(data[0].id); } }
+  useEffect(() => { void refresh(); }, []);
+
+  async function createProject(e: FormEvent) {
+    e.preventDefault(); setError("");
+    try { const r = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, preacher, templateKey: "basic" }) }); const data = await r.json(); if (!r.ok) throw new Error(data.error ?? "Project creation failed"); setCreating(false); setTitle(""); setPreacher(""); await refresh(); setSelectedId(data.id); }
+    catch (e) { setError(e instanceof Error ? e.message : "Project creation failed"); }
   }
 
-  useEffect(() => {
-    void refresh();
-    const interval = setInterval(refresh, 5000); // Auto-refresh every 5 seconds
-    return () => clearInterval(interval);
-  }, []);
-
-  function updateSegment(index: number, field: "startSeconds" | "endSeconds", value: string) {
-    const updated = [...segments];
-    updated[index] = { ...updated[index], [field]: Number(value) || 0 };
-    setSegments(updated);
+  async function duplicateProject(project: Project) {
+    setMenuId(null); setError("");
+    const r = await fetch(`/api/projects/${project.id}/duplicate`, { method: "POST" });
+    if (!r.ok) { setError((await r.json()).error ?? "Could not duplicate project"); return; }
+    const data = await r.json(); await refresh(); setSelectedId(data.id ?? data.project?.id); setMessage("Project duplicated.");
   }
 
-  async function createProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setMessage("");
-    setError("");
-
-    if (files.length === 0 && !sourceUrl.trim()) {
-      setError("Choose a source video or paste a YouTube URL");
-      return;
-    }
-
-    // Filter segments with valid times
-    const validSegments = segments.filter(
-      (s) => Number.isFinite(s.startSeconds) && Number.isFinite(s.endSeconds) && s.endSeconds > s.startSeconds
-    );
-
-    const response = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title,
-        preacher,
-        templateKey,
-        sourceUrl: sourceUrl.trim() || undefined,
-        semanticSegments: validSegments,
-      }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data.error ?? "Project creation failed");
-      return;
-    }
-
-    for (const file of files) {
-      const form = new FormData();
-      form.set("file", file);
-      const upload = await fetch(`/api/projects/${data.id}/source`, { method: "POST", body: form });
-      if (!upload.ok) {
-        const body = await upload.json();
-        setError(body.error ?? "Upload failed");
-        return;
-      }
-    }
-
-    // Queue generation
-    const generated = await fetch(`/api/projects/${data.id}/generate`, { method: "POST" });
-    if (!generated.ok) {
-      const body = await generated.json();
-      setError(body.error ?? "Unable to queue generation");
-      return;
-    }
-
-    setMessage(`Project "${title}" created and queued for generation.`);
-    setFiles([]);
-    setSourceUrl("");
-    setTitle("");
-    setPreacher("");
-    setTemplateKey("sermon");
-    setSegments(
-      SEGMENT_TYPES.filter(s => s.enabled).map(s => ({ ...s, startSeconds: 0, endSeconds: 0 }))
-    );
-    await refresh();
+  async function deleteProject() {
+    if (!confirmDelete) return; const project = confirmDelete; setConfirmDelete(null); setMenuId(null); setError("");
+    const r = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
+    if (!r.ok) { setError((await r.json()).error ?? "Could not delete project"); return; }
+    if (selectedId === project.id) setSelectedId(null); await refresh(); setMessage("Project deleted.");
   }
 
-  const statusColor = (status: string) => {
-    if (status === "COMPLETED") return "#4caf50";
-    if (status === "FAILED") return "#f44336";
-    if (status === "RENDERING") return "#ff9800";
-    return "#2196f3";
-  };
-
-  return (
-    <main>
-      <header>
-        <h1>SaarnaVideo</h1>
-        <p className="muted">Create a publishable worship-service video from a recording.</p>
-      </header>
-
-      <form onSubmit={createProject}>
-        <section className="card">
-          <h2>Project</h2>
-          <div className="grid two">
-            <div>
-              <label htmlFor="title">Title</label>
-              <input id="title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-            </div>
-            <div>
-              <label htmlFor="preacher">Preacher</label>
-              <input id="preacher" value={preacher} onChange={(e) => setPreacher(e.target.value)} />
-            </div>
-          </div>
-        </section>
-
-        <section className="card">
-          <h2>Template</h2>
-          <div>
-            <label htmlFor="template">Composition Template</label>
-            <select id="template" value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
-              {TEMPLATES.map((t) => (
-                <option key={t.key} value={t.key}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </section>
-
-        <section className="card">
-          <h2>Sources</h2>
-          <input
-            type="file"
-            accept="video/*"
-            multiple
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-          />
-          <div style={{ marginTop: "1rem" }}>
-            <label htmlFor="source-url">YouTube URL (optional)</label>
-            <input
-              id="source-url"
-              type="url"
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="https://www.youtube.com/watch?v=..."
-            />
-          </div>
-          <p className="muted">Upload one or more video files or reference a YouTube URL. Existing sources remain attached to the project.</p>
-        </section>
-
-        <section className="card">
-          <h2>Semantic Sections</h2>
-          <p className="muted">
-            Mark the start and end times (in seconds) for each section of the recording. Leave empty sections unused.
-          </p>
-          <div className="grid two">
-            {segments.map((segment, idx) => (
-              <fieldset key={segment.id}>
-                <legend>{segment.label}</legend>
-                <div className="input-group">
-                  <label>Start (sec)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={segment.startSeconds || ""}
-                    onChange={(e) => updateSegment(idx, "startSeconds", e.target.value)}
-                  />
-                </div>
-                <div className="input-group">
-                  <label>End (sec)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={segment.endSeconds || ""}
-                    onChange={(e) => updateSegment(idx, "endSeconds", e.target.value)}
-                  />
-                </div>
-              </fieldset>
-            ))}
-          </div>
-        </section>
-
-        <button type="submit">Create &amp; Generate</button>
-        {message && <p style={{ color: "#4caf50" }}>{message}</p>}
-        {error && <p style={{ color: "#f44336" }}>{error}</p>}
-      </form>
-
-      <section className="card">
-        <h2>Projects</h2>
-        {projects.length === 0 ? (
-          <p className="muted">No projects yet. Create one above to get started.</p>
-        ) : (
-          <div>
-            {projects.map((project) => {
-              const job = project.jobs?.[0];
-              const isProcessing = job && ["QUEUED", "ACQUIRING_SOURCE", "PROCESSING", "RENDERING"].includes(job.status);
-              return (
-                <article
-                  key={project.id}
-                  className="project-row"
-                  style={{ opacity: isProcessing ? 0.9 : 1, transition: "opacity 0.3s" }}
-                >
-                  <div>
-                    <strong>{project.title}</strong>
-                    {project.preacher && <span className="preacher">{project.preacher}</span>}
-                  </div>
-                  <div>
-                    {job ? (
-                      <div className="job-status">
-                        <span style={{ color: statusColor(job.status) }}>
-                          {job.status} ({job.progress}%)
-                        </span>
-                        {isProcessing && <span className="spinner">●</span>}
-                      </div>
-                    ) : (
-                      <span className="muted">No job</span>
-                    )}
-                  </div>
-                  {(project.outputs && project.outputs.length > 0) && (
-                    <div className="outputs">
-                      {project.outputs.map((output) => (
-                        <a key={output.id} href={`/api/outputs/${output.id}`} className="download-btn">
-                          {output.type === "VIDEO" ? "📥 Video" : "🖼️ Thumbnail"}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <style jsx>{`
-        main {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 2rem;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-
-        header {
-          margin-bottom: 2rem;
-        }
-
-        h1 {
-          margin: 0 0 0.5rem 0;
-        }
-
-        .muted {
-          color: #666;
-          font-size: 0.9rem;
-          margin: 0.5rem 0 0 0;
-        }
-
-        .card {
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          padding: 1.5rem;
-          margin-bottom: 1.5rem;
-          background: #fafafa;
-        }
-
-        .card h2 {
-          margin: 0 0 1rem 0;
-          font-size: 1.2rem;
-        }
-
-        .grid {
-          display: grid;
-          gap: 1.5rem;
-        }
-
-        .grid.two {
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        }
-
-        label {
-          display: block;
-          margin-bottom: 0.5rem;
-          font-weight: 500;
-        }
-
-        input[type="text"],
-        input[type="number"],
-        input[type="file"],
-        select {
-          width: 100%;
-          padding: 0.75rem;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          font-size: 1rem;
-          font-family: inherit;
-        }
-
-        input[type="file"] {
-          padding: 0.5rem;
-        }
-
-        select {
-          cursor: pointer;
-        }
-
-        fieldset {
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          padding: 1rem;
-          margin-bottom: 1rem;
-        }
-
-        legend {
-          font-weight: 600;
-          padding: 0 0.5rem;
-        }
-
-        .input-group {
-          margin-bottom: 0.75rem;
-        }
-
-        .input-group:last-child {
-          margin-bottom: 0;
-        }
-
-        button {
-          background: #2196f3;
-          color: white;
-          border: none;
-          padding: 0.75rem 1.5rem;
-          border-radius: 4px;
-          font-size: 1rem;
-          cursor: pointer;
-          transition: background 0.2s;
-        }
-
-        button:hover {
-          background: #1976d2;
-        }
-
-        p[style] {
-          padding: 0.75rem 1rem;
-          border-radius: 4px;
-          margin-top: 1rem;
-        }
-
-        .project-row {
-          display: grid;
-          grid-template-columns: 1fr auto auto;
-          gap: 1.5rem;
-          align-items: center;
-          padding: 1rem;
-          border-bottom: 1px solid #ddd;
-        }
-
-        .project-row:last-child {
-          border-bottom: none;
-        }
-
-        .project-row strong {
-          font-size: 1.1rem;
-          display: block;
-          margin-bottom: 0.25rem;
-        }
-
-        .preacher {
-          color: #666;
-          font-size: 0.9rem;
-          display: block;
-        }
-
-        .job-status {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-
-        .spinner {
-          display: inline-block;
-          animation: spin 1s linear infinite;
-          font-size: 0.8rem;
-        }
-
-        @keyframes spin {
-          0% {
-            transform: rotate(0deg);
-          }
-          100% {
-            transform: rotate(360deg);
-          }
-        }
-
-        .outputs {
-          display: flex;
-          gap: 0.5rem;
-        }
-
-        .download-btn {
-          display: inline-block;
-          padding: 0.5rem 1rem;
-          background: #4caf50;
-          color: white;
-          text-decoration: none;
-          border-radius: 4px;
-          font-size: 0.9rem;
-          transition: background 0.2s;
-        }
-
-        .download-btn:hover {
-          background: #45a049;
-        }
-      `}</style>
-    </main>
-  );
+  return <main className="app">
+    <aside className="sidebar"><div className="brand">SaarnaVideo</div><button className="new" onClick={() => setCreating(true)}>＋ New project</button><div className="projects">
+      {projects.map(p => <div key={p.id} className={`project ${selectedId === p.id ? "selected" : ""}`}><button className="project-main" onClick={() => { setSelectedId(p.id); setActive("Sources"); setMenuId(null); }}><strong>{p.title}</strong><small>{p.preacher || "No author"}</small></button><button className="more" aria-label={`Actions for ${p.title}`} onClick={() => setMenuId(menuId === p.id ? null : p.id)}>⋯</button>{menuId === p.id && <div className="menu"><button onClick={() => duplicateProject(p)}>Duplicate</button><button className="danger" onClick={() => { setConfirmDelete(p); setMenuId(null); }}>Delete…</button></div>}</div>)}
+      {projects.length === 0 && <p className="muted">No projects yet.</p>}
+    </div></aside>
+    <section className="workspace">
+      {!selected ? <div className="empty"><h1>{projects.length ? "Select a project" : "Create a project"}</h1><button onClick={() => setCreating(true)}>＋ New project</button></div> : <>
+        <header><div><h1>{selected.title}</h1><p className="muted">{selected.preacher || "No author set"}</p></div><button className="primary" onClick={() => setActive("Generate")}>Generate</button></header>
+        <nav>{sections.map(s => <button key={s} className={active === s ? "active" : ""} onClick={() => setActive(s)}>{s}</button>)}</nav>
+        <div className="content">
+          {active === "Sources" && <Panel title="Sources" text="Upload video files or add YouTube targets. Sources are reusable and are not copied when projects are duplicated."><div className="placeholder">Upload source / Add YouTube target</div></Panel>}
+          {active === "Sections" && <Panel title="Sections" text="Create clips from your sources by setting source and in/out points."><div className="placeholder">Section / clip editor</div></Panel>}
+          {active === "Graphics" && <Panel title="Graphics" text="Upload images and create generic slates, overlays and thumbnails."><div className="graphics"><div>＋ Image</div><div>＋ Slate</div><div>＋ Overlay</div><div>＋ Thumbnail</div></div></Panel>}
+          {active === "Composition" && <Panel title="Composition" text="Arrange sections and overlays. Drag to reorder and set transitions."><div className="placeholder">Timeline editor</div></Panel>}
+          {active === "Preview" && <Panel title="Preview" text="Browser preview can be added when a preview endpoint is available."><div className="preview">Preview</div></Panel>}
+          {active === "Transcription" && <Panel title="Transcription" text="Choose a language and create a VTT track from a source."><select><option>Finnish</option><option>English</option><option>Swedish</option><option>Auto detect</option></select><button disabled>Transcribe → VTT</button></Panel>}
+          {active === "Generate" && <Panel title="Generate" text="Render the current composition."><button className="primary">Generate video</button></Panel>}
+          {active === "Download" && <Panel title="Download" text="Download generated video, thumbnail and transcription when ready.">{selected.outputs?.length ? selected.outputs.map(o => <a className="download" key={o.id} href={`/api/outputs/${o.id}`}>{o.type} ↓</a>) : <p className="muted">Nothing generated yet.</p>}</Panel>}
+          {message && <p className="success">{message}</p>}{error && <p className="error">{error}</p>}
+        </div>
+      </>}
+    </section>
+    {creating && <div className="backdrop"><form className="modal" onSubmit={createProject}><h2>New project</h2><label>Title<input value={title} onChange={e => setTitle(e.target.value)} required /></label><label>Author<input value={preacher} onChange={e => setPreacher(e.target.value)} /></label><div className="actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button className="primary">Create</button></div></form></div>}
+    {confirmDelete && <div className="backdrop"><div className="modal"><h2>Delete “{confirmDelete.title}”?</h2><p className="muted">This deletes the project and its composition. Shared source media and assets are kept when still used elsewhere.</p><div className="actions"><button onClick={() => setConfirmDelete(null)}>Cancel</button><button className="dangerButton" onClick={deleteProject}>Delete project</button></div></div></div>}
+    <style jsx>{`
+      .app{min-height:100vh;display:flex;background:#f6f7f9;color:#18202a;font-family:system-ui,sans-serif}.sidebar{width:270px;flex:none;background:#111827;color:white;padding:20px 14px}.brand{font-size:21px;font-weight:750;padding:4px 8px 18px}.new{width:100%;padding:10px;border:0;border-radius:8px;font-weight:650;margin-bottom:14px}.projects{display:grid;gap:4px}.project{position:relative;display:flex;border-radius:8px}.project.selected{background:#273244}.project-main{flex:1;text-align:left;background:none;color:#e5e7eb;border:0;padding:10px}.project-main strong,.project-main small{display:block}.project-main small{color:#94a3b8;margin-top:3px}.more{background:none;color:#cbd5e1;border:0;padding:0 10px;font-size:20px}.menu{position:absolute;right:4px;top:40px;background:white;color:#111827;border-radius:8px;box-shadow:0 8px 25px #0003;padding:5px;z-index:3;min-width:150px}.menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:9px;border-radius:5px}.menu button:hover{background:#f1f5f9}.danger,.dangerButton{color:#b91c1c!important}.workspace{flex:1;min-width:0}.workspace header{height:92px;background:white;border-bottom:1px solid #e5e7eb;padding:20px 30px;display:flex;justify-content:space-between;align-items:center}.workspace h1{margin:0 0 4px;font-size:24px}.muted{color:#64748b;font-size:14px}.primary{background:#111827;color:white;border:0;border-radius:8px;padding:10px 15px;font-weight:650}nav{display:flex;overflow:auto;background:white;border-bottom:1px solid #e5e7eb;padding:0 20px}nav button{background:none;border:0;padding:14px 11px;color:#64748b;border-bottom:2px solid transparent;white-space:nowrap}nav button.active{color:#111827;border-bottom-color:#111827;font-weight:650}.content{max-width:1050px;padding:28px}.panel{background:white;border:1px solid #e5e7eb;border-radius:12px;padding:24px}.panel h2{margin:0 0 5px}.panel>p{margin-top:0}.placeholder{min-height:180px;border:1px dashed #cbd5e1;border-radius:10px;display:grid;place-items:center;color:#64748b}.graphics{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.graphics div{min-height:120px;border:1px dashed #cbd5e1;border-radius:10px;display:grid;place-items:center;color:#64748b}.preview{height:360px;background:#111827;color:white;border-radius:10px;display:grid;place-items:center}.download{display:inline-block;padding:10px 14px;border:1px solid #d8dee8;border-radius:8px;margin-right:8px;color:#111827;text-decoration:none}.success{color:#047857}.error{color:#b91c1c}.empty{text-align:center;margin:15vh auto}.backdrop{position:fixed;inset:0;background:#0008;display:grid;place-items:center;z-index:10}.modal{background:white;border-radius:12px;padding:24px;width:min(460px,calc(100% - 30px));box-shadow:0 20px 50px #0004}.modal label{display:block;margin:15px 0;font-weight:600}.modal input,.modal select{display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #d8dee8;border-radius:7px}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.actions button{padding:10px 14px;border:0;border-radius:7px}.dangerButton{background:#fee2e2;border:0;border-radius:7px;padding:10px 14px;font-weight:650}.empty button{padding:11px 16px;border:0;border-radius:8px;background:#111827;color:white}
+      @media(max-width:750px){.sidebar{width:220px}.content{padding:18px}.graphics{grid-template-columns:1fr}}
+    `}</style>
+  </main>;
 }
+function Panel({title,text,children}:{title:string;text:string;children:ReactNode}){return <section className="panel"><h2>{title}</h2><p className="muted">{text}</p>{children}</section>}
