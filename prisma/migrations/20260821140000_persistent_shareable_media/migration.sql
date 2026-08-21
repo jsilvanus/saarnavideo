@@ -31,9 +31,6 @@ DROP INDEX IF EXISTS "Asset_projectId_idx";
 DROP INDEX IF EXISTS "Asset_projectId_assetKey_key";
 ALTER TABLE "Asset" DROP COLUMN IF EXISTS "projectId";
 
--- Asset keys are globally reusable now that assets may be shared.
-CREATE UNIQUE INDEX IF NOT EXISTS "Asset_assetKey_key" ON "Asset"("assetKey");
-
 -- Projects and media assets no longer expire automatically. Generated outputs
 -- retain their existing retention policy.
 ALTER TABLE "Project" DROP COLUMN IF EXISTS "expiresAt";
