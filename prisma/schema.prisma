@@ -113,6 +113,7 @@ model GenerationJob {
   completedAt DateTime?
   estimatedDurationSeconds Int?
   resourceMetrics Json?
+  renderDefinition Json?
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   logs JobLog[]
   @@index([status, createdAt])
