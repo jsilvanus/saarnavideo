@@ -7,14 +7,58 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum SourceType { UPLOAD YOUTUBE }
-enum OutputType { VIDEO THUMBNAIL }
-enum JobStatus { QUEUED ACQUIRING_SOURCE PROCESSING RENDERING COMPLETED FAILED EXPIRED CANCELLATION_REQUESTED CANCELLED }
-enum JobLogLevel { DEBUG INFO WARN ERROR }
-enum PublicationProvider { YOUTUBE }
-enum PublicationStatus { QUEUED UPLOADING COMPLETED FAILED }
-enum PrivacyState { PRIVATE UNLISTED PUBLIC }
-enum AssetType { OVERLAY BACKGROUND LOGO FONT }
+enum SourceType {
+  UPLOAD
+  YOUTUBE
+}
+
+enum OutputType {
+  VIDEO
+  THUMBNAIL
+}
+
+enum JobStatus {
+  QUEUED
+  ACQUIRING_SOURCE
+  PROCESSING
+  RENDERING
+  COMPLETED
+  FAILED
+  EXPIRED
+  CANCELLATION_REQUESTED
+  CANCELLED
+}
+
+enum JobLogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+enum PublicationProvider {
+  YOUTUBE
+}
+
+enum PublicationStatus {
+  QUEUED
+  UPLOADING
+  COMPLETED
+  FAILED
+}
+
+enum PrivacyState {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
+
+enum AssetType {
+  OVERLAY
+  BACKGROUND
+  LOGO
+  FONT
+}
 
 model Project {
   id String @id @default(cuid())
@@ -105,7 +149,7 @@ model JobLog {
   message String
   data Json?
   createdAt DateTime @default(now())
-  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job Project @relation(fields: [jobId], references: [id], onDelete: Cascade)
   @@index([jobId, createdAt])
 }
 
