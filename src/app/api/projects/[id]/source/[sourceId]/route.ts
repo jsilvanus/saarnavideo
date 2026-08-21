@@ -7,6 +7,12 @@ import { prisma } from "@/lib/prisma";
 
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024);
 
+function parseDurationMs(value: FormDataEntryValue | null): number | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const duration = Number(value);
+  return Number.isFinite(duration) && duration >= 0 ? Math.round(duration) : undefined;
+}
+
 export async function PUT(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
   const { id, sourceId } = await context.params;
   const source = await prisma.source.findFirst({ where: { id: sourceId, type: "UPLOAD", projects: { some: { id } } } });
@@ -17,6 +23,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   if (file.size <= 0) return NextResponse.json({ error: "File is empty" }, { status: 400 });
   if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: "File is too large" }, { status: 413 });
 
+  const durationMs = parseDurationMs(form.get("durationMs"));
   const root = process.env.MEDIA_ROOT ?? "/data/media";
   const directory = path.join(root, "sources", id);
   await mkdir(directory, { recursive: true });
@@ -26,9 +33,40 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
 
   const updated = await prisma.source.update({
     where: { id: sourceId },
-    data: { status: "AVAILABLE", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size },
+    data: {
+      status: "AVAILABLE",
+      originalName: file.name,
+      storagePath,
+      mimeType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
+      ...(durationMs !== undefined ? { durationMs, referenceDurationMs: source.referenceDurationMs ?? durationMs } : {}),
+    },
   });
-  return NextResponse.json({ id: updated.id, status: updated.status, originalName: updated.originalName, sizeBytes: updated.sizeBytes?.toString() });
+
+  const warning = durationMs !== undefined && source.referenceDurationMs !== null && durationMs !== source.referenceDurationMs
+    ? { referenceDurationMs: source.referenceDurationMs, actualDurationMs: durationMs, shorter: durationMs < source.referenceDurationMs }
+    : null;
+
+  return NextResponse.json({
+    id: updated.id,
+    status: updated.status,
+    originalName: updated.originalName,
+    sizeBytes: updated.sizeBytes?.toString(),
+    durationMs: updated.durationMs,
+    referenceDurationMs: updated.referenceDurationMs,
+    durationWarning: warning,
+  });
+}
+
+export async function PATCH(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
+  const { id, sourceId } = await context.params;
+  const source = await prisma.source.findFirst({ where: { id: sourceId, type: "UPLOAD", projects: { some: { id } } } });
+  if (!source) return NextResponse.json({ error: "Source not found" }, { status: 404 });
+  const body = await request.json() as { durationMs?: number };
+  if (!Number.isFinite(body.durationMs) || (body.durationMs ?? -1) < 0) return NextResponse.json({ error: "durationMs must be a non-negative number" }, { status: 400 });
+  const durationMs = Math.round(body.durationMs!);
+  const updated = await prisma.source.update({ where: { id: sourceId }, data: { durationMs, referenceDurationMs: source.referenceDurationMs ?? durationMs } });
+  return NextResponse.json({ id: updated.id, durationMs: updated.durationMs, referenceDurationMs: updated.referenceDurationMs });
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
