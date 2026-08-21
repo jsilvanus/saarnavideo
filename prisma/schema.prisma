@@ -7,58 +7,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum SourceType {
-  UPLOAD
-  YOUTUBE
-}
-
-enum OutputType {
-  VIDEO
-  THUMBNAIL
-}
-
-enum JobStatus {
-  QUEUED
-  ACQUIRING_SOURCE
-  PROCESSING
-  RENDERING
-  COMPLETED
-  FAILED
-  EXPIRED
-  CANCELLATION_REQUESTED
-  CANCELLED
-}
-
-enum JobLogLevel {
-  DEBUG
-  INFO
-  WARN
-  ERROR
-}
-
-enum PublicationProvider {
-  YOUTUBE
-}
-
-enum PublicationStatus {
-  QUEUED
-  UPLOADING
-  COMPLETED
-  FAILED
-}
-
-enum PrivacyState {
-  PRIVATE
-  UNLISTED
-  PUBLIC
-}
-
-enum AssetType {
-  OVERLAY
-  BACKGROUND
-  LOGO
-  FONT
-}
+enum SourceType { UPLOAD YOUTUBE }
+enum OutputType { VIDEO THUMBNAIL }
+enum JobStatus { QUEUED ACQUIRING_SOURCE PROCESSING RENDERING COMPLETED FAILED EXPIRED CANCELLATION_REQUESTED CANCELLED }
+enum JobLogLevel { DEBUG INFO WARN ERROR }
+enum PublicationProvider { YOUTUBE }
+enum PublicationStatus { QUEUED UPLOADING COMPLETED FAILED }
+enum PrivacyState { PRIVATE UNLISTED PUBLIC }
+enum AssetType { OVERLAY BACKGROUND LOGO FONT }
 
 model Project {
   id String @id @default(cuid())
@@ -70,16 +26,15 @@ model Project {
   definition Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  expiresAt DateTime?
   sources Source[]
   jobs GenerationJob[]
   outputs Output[]
   publications Publication[]
   assets Asset[]
 }
+
 model Source {
   id String @id @default(cuid())
-  projectId String
   type SourceType
   youtubeVideoId String?
   youtubeUrl String?
@@ -89,11 +44,9 @@ model Source {
   sizeBytes BigInt?
   durationMs Int?
   createdAt DateTime @default(now())
-  expiresAt DateTime?
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@index([projectId])
+  projects Project[]
 }
+
 model GenerationJob {
   id String @id @default(cuid())
   projectId String
@@ -111,6 +64,7 @@ model GenerationJob {
   logs JobLog[]
   @@index([status, createdAt])
 }
+
 model Output {
   id String @id @default(cuid())
   projectId String
@@ -125,6 +79,7 @@ model Output {
   publications Publication[]
   @@index([projectId, createdAt])
 }
+
 model Publication {
   id String @id @default(cuid())
   projectId String
@@ -151,6 +106,7 @@ model JobLog {
   job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   @@index([jobId, createdAt])
 }
+
 model YouTubeConnection {
   id String @id @default(cuid())
   provider String @unique @default("youtube")
@@ -164,8 +120,6 @@ model YouTubeConnection {
 
 model Asset {
   id String @id @default(cuid())
-  projectId String
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assetKey String
   type AssetType
   storagePath String
@@ -174,11 +128,8 @@ model Asset {
   height Int?
   sizeBytes BigInt
   hasAlpha Boolean @default(false)
-  expiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([projectId, assetKey])
-  @@unique([projectId, assetKey])
+  projects Project[]
+  @@unique([assetKey])
 }
