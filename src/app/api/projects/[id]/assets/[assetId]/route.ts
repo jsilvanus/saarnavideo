@@ -3,38 +3,31 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export async function DELETE(
-  request: Request,
+  _request: Request,
   context: { params: Promise<{ id: string; assetId: string }> }
 ) {
   try {
     const { id, assetId } = await context.params;
-
-    // Verify project exists
     const project = await prisma.project.findUnique({ where: { id } });
-    if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
+    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-    // Find and verify asset belongs to project
-    const asset = await prisma.asset.findUnique({
+    const asset = await prisma.asset.findFirst({
+      where: { id: assetId, projects: { some: { id } } },
+      include: { projects: { select: { id: true } } },
+    });
+    if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+
+    await prisma.asset.update({
       where: { id: assetId },
+      data: { projects: { disconnect: { id } } },
     });
 
-    if (!asset || asset.projectId !== id) {
-      return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+    if (asset.projects.length <= 1) {
+      if (asset.storagePath) await rm(asset.storagePath, { force: true }).catch(() => undefined);
+      await prisma.asset.delete({ where: { id: assetId } });
     }
 
-    // Delete file
-    if (asset.storagePath) {
-      await rm(asset.storagePath, { force: true }).catch(() => {
-        // Ignore file deletion errors
-      });
-    }
-
-    // Delete database record
-    await prisma.asset.delete({ where: { id: assetId } });
-
-    return NextResponse.json({}, { status: 204 });
+    return new Response(null, { status: 204 });
   } catch (error) {
     console.error("Asset deletion error:", error);
     return NextResponse.json({ error: "Failed to delete asset" }, { status: 500 });
