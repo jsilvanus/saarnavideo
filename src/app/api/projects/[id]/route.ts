@@ -17,7 +17,10 @@ function jsonSafe(value: unknown) {
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const project = await prisma.project.findUnique({ where: { id }, include: { source: true, jobs: { orderBy: { createdAt: "desc" }, take: 10 }, outputs: { orderBy: { createdAt: "desc" } }, publications: { orderBy: { createdAt: "desc" } } } });
+  const project = await prisma.project.findUnique({
+    where: { id },
+    include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 10 }, outputs: { orderBy: { createdAt: "desc" } }, publications: { orderBy: { createdAt: "desc" } } },
+  });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   return NextResponse.json(jsonSafe(project));
 }

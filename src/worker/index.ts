@@ -5,6 +5,7 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { buildSourceRenderPlan } from "@/renderer/ffmpeg";
 import type { ProjectDefinition } from "@/domain/project";
+import { resolveSourcePaths, getReferencedSourceIds } from "@/worker/source-resolution";
 import { downloadYouTubeSource, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, validateDuration, formatBytes, formatDuration, type ResourceLimits } from "@/domain/validation";
@@ -114,82 +115,110 @@ async function createOutput(
 }
 
 /**
- * Acquire source file (upload or YouTube download) with validation and resumption support.
+ * Acquire source files (upload or YouTube download) for the composition's referenced sources.
  */
 async function acquireSource(
   jobId: string,
   project: {
     id: string;
-    source: { id: string; type: "UPLOAD" | "YOUTUBE"; storagePath: string | null; youtubeVideoId: string | null; youtubeUrl: string | null } | null;
+    definition: unknown;
+    sources: Array<{
+      id: string;
+      type: "UPLOAD" | "YOUTUBE";
+      storagePath: string | null;
+      youtubeVideoId: string | null;
+      youtubeUrl: string | null;
+    }>;
   }
-): Promise<string> {
-  if (!project.source) throw new Error("Project has no source");
+): Promise<Map<string, string>> {
+  const definition = project.definition as ProjectDefinition;
+  const referencedIds = new Set(getReferencedSourceIds(definition));
+  const sourcePaths = new Map<string, string>();
 
-  // Existing file: verify it still exists and is within retention window
-  if (project.source.storagePath) {
-    try {
-      const stats = await stat(project.source.storagePath);
-      const validation = validateSourceFile(stats.size, RESOURCE_LIMITS);
-      if (!validation.valid) throw new Error(validation.reason);
-      await logJobEvent(jobId, "INFO", "Using existing source file", { path: project.source.storagePath, sizeBytes: stats.size });
-      return project.source.storagePath;
-    } catch (error) {
-      await logJobEvent(jobId, "WARN", "Existing source file unavailable, will retry acquisition", { error: error instanceof Error ? error.message : String(error) });
+  for (const source of project.sources) {
+    if (!referencedIds.has(source.id)) continue;
+
+    if (source.storagePath) {
+      try {
+        const stats = await stat(source.storagePath);
+        const validation = validateSourceFile(stats.size, RESOURCE_LIMITS);
+        if (!validation.valid) throw new Error(validation.reason);
+        await logJobEvent(jobId, "INFO", "Using existing source file", {
+          sourceId: source.id,
+          path: source.storagePath,
+          sizeBytes: stats.size,
+        });
+        sourcePaths.set(source.id, source.storagePath);
+        continue;
+      } catch (error) {
+        await logJobEvent(jobId, "WARN", "Existing source file unavailable, will retry acquisition", {
+          sourceId: source.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
-  }
 
-  // YouTube source: download with resumable retry logic
-  if (project.source.type === "YOUTUBE") {
-    if (!project.source.youtubeUrl || !project.source.youtubeVideoId) {
-      throw new Error("YouTube source missing URL or video ID");
-    }
-
-    if (await checkCancellation(jobId)) {
-      throw new Error("Job cancelled during source acquisition");
-    }
-
-    const directory = path.join(MEDIA_ROOT, "sources", project.id);
-    const storagePath = path.join(directory, `${project.source.youtubeVideoId}.mp4`);
-
-    await logJobEvent(jobId, "INFO", "Starting YouTube source download", {
-      videoId: project.source.youtubeVideoId,
-      url: project.source.youtubeUrl,
-    });
-
-    try {
-      await downloadYouTubeSource(
-        { videoId: project.source.youtubeVideoId, url: project.source.youtubeUrl },
-        storagePath
-      );
-
-      const stats = await stat(storagePath);
-      const validation = validateSourceFile(stats.size, RESOURCE_LIMITS);
-      if (!validation.valid) {
-        await rm(storagePath, { force: true }).catch(() => undefined);
-        throw new Error(validation.reason);
+    if (source.type === "YOUTUBE") {
+      if (!source.youtubeUrl || !source.youtubeVideoId) {
+        throw new Error(`YouTube source missing URL or video ID for sourceId: ${source.id}`);
       }
 
-      await prisma.source.update({
-        where: { id: project.source.id },
-        data: {
-          storagePath,
-          mimeType: "video/mp4",
-          sizeBytes: BigInt(stats.size),
-          expiresAt: new Date(Date.now() + RETENTION_MS),
-        },
+      if (await checkCancellation(jobId)) {
+        throw new Error("Job cancelled during source acquisition");
+      }
+
+      const directory = path.join(MEDIA_ROOT, "sources", project.id);
+      const storagePath = path.join(directory, `${source.youtubeVideoId}.mp4`);
+
+      await logJobEvent(jobId, "INFO", "Starting YouTube source download", {
+        sourceId: source.id,
+        videoId: source.youtubeVideoId,
+        url: source.youtubeUrl,
       });
 
-      await logJobEvent(jobId, "INFO", "YouTube source acquired", { sizeBytes: stats.size });
-      return storagePath;
-    } catch (error) {
-      await logJobEvent(jobId, "ERROR", "YouTube source download failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+      try {
+        await downloadYouTubeSource(
+          { videoId: source.youtubeVideoId, url: source.youtubeUrl },
+          storagePath,
+        );
+
+        const stats = await stat(storagePath);
+        const validation = validateSourceFile(stats.size, RESOURCE_LIMITS);
+        if (!validation.valid) {
+          await rm(storagePath, { force: true }).catch(() => undefined);
+          throw new Error(validation.reason);
+        }
+
+        await prisma.source.update({
+          where: { id: source.id },
+          data: {
+            storagePath,
+            mimeType: "video/mp4",
+            sizeBytes: BigInt(stats.size),
+            expiresAt: new Date(Date.now() + RETENTION_MS),
+          },
+        });
+
+        await logJobEvent(jobId, "INFO", "YouTube source acquired", { sourceId: source.id, sizeBytes: stats.size });
+        sourcePaths.set(source.id, storagePath);
+      } catch (error) {
+        await logJobEvent(jobId, "ERROR", "YouTube source download failed", {
+          sourceId: source.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+
+      continue;
     }
+
+    throw new Error(`Source ${source.id} has no usable media or YouTube URL`);
   }
 
-  throw new Error("Source has no usable media or YouTube URL");
+  return resolveSourcePaths(definition, project.sources.map((source) => ({
+    ...source,
+    storagePath: sourcePaths.get(source.id) ?? source.storagePath,
+  })));
 }
 
 /**
@@ -263,7 +292,7 @@ async function processJob() {
   try {
     const project = await prisma.project.findUnique({
       where: { id: job.projectId },
-      include: { source: true },
+      include: { sources: true },
     });
 
     if (!project) {
@@ -279,8 +308,8 @@ async function processJob() {
       return true;
     }
 
-    // Acquire source
-    const sourcePath = await acquireSource(job.id, project);
+    // Acquire the subset of sources actually referenced by the composition.
+    const sourcePaths = await acquireSource(job.id, project);
 
     await prisma.generationJob.update({
       where: { id: job.id },
@@ -296,7 +325,7 @@ async function processJob() {
     // Render main video
     await logJobEvent(job.id, "INFO", "Starting FFmpeg render", { outputPath });
 
-    const plan = buildSourceRenderPlan(definition, sourcePath, outputPath);
+    const plan = buildSourceRenderPlan(definition, sourcePaths, outputPath);
     const ffmpegProcess = spawn("ffmpeg", plan.args, { stdio: ["pipe", "pipe", "pipe"] });
     runningProcesses.set(job.id, ffmpegProcess);
 

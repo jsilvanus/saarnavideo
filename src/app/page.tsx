@@ -29,7 +29,8 @@ export default function HomePage() {
   const [title, setTitle] = useState("");
   const [preacher, setPreacher] = useState("");
   const [templateKey, setTemplateKey] = useState("sermon");
-  const [file, setFile] = useState<File | null>(null);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [segments, setSegments] = useState<Segment[]>(
     SEGMENT_TYPES.filter(s => s.enabled).map(s => ({ ...s, startSeconds: 0, endSeconds: 0 }))
   );
@@ -58,8 +59,8 @@ export default function HomePage() {
     setMessage("");
     setError("");
 
-    if (!file) {
-      setError("Choose a source video");
+    if (files.length === 0 && !sourceUrl.trim()) {
+      setError("Choose a source video or paste a YouTube URL");
       return;
     }
 
@@ -75,6 +76,7 @@ export default function HomePage() {
         title,
         preacher,
         templateKey,
+        sourceUrl: sourceUrl.trim() || undefined,
         semanticSegments: validSegments,
       }),
     });
@@ -85,14 +87,15 @@ export default function HomePage() {
       return;
     }
 
-    // Upload source file
-    const form = new FormData();
-    form.set("file", file);
-    const upload = await fetch(`/api/projects/${data.id}/source`, { method: "POST", body: form });
-    if (!upload.ok) {
-      const body = await upload.json();
-      setError(body.error ?? "Upload failed");
-      return;
+    for (const file of files) {
+      const form = new FormData();
+      form.set("file", file);
+      const upload = await fetch(`/api/projects/${data.id}/source`, { method: "POST", body: form });
+      if (!upload.ok) {
+        const body = await upload.json();
+        setError(body.error ?? "Upload failed");
+        return;
+      }
     }
 
     // Queue generation
@@ -104,7 +107,8 @@ export default function HomePage() {
     }
 
     setMessage(`Project "${title}" created and queued for generation.`);
-    setFile(null);
+    setFiles([]);
+    setSourceUrl("");
     setTitle("");
     setPreacher("");
     setTemplateKey("sermon");
@@ -158,9 +162,24 @@ export default function HomePage() {
         </section>
 
         <section className="card">
-          <h2>Source</h2>
-          <input type="file" accept="video/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
-          <p className="muted">Upload a video file from your computer. YouTube URLs are supported in Phase 3.</p>
+          <h2>Sources</h2>
+          <input
+            type="file"
+            accept="video/*"
+            multiple
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          />
+          <div style={{ marginTop: "1rem" }}>
+            <label htmlFor="source-url">YouTube URL (optional)</label>
+            <input
+              id="source-url"
+              type="url"
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder="https://www.youtube.com/watch?v=..."
+            />
+          </div>
+          <p className="muted">Upload one or more video files or reference a YouTube URL. Existing sources remain attached to the project.</p>
         </section>
 
         <section className="card">

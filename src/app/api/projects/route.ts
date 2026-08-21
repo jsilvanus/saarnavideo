@@ -42,36 +42,42 @@ function definitionFor(segments: z.infer<typeof segmentSchema>[], sourceId: stri
 }
 
 export async function GET() {
-  const projects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, include: { source: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } } });
+  const projects = await prisma.project.findMany({
+    orderBy: { updatedAt: "desc" },
+    include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, outputs: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
   return NextResponse.json(jsonSafe(projects));
 }
 
 export async function POST(request: Request) {
   try {
     const input = requestSchema.parse(await request.json());
-    
+
     // Use semanticSegments if provided, otherwise fall back to segments (backward compatibility)
     const segments = input.semanticSegments.length > 0 ? input.semanticSegments : input.segments;
-    
+
     const sourceData = input.sourceUrl ? (() => {
       const youtubeVideoId = extractYouTubeId(input.sourceUrl!);
       if (!youtubeVideoId) throw new Error("Unsupported YouTube URL");
       return { type: "YOUTUBE" as const, youtubeVideoId, youtubeUrl: input.sourceUrl };
     })() : undefined;
-    
-    const project = await prisma.project.create({ data: {
-      title: input.title, 
-      preacher: input.preacher || null, 
-      gospelRef: input.gospelRef || null, 
-      gospelText: input.gospelText || null, 
-      templateKey: input.templateKey,
-      definition: {},
-      source: sourceData ? { create: sourceData } : undefined,
-    }, include: { source: true } });
-    
-    // Create definition with the source (if available)
-    let definition = createProjectDefinition({ 
-      template: { 
+
+    const project = await prisma.project.create({
+      data: {
+        title: input.title,
+        preacher: input.preacher || null,
+        gospelRef: input.gospelRef || null,
+        gospelText: input.gospelText || null,
+        templateKey: input.templateKey,
+        definition: {},
+        sources: sourceData ? { create: [sourceData] } : undefined,
+      },
+      include: { sources: true },
+    });
+
+    // Create definition with the first source (if available)
+    let definition = createProjectDefinition({
+      template: {
         key: input.templateKey,
         width: 1920,
         height: 1080,
@@ -79,18 +85,23 @@ export async function POST(request: Request) {
         backgroundColor: "black",
         textColor: "white",
       },
-      semanticSegments: segments, 
-      composition: { 
+      semanticSegments: segments,
+      composition: {
         sourceStartSeconds: 0,
         sourceEndSeconds: 0.001,
-        items: [] 
+        items: []
       }
     });
-    if (project.source) {
-      definition = definitionFor(segments, project.source.id, input.templateKey);
+    const firstSource = project.sources[0];
+    if (firstSource) {
+      definition = definitionFor(segments, firstSource.id, input.templateKey);
     }
-    
-    const updatedProject = await prisma.project.update({ where: { id: project.id }, data: { definition, templateKey: input.templateKey }, include: { source: true } });
+
+    const updatedProject = await prisma.project.update({
+      where: { id: project.id },
+      data: { definition, templateKey: input.templateKey },
+      include: { sources: true },
+    });
     return NextResponse.json(jsonSafe(updatedProject), { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid request" }, { status: 400 });

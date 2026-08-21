@@ -298,11 +298,32 @@ export function buildCompositionRenderPlan(
  * Legacy single-source rendering for backward compatibility.
  * Delegates to buildCompositionRenderPlan if composition items exist.
  */
-export function buildSourceRenderPlan(definition: ProjectDefinition, inputPath: string, outputPath: string): FfmpegPlan {
+export function buildSourceRenderPlan(
+  definition: ProjectDefinition,
+  inputPathOrSourcePaths: string | Map<string, string>,
+  outputPath: string,
+): FfmpegPlan {
+  if (inputPathOrSourcePaths instanceof Map) {
+    const sourcePaths = inputPathOrSourcePaths;
+    if (definition.composition.items && definition.composition.items.length > 0) {
+      return buildCompositionRenderPlan(definition, sourcePaths, outputPath, undefined);
+    }
+
+    const legacySourceId = "legacy-source";
+    if (sourcePaths.size === 0) {
+      throw new Error("Composition must contain at least one source clip or slate");
+    }
+    const legacyPath = sourcePaths.get(legacySourceId) ?? sourcePaths.values().next().value;
+    if (!legacyPath) {
+      throw new Error("No source path available for legacy render");
+    }
+    return buildSourceRenderPlan(definition, legacyPath, outputPath);
+  }
+
   // For multi-source support, we need sourcePaths map. This function is kept for backward compatibility
   // but requires single source. Convert to composition plan if items exist.
   const sourceId = "legacy-source";
-  const sourcePaths = new Map([[sourceId, inputPath]]);
+  const sourcePaths = new Map([[sourceId, inputPathOrSourcePaths]]);
 
   if (definition.composition.items && definition.composition.items.length > 0) {
     // Has explicit items, use composition plan
@@ -318,7 +339,7 @@ export function buildSourceRenderPlan(definition: ProjectDefinition, inputPath: 
     "-hide_banner",
     "-y",
     "-i",
-    inputPath,
+    inputPathOrSourcePaths,
     "-ss",
     formatSeconds(start),
     "-t",

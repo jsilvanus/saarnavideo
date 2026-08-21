@@ -50,22 +50,22 @@ export async function POST(request: Request) {
         preacher: fields.preacher || null,
         templateKey: "sermon",
         definition: {},
-        source: {
-          create: {
+        sources: {
+          create: [{
             type: "UPLOAD",
             originalName: file.name,
             storagePath,
             mimeType: file.type || "application/octet-stream",
             sizeBytes: file.size,
             expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          },
+          }],
         },
       },
-      include: { source: true },
+      include: { sources: true },
     });
 
-    // Now create the definition with the source ID
-    const sourceId = project.source?.id;
+    // Now create the definition with the first source ID.
+    const sourceId = project.sources[0]?.id;
     const definition = createProjectDefinition({
       semanticSegments: segments,
       composition: {
