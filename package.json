@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "worker": "tsx src/worker/index.ts",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.15.0",
