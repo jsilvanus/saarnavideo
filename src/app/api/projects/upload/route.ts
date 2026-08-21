@@ -20,20 +20,11 @@ export async function POST(request: Request) {
     const file = form.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "A source file is required" }, { status: 400 });
 
-    const fields = fieldsSchema.parse({
-      title: form.get("title"),
-      preacher: form.get("preacher") ?? "",
-      gospelStart: form.get("gospelStart"),
-      gospelEnd: form.get("gospelEnd"),
-      sermonStart: form.get("sermonStart"),
-      sermonEnd: form.get("sermonEnd"),
-    });
-
+    const fields = fieldsSchema.parse({ title: form.get("title"), preacher: form.get("preacher") ?? "", gospelStart: form.get("gospelStart"), gospelEnd: form.get("gospelEnd"), sermonStart: form.get("sermonStart"), sermonEnd: form.get("sermonEnd") });
     const projectId = crypto.randomUUID();
     const mediaRoot = process.env.MEDIA_ROOT ?? "/data/media";
     const projectDir = path.join(mediaRoot, "sources", projectId);
     await mkdir(projectDir, { recursive: true });
-
     const safeName = path.basename(file.name).replace(/[^a-zA-Z0-9._-]/g, "_");
     const storagePath = path.join(projectDir, safeName || "source-video");
     await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
@@ -50,21 +41,11 @@ export async function POST(request: Request) {
         preacher: fields.preacher || null,
         templateKey: "sermon",
         definition: {},
-        sources: {
-          create: [{
-            type: "UPLOAD",
-            originalName: file.name,
-            storagePath,
-            mimeType: file.type || "application/octet-stream",
-            sizeBytes: file.size,
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          }],
-        },
+        sources: { create: [{ type: "UPLOAD", originalName: file.name, storagePath, mimeType: file.type || "application/octet-stream", sizeBytes: file.size }] },
       },
       include: { sources: true },
     });
 
-    // Now create the definition with the first source ID.
     const sourceId = project.sources[0]?.id;
     const definition = createProjectDefinition({
       semanticSegments: segments,
@@ -75,13 +56,7 @@ export async function POST(request: Request) {
       },
     });
 
-    // Update project with the correct definition
-    const updatedProject = await prisma.project.update({
-      where: { id: projectId },
-      data: { definition },
-      select: { id: true },
-    });
-
+    const updatedProject = await prisma.project.update({ where: { id: projectId }, data: { definition }, select: { id: true } });
     return NextResponse.json(updatedProject, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid upload" }, { status: 400 });
