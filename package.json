@@ -12,6 +12,8 @@
     "worker": "tsx src/worker/index.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
+    "db:generate:postgres": "prisma generate --schema prisma/schema.postgresql.prisma",
+    "db:push:postgres": "prisma db push --schema prisma/schema.postgresql.prisma",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -26,7 +28,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "eslint": "^8.57.1",
+    "eslint": "^8.57.0",
     "eslint-config-next": "^15.5.0",
     "prisma": "^6.15.0",
     "tsx": "^4.20.0",
