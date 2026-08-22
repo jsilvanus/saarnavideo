@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { graphicSchema, type Graphic } from "@/domain/graphics";
 
 export const transitionSchema = z.object({
   type: z.enum(["cut", "fade", "crossfade"]),
@@ -15,7 +16,8 @@ export const sourceClipSchema = z.object({
 
 export const overlaySchema = z.object({
   type: z.literal("overlay"),
-  template: z.string().min(1),
+  template: z.string().min(1).default("rich"),
+  graphicId: z.string().min(1).optional(),
   kind: z.enum(["text", "rectangle", "image"]).default("text"),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
@@ -31,7 +33,8 @@ export const overlaySchema = z.object({
 
 export const slateSchema = z.object({
   type: z.literal("slate"),
-  template: z.string().min(1),
+  template: z.string().min(1).default("rich"),
+  graphicId: z.string().min(1).optional(),
   mode: z.enum(["standalone", "overlay"]).default("standalone"),
   durationSeconds: z.number().positive(),
   startSeconds: z.number().nonnegative().optional(),
@@ -70,6 +73,7 @@ export const templateSchema = z.object({
 export const projectDefinitionSchema = z.object({
   version: z.literal(1),
   semanticSegments: z.array(semanticSegmentSchema),
+  graphics: z.array(graphicSchema).default([]),
   template: templateSchema.optional(),
   composition: compositionSchema,
 });
@@ -79,6 +83,7 @@ export type TimelineItem = z.infer<typeof timelineItemSchema>;
 export type SemanticSegment = z.infer<typeof semanticSegmentSchema>;
 export type TemplateDefinition = z.infer<typeof templateSchema>;
 export type ProjectDefinition = z.infer<typeof projectDefinitionSchema>;
+export type { Graphic };
 
 export function createProjectDefinition(input: Omit<ProjectDefinition, "version">): ProjectDefinition {
   return projectDefinitionSchema.parse({ version: 1, ...input });
@@ -95,6 +100,7 @@ const legacyTimelineItemSchema = z.discriminatedUnion("type", [legacySourceClipS
 const legacyProjectDefinitionSchema = z.object({
   version: z.literal(1),
   semanticSegments: z.array(semanticSegmentSchema),
+  template: templateSchema.optional(),
   composition: z.object({ sourceStartSeconds: z.number().nonnegative().optional(), sourceEndSeconds: z.number().positive().optional(), items: z.array(legacyTimelineItemSchema) }),
 });
 
@@ -111,6 +117,8 @@ export function migrateProjectDefinition(input: unknown, fallbackSourceId?: stri
   return projectDefinitionSchema.parse({
     version: 1,
     semanticSegments: parsed.semanticSegments,
+    graphics: [],
+    template: parsed.template,
     composition: { sourceStartSeconds: parsed.composition.sourceStartSeconds ?? 0, sourceEndSeconds: parsed.composition.sourceEndSeconds ?? 0.001, items: migratedItems },
   });
 }
@@ -119,4 +127,7 @@ export function validateCompositionSources(definition: ProjectDefinition, source
   const sourceIdSet = new Set(sourceIds);
   const missingSourceIds = definition.composition.items.filter(isSourceClip).map((item) => item.sourceId).filter((sourceId) => !sourceIdSet.has(sourceId));
   if (missingSourceIds.length > 0) throw new Error(`Composition references missing sources: ${Array.from(new Set(missingSourceIds)).join(", ")}`);
+  const graphicIds = new Set(definition.graphics.map((graphic) => graphic.id));
+  const missingGraphics = definition.composition.items.filter((item) => item.type !== "source-clip" && item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
+  if (missingGraphics.length > 0) throw new Error(`Composition references missing graphics: ${Array.from(new Set(missingGraphics)).join(", ")}`);
 }
