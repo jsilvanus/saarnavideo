@@ -3,21 +3,16 @@ import type { Graphic, ProjectDefinition, TimelineItem } from "@/domain/project"
 
 function withGraphicLayers(item: TimelineItem, graphic: Graphic): TimelineItem {
   const data = { ...(item.data ?? {}), layers: JSON.stringify(graphic.layers), backgroundColor: graphic.backgroundColor };
-  if (item.type === "slate") {
-    return { ...item, template: "rich", data };
-  }
+  if (item.type === "slate") return { ...item, template: "rich", data };
   return { ...item, template: "rich", kind: "text", data };
 }
 
-/**
- * Resolves reusable graphics into the existing FFmpeg slate/overlay primitives.
- * Graphics remain presentation definitions; composition placement determines
- * whether they become standalone slates or timed overlays.
- */
+/** Resolve reusable graphics into the existing FFmpeg slate/overlay primitives. */
 export function materializeGraphics(definition: ProjectDefinition): ProjectDefinition {
   const graphics = new Map(definition.graphics.map((graphic) => [graphic.id, graphic]));
   const items = definition.composition.items.map((item) => {
-    if (item.type === "source-clip" || !item.graphicId) return item;
+    if (item.type === "source-clip") return item;
+    if (!item.graphicId) return item;
     const graphic = graphics.get(item.graphicId);
     if (!graphic) throw new Error(`Missing graphic definition: ${item.graphicId}`);
     return withGraphicLayers(item, graphic);
