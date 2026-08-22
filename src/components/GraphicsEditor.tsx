@@ -75,8 +75,11 @@ function parsePx(value: unknown, fallback = 0) {
 function clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
 
 function anchor(handle: string, l: Layer) {
-  const x = l.x, y = l.y, w = l.width, h = l.height;
-  return { left: handle.includes("e") ? x + w : handle.includes("w") ? x : x + w / 2, top: handle.includes("s") ? y + h : handle.includes("n") ? y : y + h / 2 };
+  const w = l.width, h = l.height;
+  return {
+    left: handle.includes("e") ? w : handle.includes("w") ? 0 : w / 2,
+    top: handle.includes("s") ? h : handle.includes("n") ? 0 : h / 2,
+  };
 }
 
 function resizeLayer(handle: string, start: Layer, dx: number, dy: number) {
@@ -124,7 +127,7 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
     const next = defaultLayers(item, title);
     setSelectedIds(next[0] ? new Set([next[0].id]) : new Set());
     setPrimaryId(next[0]?.id ?? null);
-  }, [item]); // the parent replaces item when selecting another graphic
+  }, [item]);
 
   const pushHistory = (next: Layer[]) => {
     setHistory(prev => [...prev.slice(0, historyIndex + 1), layersRef.current].slice(-50));
@@ -219,11 +222,9 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
     setAssetPicker(false);
   }
 
-  function setItemField(patch: Partial<Item>) { onChange({ ...item, ...patch, template: "rich", data: { ...(item.data ?? {}), layers: serialiseLayers(layers) } }); }
-
   return <div className="graphics-editor">
     <style>{KEYFRAMES}</style>
-    <div className="ge-toolbar">
+    <div className="ge-toolbar" aria-label="Graphic tools">
       <button onClick={() => addLayer("text")}>＋ Text</button><button onClick={() => addLayer("rect")}>＋ Rectangle</button><button onClick={() => addLayer("ellipse")}>＋ Ellipse</button><button onClick={() => addLayer("image")}>＋ Image</button>
       <span className="ge-spacer" /><button onClick={duplicateSelected}>Duplicate</button><button onClick={removeSelected}>Delete</button><button className={grid ? "ge-active" : ""} onClick={() => setGrid(v => !v)}>Grid</button><button className={safe ? "ge-active" : ""} onClick={() => setSafe(v => !v)}>Safe area</button>
     </div>
@@ -239,7 +240,7 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
               {l.type === "image" && <img src={l.src || ""} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none" }} />}
               {selectedIds.has(l.id) && <>
                 {HANDLE_LIST.map(h => { const a = anchor(h, l); return <span key={h} className="ge-handle" style={{ left: a.left, top: a.top, cursor: `${h}-resize` }} onPointerDown={e => beginPointer(e, l.id, "resize", h)} />; })}
-                <span className="ge-rotate" style={{ left: l.x + l.width / 2, top: l.y - 32 }} onPointerDown={e => beginPointer(e, l.id, "rotate")} />
+                <span className="ge-rotate" style={{ left: l.width / 2, top: -32 }} onPointerDown={e => beginPointer(e, l.id, "rotate")} />
               </>}
             </div>)}
             {safe && <><div className="ge-safe safe90" /><div className="ge-safe safe80" /></>}
@@ -247,8 +248,6 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
         </div>
       </div>
       <aside className="ge-properties">
-        <div className="ge-section"><b>Graphic</b><label>Type<select value={item.type} onChange={e => setItemField({ type: e.target.value as GraphicKind })}><option value="slate">Slate</option><option value="overlay">Overlay</option></select></label>{item.type === "slate" ? <label>Mode<select value={item.mode ?? "standalone"} onChange={e => setItemField({ mode: e.target.value as Item["mode"] })}><option value="standalone">Standalone</option><option value="overlay">Overlay</option></select></label> : null}</div>
-        <div className="ge-section"><b>Timing</b>{item.type === "slate" && item.mode !== "overlay" ? <label>Duration (s)<input type="number" min="0.1" step="0.1" value={item.durationSeconds ?? 5} onChange={e => setItemField({ durationSeconds: Number(e.target.value) })} /></label> : <div className="ge-two"><label>Start<input type="number" min="0" step="0.1" value={item.startSeconds ?? 0} onChange={e => setItemField({ startSeconds: Number(e.target.value) })} /></label><label>End<input type="number" min="0.1" step="0.1" value={item.endSeconds ?? 10} onChange={e => setItemField({ endSeconds: Number(e.target.value) })} /></label></div>}</div>
         {primary && <div className="ge-section"><b>Layer: {primary.id}</b><label>Type<span>{primary.type}</span></label>{primary.type === "text" && <label>Text<textarea value={primary.text ?? ""} onChange={e => updateLayer(primary.id, { text: e.target.value })} /></label>}{primary.type === "image" && <label>Image<button onClick={() => setAssetPicker(v => !v)}>{primary.src ? "Change image" : "Choose image"}</button></label>}
           <div className="ge-two"><label>X<input type="number" value={primary.x} onChange={e => updateLayer(primary.id, { x: Number(e.target.value) })} /></label><label>Y<input type="number" value={primary.y} onChange={e => updateLayer(primary.id, { y: Number(e.target.value) })} /></label></div>
           <div className="ge-two"><label>Width<input type="number" min="20" value={primary.width} onChange={e => updateLayer(primary.id, { width: Number(e.target.value) })} /></label><label>Height<input type="number" min="20" value={primary.height} onChange={e => updateLayer(primary.id, { height: Number(e.target.value) })} /></label></div>
@@ -270,6 +269,6 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
         {assetPicker && <div className="ge-section"><b>Assets</b>{assets.filter(a => a.type !== "FONT").map(a => <button key={a.id} onClick={() => chooseAsset(a.assetKey)}>{a.assetKey}</button>)}{!assets.length && <span>No image assets yet.</span>}</div>}
       </aside>
     </div>
-    <style jsx>{`@keyframes lcyt-fadeIn{from{opacity:0}to{opacity:1}}.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px 10px;cursor:pointer}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;inset:0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:12px;height:12px;background:#38bdf8;border:2px solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:12px;height:12px;background:#f472b6;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
+    <style jsx>{`@keyframes lcyt-fadeIn{from{opacity:0}to{opacity:1}}.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#f8fafc;border:1px solid #475569;border-radius:5px;padding:8px 11px;cursor:pointer;font-weight:700;font-size:14px;line-height:1.2}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;inset:0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:12px;height:12px;background:#38bdf8;border:2px solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:12px;height:12px;background:#f472b6;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
   </div>;
 }
