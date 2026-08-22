@@ -18,6 +18,7 @@ export const overlaySchema = z.object({
   type: z.literal("overlay"),
   template: z.string().min(1).default("rich"),
   graphicId: z.string().min(1).optional(),
+  sectionId: z.string().min(1).optional(),
   kind: z.enum(["text", "rectangle", "image"]).default("text"),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
@@ -50,6 +51,7 @@ export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema
 export const semanticSegmentSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
+  sourceId: z.string().min(1).optional(),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
 }).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
