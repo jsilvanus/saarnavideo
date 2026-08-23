@@ -1,60 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-
-type Asset = { id: string; assetKey: string; type: string; mimeType?: string | null; width?: number | null; height?: number | null };
-type GraphicKind = "slate" | "overlay";
-type Layer = {
-  id: string;
-  type: "text" | "rect" | "ellipse" | "image";
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation?: number;
-  text?: string;
-  src?: string;
-  animation?: string;
-  style?: Record<string, string | number>;
-};
-type Item = {
-  type: GraphicKind;
-  template?: string;
-  mode?: "standalone" | "overlay";
-  durationSeconds?: number;
-  startSeconds?: number;
-  endSeconds?: number;
-  opacity?: number;
-  backgroundImage?: string;
-  data?: Record<string, string>;
-};
-
-const WIDTH = 1920;
-const HEIGHT = 1080;
-const GRID = 20;
-const SNAP = 10;
-const HANDLE_LIST = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-
-const ANIMATIONS = [
-  ["", "None"], ["lcyt-fadeIn", "Fade In"], ["lcyt-fadeOut", "Fade Out"],
-  ["lcyt-slideInLeft", "Slide In ←"], ["lcyt-slideInRight", "Slide In →"],
-  ["lcyt-slideInUp", "Slide In ↑"], ["lcyt-slideInDown", "Slide In ↓"],
-  ["lcyt-zoomIn", "Zoom In"], ["lcyt-zoomOut", "Zoom Out"],
-  ["lcyt-pulse", "Pulse"], ["lcyt-blink", "Blink"], ["lcyt-typewriter", "Typewriter"],
-];
-
-const KEYFRAMES = `
-@keyframes lcyt-fadeIn{from{opacity:0}to{opacity:1}}
-@keyframes lcyt-fadeOut{from{opacity:1}to{opacity:0}}
-@keyframes lcyt-slideInLeft{from{transform:translateX(-100%)}to{transform:translateX(0)}}
-@keyframes lcyt-slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}
-@keyframes lcyt-slideInUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
-@keyframes lcyt-slideInDown{from{transform:translateY(-100%)}to{transform:translateY(0)}}
-@keyframes lcyt-zoomIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
-@keyframes lcyt-zoomOut{from{transform:scale(1);opacity:1}to{transform:scale(0);opacity:0}}
-@keyframes lcyt-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
-@keyframes lcyt-blink{0%,100%{opacity:1}50%{opacity:0}}
-@keyframes lcyt-typewriter{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}`;
+import { KEYFRAMES, WIDTH } from "./graphics-editor/constants";
+import { GraphicsEditorToolbar } from "./graphics-editor/GraphicsEditorToolbar";
+import { GraphicsEditorCanvas } from "./graphics-editor/GraphicsEditorCanvas";
+import { GraphicsEditorProperties } from "./graphics-editor/GraphicsEditorProperties";
+import { resizeLayer, snap } from "./graphics-editor/geometry";
+import type { Asset, Item, Layer } from "./graphics-editor/types";
 
 function defaultLayers(item: Item, title: string): Layer[] {
   const stored = item.data?.layers;
@@ -66,46 +18,6 @@ function defaultLayers(item: Item, title: string): Layer[] {
 }
 
 function serialiseLayers(layers: Layer[]) { return JSON.stringify(layers); }
-
-function parsePx(value: unknown, fallback = 0) {
-  const n = Number.parseFloat(String(value ?? ""));
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
-
-function anchor(handle: string, l: Layer) {
-  const w = l.width, h = l.height;
-  return {
-    left: handle.includes("e") ? w : handle.includes("w") ? 0 : w / 2,
-    top: handle.includes("s") ? h : handle.includes("n") ? 0 : h / 2,
-  };
-}
-
-function resizeLayer(handle: string, start: Layer, dx: number, dy: number) {
-  let { x, y, width, height } = start;
-  if (handle.includes("e")) width += dx;
-  if (handle.includes("w")) { x += dx; width -= dx; }
-  if (handle.includes("s")) height += dy;
-  if (handle.includes("n")) { y += dy; height -= dy; }
-  return { x: Math.round(x), y: Math.round(y), width: Math.max(20, Math.round(width)), height: Math.max(20, Math.round(height)) };
-}
-
-function snap(v: number) { return Math.round(v / GRID) * GRID; }
-
-function styleValue(l: Layer, key: string, fallback = "") { return String(l.style?.[key] ?? fallback); }
-
-function layerStyle(l: Layer, selected: boolean): React.CSSProperties {
-  const style = l.style ?? {};
-  const css: React.CSSProperties = {};
-  for (const [key, value] of Object.entries(style)) (css as Record<string, unknown>)[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
-  return {
-    position: "absolute", left: l.x, top: l.y, width: l.width, height: l.height,
-    boxSizing: "border-box", userSelect: "none", cursor: "move", outline: selected ? "3px solid #38bdf8" : undefined,
-    animation: l.animation || undefined, transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
-    ...css,
-  };
-}
 
 export default function GraphicsEditor({ projectId, item, assets, title, onChange }: { projectId: string; item: Item; assets: Asset[]; title: string; onChange: (item: Item) => void }) {
   const [layers, setLayers] = useState<Layer[]>(() => defaultLayers(item, title));
@@ -123,11 +35,11 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
   layersRef.current = layers;
 
   useEffect(() => {
-    setLayers(defaultLayers(item, title));
     const next = defaultLayers(item, title);
+    setLayers(next);
     setSelectedIds(next[0] ? new Set([next[0].id]) : new Set());
     setPrimaryId(next[0]?.id ?? null);
-  }, [item]);
+  }, [item, title]);
 
   const pushHistory = (next: Layer[]) => {
     setHistory(prev => [...prev.slice(0, historyIndex + 1), layersRef.current].slice(-50));
@@ -176,7 +88,7 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
       if (e.shiftKey && next.has(layerId)) next.delete(layerId); else next.add(layerId);
       setSelectedIds(next); setPrimaryId(layerId); return;
     }
-    dragRef.current = { kind, layerId, handle, startX: e.clientX, startY: e.clientY, layer: { ...layer }, scale, history: false };
+    dragRef.current = { kind, layerId, handle, startX: e.clientX, startY: e.clientY, layer: { ...layer }, scale };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
@@ -222,53 +134,15 @@ export default function GraphicsEditor({ projectId, item, assets, title, onChang
     setAssetPicker(false);
   }
 
+  function setItemField(patch: Partial<Item>) { onChange({ ...item, ...patch, template: "rich", data: { ...(item.data ?? {}), layers: serialiseLayers(layers) } }); }
+
   return <div className="graphics-editor">
     <style>{KEYFRAMES}</style>
-    <div className="ge-toolbar" aria-label="Graphic tools">
-      <button onClick={() => addLayer("text")}>＋ Text</button><button onClick={() => addLayer("rect")}>＋ Rectangle</button><button onClick={() => addLayer("ellipse")}>＋ Ellipse</button><button onClick={() => addLayer("image")}>＋ Image</button>
-      <span className="ge-spacer" /><button onClick={duplicateSelected}>Duplicate</button><button onClick={removeSelected}>Delete</button><button className={grid ? "ge-active" : ""} onClick={() => setGrid(v => !v)}>Grid</button><button className={safe ? "ge-active" : ""} onClick={() => setSafe(v => !v)}>Safe area</button>
-    </div>
+    <GraphicsEditorToolbar grid={grid} safe={safe} onAdd={addLayer} onDuplicate={duplicateSelected} onDelete={removeSelected} onToggleGrid={() => setGrid(v => !v)} onToggleSafe={() => setSafe(v => !v)} />
     <div className="ge-layout">
-      <div className="ge-canvas-wrap">
-        <div ref={canvasRef} className="ge-canvas" onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={pointerUp} onPointerDown={() => { setSelectedIds(new Set()); setPrimaryId(null); }}>
-          <div className="ge-artboard" style={{ background: item.data?.backgroundColor ?? "#111" }}>
-            {grid && <div className="ge-grid" />}
-            {layers.map(l => <div key={l.id} style={layerStyle(l, selectedIds.has(l.id))} onPointerDown={e => beginPointer(e, l.id, "move")}>
-              {l.type === "text" && <div style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden" }}>{l.text}</div>}
-              {l.type === "rect" && null}
-              {l.type === "ellipse" && <div style={{ width: "100%", height: "100%", borderRadius: "50%", pointerEvents: "none" }} />}
-              {l.type === "image" && <img src={l.src || ""} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none" }} />}
-              {selectedIds.has(l.id) && <>
-                {HANDLE_LIST.map(h => { const a = anchor(h, l); return <span key={h} className="ge-handle" style={{ left: a.left, top: a.top, cursor: `${h}-resize` }} onPointerDown={e => beginPointer(e, l.id, "resize", h)} />; })}
-                <span className="ge-rotate" style={{ left: l.width / 2, top: -32 }} onPointerDown={e => beginPointer(e, l.id, "rotate")} />
-              </>}
-            </div>)}
-            {safe && <><div className="ge-safe safe90" /><div className="ge-safe safe80" /></>}
-          </div>
-        </div>
-      </div>
-      <aside className="ge-properties">
-        {primary && <div className="ge-section"><b>Layer: {primary.id}</b><label>Type<span>{primary.type}</span></label>{primary.type === "text" && <label>Text<textarea value={primary.text ?? ""} onChange={e => updateLayer(primary.id, { text: e.target.value })} /></label>}{primary.type === "image" && <label>Image<button onClick={() => setAssetPicker(v => !v)}>{primary.src ? "Change image" : "Choose image"}</button></label>}
-          <div className="ge-two"><label>X<input type="number" value={primary.x} onChange={e => updateLayer(primary.id, { x: Number(e.target.value) })} /></label><label>Y<input type="number" value={primary.y} onChange={e => updateLayer(primary.id, { y: Number(e.target.value) })} /></label></div>
-          <div className="ge-two"><label>Width<input type="number" min="20" value={primary.width} onChange={e => updateLayer(primary.id, { width: Number(e.target.value) })} /></label><label>Height<input type="number" min="20" value={primary.height} onChange={e => updateLayer(primary.id, { height: Number(e.target.value) })} /></label></div>
-          <label>Rotation<input type="number" value={primary.rotation ?? 0} onChange={e => updateLayer(primary.id, { rotation: Number(e.target.value) })} /></label>
-          <label>Opacity<input type="range" min="0" max="1" step="0.01" value={parsePx(primary.style?.opacity, 1)} onChange={e => updateStyle(primary.id, "opacity", e.target.value)} /></label>
-          {primary.type === "text" && <>
-            <label>Font family<input value={styleValue(primary, "font-family", "Arial, sans-serif")} onChange={e => updateStyle(primary.id, "font-family", e.target.value)} /></label>
-            <label>Font size<input value={styleValue(primary, "font-size", "72px")} onChange={e => updateStyle(primary.id, "font-size", e.target.value)} /></label>
-            <div className="ge-two"><label>Weight<select value={styleValue(primary, "font-weight", "700")} onChange={e => updateStyle(primary.id, "font-weight", e.target.value)}><option>normal</option><option>bold</option><option>400</option><option>500</option><option>600</option><option>700</option><option>800</option><option>900</option></select></label><label>Align<select value={styleValue(primary, "text-align", "center")} onChange={e => updateStyle(primary.id, "text-align", e.target.value)}><option>left</option><option>center</option><option>right</option></select></label></div>
-            <label>Color<input type="text" value={styleValue(primary, "color", "#fff")} onChange={e => updateStyle(primary.id, "color", e.target.value)} /></label>
-            <label>Text shadow<input value={styleValue(primary, "text-shadow")} onChange={e => updateStyle(primary.id, "text-shadow", e.target.value)} placeholder="0 3px 10px #000" /></label>
-            <label>Text stroke<input value={styleValue(primary, "-webkit-text-stroke")} onChange={e => updateStyle(primary.id, "-webkit-text-stroke", e.target.value)} placeholder="1px #000" /></label>
-          </>}
-          {primary.type === "rect" && <label>Background<input type="text" value={styleValue(primary, "background", "#000")} onChange={e => updateStyle(primary.id, "background", e.target.value)} /></label>}
-          {primary.type === "ellipse" && <label>Background<input type="text" value={styleValue(primary, "background", "#fff")} onChange={e => updateStyle(primary.id, "background", e.target.value)} /></label>}
-          <label>Animation<select value={(primary.animation ?? "").split(" ")[0]} onChange={e => updateLayer(primary.id, { animation: e.target.value ? `${e.target.value} 1s ease 0s 1 normal forwards` : undefined })}>{ANIMATIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-          <label><span>Aspect lock</span><input type="checkbox" checked={aspectLock} onChange={e => setAspectLock(e.target.checked)} /></label>
-        </div>}
-        {assetPicker && <div className="ge-section"><b>Assets</b>{assets.filter(a => a.type !== "FONT").map(a => <button key={a.id} onClick={() => chooseAsset(a.assetKey)}>{a.assetKey}</button>)}{!assets.length && <span>No image assets yet.</span>}</div>}
-      </aside>
+      <GraphicsEditorCanvas canvasRef={canvasRef} layers={layers} selectedIds={selectedIds} grid={grid} safe={safe} background={item.data?.backgroundColor ?? "#111"} onPointerMove={pointerMove} onPointerUp={pointerUp} onCanvasPointerDown={() => { setSelectedIds(new Set()); setPrimaryId(null); }} onLayerPointerDown={beginPointer} />
+      <GraphicsEditorProperties projectId={projectId} item={item} assets={assets} primary={primary} assetPicker={assetPicker} aspectLock={aspectLock} onItemField={setItemField} onLayer={updateLayer} onStyle={updateStyle} onChooseAsset={chooseAsset} onToggleAssetPicker={() => setAssetPicker(v => !v)} onAspectLock={setAspectLock} />
     </div>
-    <style jsx>{`@keyframes lcyt-fadeIn{from{opacity:0}to{opacity:1}}.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#f8fafc;border:1px solid #475569;border-radius:5px;padding:8px 11px;cursor:pointer;font-weight:700;font-size:14px;line-height:1.2}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;inset:0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:12px;height:12px;background:#38bdf8;border:2px solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:12px;height:12px;background:#f472b6;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
+    <style jsx>{`.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px 10px;cursor:pointer}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;inset:0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:12px;height:12px;background:#38bdf8;border:2px solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:12px;height:12px;background:#f472b6;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
   </div>;
 }
