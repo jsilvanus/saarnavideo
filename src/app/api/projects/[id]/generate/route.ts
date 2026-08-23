@@ -3,9 +3,7 @@ import { prisma } from "@/lib/prisma";
 
 function findDurationViolations(definition: unknown, sources: Array<{ id: string; durationMs: number | null }>) {
   if (!definition || typeof definition !== "object") return [];
-  const semanticSegments = Array.isArray((definition as { semanticSegments?: unknown }).semanticSegments)
-    ? (definition as { semanticSegments: unknown[] }).semanticSegments
-    : [];
+  const semanticSegments = Array.isArray((definition as { semanticSegments?: unknown }).semanticSegments) ? (definition as { semanticSegments: unknown[] }).semanticSegments : [];
   const durations = new Map(sources.filter(s => s.durationMs !== null).map(s => [s.id, s.durationMs!]));
   return semanticSegments.flatMap(segment => {
     if (!segment || typeof segment !== "object") return [];
