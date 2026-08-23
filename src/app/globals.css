@@ -18,7 +18,6 @@ main {
   padding: 40px 24px 80px;
 }
 
-
 header { margin-bottom: 32px; }
 
 .card {
@@ -53,7 +52,6 @@ button {
 
 button.secondary { background: #e8e7df; color: #242420; }
 
-/* Graphics names are UI labels, so keep strong contrast and avoid tiny text. */
 .graphics-list button,
 .graphic-button {
   color: #fff;
@@ -72,6 +70,56 @@ button.secondary { background: #e8e7df; color: #242420; }
   color: #fff;
   font-weight: 700;
   line-height: 1.2;
+}
+
+.sidebar-toggle-input { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.sidebar-toggle {
+  position: fixed;
+  z-index: 120;
+  left: 255px;
+  top: 18px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #374151;
+  border-radius: 50%;
+  background: #111827;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  box-shadow: 0 2px 8px #0004;
+}
+body:has(#sidebar-toggle:checked) .sidebar { width: 64px !important; padding: 20px 8px !important; }
+body:has(#sidebar-toggle:checked) .sidebar .brand,
+body:has(#sidebar-toggle:checked) .sidebar .new,
+body:has(#sidebar-toggle:checked) .sidebar .projects { display: none !important; }
+body:has(#sidebar-toggle:checked) .sidebar-toggle { left: 50px; }
+
+/* Composition: compact source thumbnails and unmistakably nested section timelines. */
+.composition-timeline .composition-section {
+  border: 1px solid #cbd5e1 !important;
+  border-left: 4px solid #94a3b8 !important;
+  border-radius: 12px !important;
+  padding: 8px !important;
+  background: #fff !important;
+}
+.composition-timeline .section-thumbnail {
+  width: 58px !important;
+  height: 33px !important;
+}
+.composition-timeline .section-body {
+  margin-left: 6px !important;
+  padding-left: 12px !important;
+  border-left: 3px solid #cbd5e1 !important;
+  background: #f8fafc;
+  border-radius: 0 8px 8px 0;
+}
+.composition-timeline .overlay-track {
+  border: 1px solid #a5b4fc !important;
+  background: #f1f5ff !important;
+  box-shadow: inset 0 0 0 1px #e0e7ff;
 }
 
 .grid { display: grid; gap: 16px; }

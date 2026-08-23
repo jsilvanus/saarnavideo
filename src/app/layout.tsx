@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import SidebarToggle from "@/components/SidebarToggle";
 
 export const metadata: Metadata = {
   title: "SaarnaVideo",
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="fi">
-      <body>{children}</body>
+      <body><SidebarToggle />{children}</body>
     </html>
   );
 }

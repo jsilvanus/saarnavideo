@@ -5,13 +5,14 @@ import type { Layer } from "./types";
 
 export const GraphicsEditorCanvas: FC<{
   canvasRef: RefObject<HTMLDivElement | null>;
+  artboardRef: RefObject<HTMLDivElement | null>;
   layers: Layer[]; selectedIds: Set<string>; grid: boolean; safe: boolean; background: string;
   onPointerMove: (e: ReactPointerEvent) => void; onPointerUp: () => void; onCanvasPointerDown: () => void;
   onLayerPointerDown: (e: ReactPointerEvent, id: string, kind: string, handle?: string) => void;
-}> = ({ canvasRef, layers, selectedIds, grid, safe, background, onPointerMove, onPointerUp, onCanvasPointerDown, onLayerPointerDown }) => (
+}> = ({ canvasRef, artboardRef, layers, selectedIds, grid, safe, background, onPointerMove, onPointerUp, onCanvasPointerDown, onLayerPointerDown }) => (
   <div className="ge-canvas-wrap">
     <div ref={canvasRef} className="ge-canvas" onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onPointerDown={onCanvasPointerDown}>
-      <div className="ge-artboard" style={{ background }}>
+      <div ref={artboardRef} className="ge-artboard" style={{ background }}>
         {grid && <div className="ge-grid" />}
         {layers.map(l => <div key={l.id} style={layerStyle(l, selectedIds.has(l.id))} onPointerDown={e => onLayerPointerDown(e, l.id, "move")}>
           {l.type === "text" && <div style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden" }}>{l.text}</div>}
