@@ -108,6 +108,7 @@ model GenerationJob {
   error String?
   cancellationRequested Boolean @default(false)
   cancelledAt DateTime?
+  preview Boolean @default(false)
   createdAt DateTime @default(now())
   startedAt DateTime?
   completedAt DateTime?
@@ -124,6 +125,7 @@ model Output {
   projectId String
   jobId String?
   type OutputType
+  preview Boolean @default(false)
   storagePath String
   mimeType String
   sizeBytes BigInt?
