@@ -97,7 +97,7 @@ body:has(#sidebar-toggle:checked) .sidebar .new,
 body:has(#sidebar-toggle:checked) .sidebar .projects { display: none !important; }
 body:has(#sidebar-toggle:checked) .sidebar-toggle { left: 50px; }
 
-/* Composition: compact source thumbnails and unmistakably nested section timelines. */
+/* Composition: compact thumbnails on the right, with the section hierarchy retained. */
 .composition-timeline .composition-section {
   border: 1px solid #cbd5e1 !important;
   border-left: 4px solid #94a3b8 !important;
@@ -105,10 +105,17 @@ body:has(#sidebar-toggle:checked) .sidebar-toggle { left: 50px; }
   padding: 8px !important;
   background: #fff !important;
 }
-.composition-timeline .section-thumbnail {
-  width: 58px !important;
-  height: 33px !important;
+.composition-timeline .section-header {
+  width: 100%;
+  position: relative;
 }
+.composition-timeline .section-thumbnail {
+  width: 100px !important;
+  height: 56px !important;
+  order: 3;
+  margin-left: auto;
+}
+.composition-timeline .section-header > div:last-child { flex: 1; }
 .composition-timeline .section-body {
   margin-left: 6px !important;
   padding-left: 12px !important;

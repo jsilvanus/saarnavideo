@@ -39,16 +39,21 @@ function clampDefinition(definition: unknown, sources: Array<{ id: string; durat
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { id } = await context.params;
-  const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; preview?: boolean };
-  const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, durationMs: true, referenceDurationMs: true } } } });
-  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  const pending = project.sources.filter(source => source.status === "PENDING");
-  if (pending.length) return NextResponse.json({ error: "Upload pending local sources before generating.", pendingSources: pending.map(source => ({ id: source.id, originalName: source.originalName })) }, { status: 409 });
-  const violations = findDurationViolations(project.definition, project.sources);
-  if (violations.length && !body.allowClamping) return NextResponse.json({ error: "One or more sections extend beyond the selected source file.", code: "SOURCE_DURATION_MISMATCH", violations, message: "The source file is shorter than the recording used to define these sections. No timestamps are silently clamped." }, { status: 409 });
-  let renderDefinition = project.definition;
-  if (violations.length && body.allowClamping) { try { renderDefinition = clampDefinition(project.definition, project.sources).definition; } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Cannot clamp the affected sections" }, { status: 409 }); } }
-  const job = await prisma.generationJob.create({ data: { projectId: id, preview: body.preview === true, renderDefinition: violations.length ? renderDefinition : undefined }, select: { id: true, status: true, preview: true } });
-  return NextResponse.json({ ...job, clamped: violations.length > 0 });
+  try {
+    const { id } = await context.params;
+    const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; preview?: boolean };
+    const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, durationMs: true, referenceDurationMs: true } } } });
+    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    const pending = project.sources.filter(source => source.status === "PENDING");
+    if (pending.length) return NextResponse.json({ error: "Upload pending local sources before generating.", pendingSources: pending.map(source => ({ id: source.id, originalName: source.originalName })) }, { status: 409 });
+    const violations = findDurationViolations(project.definition, project.sources);
+    if (violations.length && !body.allowClamping) return NextResponse.json({ error: "One or more sections extend beyond the selected source file.", code: "SOURCE_DURATION_MISMATCH", violations, message: "The source file is shorter than the recording used to define these sections. No timestamps are silently clamped." }, { status: 409 });
+    let renderDefinition = project.definition;
+    if (violations.length && body.allowClamping) { try { renderDefinition = clampDefinition(project.definition, project.sources).definition; } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Cannot clamp the affected sections" }, { status: 409 }); } }
+    const job = await prisma.generationJob.create({ data: { projectId: id, preview: body.preview === true, renderDefinition: violations.length ? renderDefinition : undefined }, select: { id: true, status: true, preview: true } });
+    return NextResponse.json({ ...job, clamped: violations.length > 0 });
+  } catch (error) {
+    console.error("Generation queue error:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not queue generation" }, { status: 500 });
+  }
 }

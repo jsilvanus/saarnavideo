@@ -1,20 +1,17 @@
 import type { FC } from "react";
 import { ANIMATIONS } from "./constants";
 import { parsePx, styleValue } from "./geometry";
-import type { Asset, GraphicKind, Item, Layer } from "./types";
+import type { Asset, Item, Layer } from "./types";
 
 export const GraphicsEditorProperties: FC<{
   projectId: string; item: Item; assets: Asset[]; primary: Layer | null; assetPicker: boolean;
   aspectLock: boolean;
-  onItemField: (patch: Partial<Item>) => void;
   onLayer: (id: string, patch: Partial<Layer>) => void;
   onStyle: (id: string, key: string, value: string | number) => void;
   onChooseAsset: (key: string) => void; onToggleAssetPicker: () => void;
   onAspectLock: (value: boolean) => void;
-}> = ({ projectId: _projectId, item, assets, primary, assetPicker, aspectLock, onItemField, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
+}> = ({ projectId: _projectId, item: _item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
   <aside className="ge-properties">
-    <div className="ge-section"><b>Graphic</b><label>Type<select value={item.type} onChange={e => onItemField({ type: e.target.value as GraphicKind })}><option value="slate">Slate</option><option value="overlay">Overlay</option></select></label>{item.type === "slate" ? <label>Mode<select value={item.mode ?? "standalone"} onChange={e => onItemField({ mode: e.target.value as Item["mode"] })}><option value="standalone">Standalone</option><option value="overlay">Overlay</option></select></label> : null}</div>
-    <div className="ge-section"><b>Timing</b>{item.type === "slate" && item.mode !== "overlay" ? <label>Duration (s)<input type="number" min="0.1" step="0.1" value={item.durationSeconds ?? 5} onChange={e => onItemField({ durationSeconds: Number(e.target.value) })} /></label> : <div className="ge-two"><label>Start<input type="number" min="0" step="0.1" value={item.startSeconds ?? 0} onChange={e => onItemField({ startSeconds: Number(e.target.value) })} /></label><label>End<input type="number" min="0.1" step="0.1" value={item.endSeconds ?? 10} onChange={e => onItemField({ endSeconds: Number(e.target.value) })} /></label></div>}</div>
     {primary && <div className="ge-section"><b>Layer: {primary.id}</b><label>Type<span>{primary.type}</span></label>{primary.type === "text" && <label>Text<textarea value={primary.text ?? ""} onChange={e => onLayer(primary.id, { text: e.target.value })} /></label>}{primary.type === "image" && <label>Image<button onClick={onToggleAssetPicker}>{primary.src ? "Change image" : "Choose image"}</button></label>}
       <div className="ge-two"><label>X<input type="number" value={primary.x} onChange={e => onLayer(primary.id, { x: Number(e.target.value) })} /></label><label>Y<input type="number" value={primary.y} onChange={e => onLayer(primary.id, { y: Number(e.target.value) })} /></label></div>
       <div className="ge-two"><label>Width<input type="number" min="20" value={primary.width} onChange={e => onLayer(primary.id, { width: Number(e.target.value) })} /></label><label>Height<input type="number" min="20" value={primary.height} onChange={e => onLayer(primary.id, { height: Number(e.target.value) })} /></label></div>
