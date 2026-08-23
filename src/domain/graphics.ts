@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const graphicLayerSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(["text", "rect", "ellipse", "image"]),
+  type: z.enum(["text", "rect", "ellipse", "image", "svg"]),
   x: z.number().default(0),
   y: z.number().default(0),
   width: z.number().positive().default(100),
@@ -10,6 +10,7 @@ export const graphicLayerSchema = z.object({
   rotation: z.number().default(0),
   text: z.string().optional(),
   src: z.string().optional(),
+  assetId: z.string().optional(),
   animation: z.string().optional(),
   style: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
 });
