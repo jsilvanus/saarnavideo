@@ -26,8 +26,10 @@ services:
       - postgres
 
   worker:
-    build: .
-    command: ["npm", "run", "worker"]
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: saarnavideo-worker:latest
     environment: *app-env
     volumes:
       - media_data:/data/media
