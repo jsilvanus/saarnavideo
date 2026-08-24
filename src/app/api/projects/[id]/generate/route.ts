@@ -31,7 +31,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (violations.length && !body.allowClamping) return NextResponse.json({ error: "One or more sections extend beyond the selected source file.", code: "SOURCE_DURATION_MISMATCH", violations, message: "The source file is shorter than the recording used to define these sections. No timestamps are silently clamped." }, { status: 409 });
     let renderDefinition = project.definition;
     if (violations.length && body.allowClamping) { try { renderDefinition = clampDefinition(project.definition, project.sources).definition; } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Cannot clamp the affected sections" }, { status: 409 }); } }
-
     const referencedIds = new Set<string>();
     const composition = (renderDefinition as { composition?: { items?: Array<{ type?: string; sourceId?: string }> } }).composition;
     for (const item of composition?.items ?? []) if (item.type === "source-clip" && item.sourceId) referencedIds.add(item.sourceId);
@@ -40,8 +39,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const download = await prisma.mediaJob.create({ data: { projectId: id, sourceId: source.id, type: "DOWNLOAD", priority: 100, dependsOnJobId: dependencyId, parameters: { sourceId: source.id } }, select: { id: true } });
       dependencyId = download.id;
     }
-    const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition } }, select: { id: true, type: true, status: true, progress: true } });
-    if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id }, select: { id: true } });
+    const firstSourceId = [...referencedIds][0];
+    const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
+    if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id, parameters: { renderDefinition } }, select: { id: true } });
     return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0 });
   } catch (error) { console.error("Media job queue error:", error); return NextResponse.json({ error: error instanceof Error ? error.message : "Could not queue media job" }, { status: 500 }); }
 }
