@@ -26,9 +26,12 @@ services:
       - postgres
 
   worker:
-    build: .
-    command: ["npm", "run", "worker"]
-    environment: *app-env
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      <<: *app-env
+      WORKER_POLL_MS: 750
     volumes:
       - media_data:/data/media
     depends_on:
