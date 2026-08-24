@@ -2,182 +2,55 @@ generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
+datasource db { provider = "postgresql" url = env("DATABASE_URL") }
 
-enum SourceType {
-  UPLOAD
-  YOUTUBE
-}
+enum SourceType { UPLOAD YOUTUBE }
+enum SourceStatus { PENDING AVAILABLE }
+enum OutputType { VIDEO THUMBNAIL }
+enum MediaJobType { DOWNLOAD THUMBNAIL PREVIEW VIDEO }
+enum MediaJobStatus { QUEUED RUNNING COMPLETED FAILED CANCELLED }
+enum JobLogLevel { DEBUG INFO WARN ERROR }
+enum PublicationProvider { YOUTUBE }
+enum PublicationStatus { QUEUED UPLOADING COMPLETED FAILED }
+enum PrivacyState { PRIVATE UNLISTED PUBLIC }
+enum AssetType { OVERLAY BACKGROUND LOGO FONT }
 
-enum OutputType {
-  VIDEO
-  THUMBNAIL
-}
-
-enum JobStatus {
-  QUEUED
-  ACQUIRING_SOURCE
-  PROCESSING
-  RENDERING
-  COMPLETED
-  FAILED
-  EXPIRED
-  CANCELLATION_REQUESTED
-  CANCELLED
-}
-
-enum JobLogLevel {
-  DEBUG
-  INFO
-  WARN
-  ERROR
-}
-
-enum PublicationProvider {
-  YOUTUBE
-}
-
-enum PublicationStatus {
-  QUEUED
-  UPLOADING
-  COMPLETED
-  FAILED
-}
-
-enum PrivacyState {
-  PRIVATE
-  UNLISTED
-  PUBLIC
-}
-
-enum AssetType {
-  OVERLAY
-  BACKGROUND
-  LOGO
-  FONT
-}
-
-model Project {
-  id String @id @default(cuid())
-  title String
-  preacher String?
-  gospelRef String?
-  gospelText String?
-  templateKey String @default("sermon")
-  definition Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  expiresAt DateTime?
-  sources Source[]
-  jobs GenerationJob[]
-  outputs Output[]
-  publications Publication[]
-  assets Asset[]
-}
-
-model Source {
-  id String @id @default(cuid())
-  type SourceType
-  youtubeVideoId String?
-  youtubeUrl String?
-  originalName String?
-  storagePath String?
-  mimeType String?
-  sizeBytes BigInt?
-  durationMs Int?
-  createdAt DateTime @default(now())
-  expiresAt DateTime?
-  projects Project[]
-}
-
-model GenerationJob {
+model Project { id String @id @default(cuid()) title String preacher String? gospelRef String? gospelText String? templateKey String @default("sermon") definition Json createdAt DateTime @default(now()) updatedAt DateTime @updatedAt expiresAt DateTime? sources Source[] jobs MediaJob[] outputs Output[] publications Publication[] assets Asset[] }
+model Source { id String @id @default(cuid()) type SourceType status SourceStatus @default(AVAILABLE) youtubeVideoId String? youtubeUrl String? originalName String? storagePath String? mimeType String? sizeBytes BigInt? durationMs Int? referenceDurationMs Int? createdAt DateTime @default(now()) expiresAt DateTime? projects Project[] jobs MediaJob[] }
+model MediaJob {
   id String @id @default(cuid())
   projectId String
-  status JobStatus @default(QUEUED)
+  sourceId String?
+  type MediaJobType
+  status MediaJobStatus @default(QUEUED)
   progress Int @default(0)
+  phase String?
+  message String?
+  currentMs BigInt?
+  totalMs BigInt?
+  bytesProcessed BigInt?
+  totalBytes BigInt?
+  speed String?
+  etaSeconds Int?
+  priority Int @default(0)
+  parameters Json?
   error String?
-  cancellationRequested Boolean @default(false)
-  cancelledAt DateTime?
-  preview Boolean @default(false)
   createdAt DateTime @default(now())
   startedAt DateTime?
   completedAt DateTime?
-  estimatedDurationSeconds Int?
-  resourceMetrics Json? @default("{}")
+  updatedAt DateTime @updatedAt
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  dependsOnJobId String?
+  dependsOnJob MediaJob? @relation("MediaJobDependency", fields: [dependsOnJobId], references: [id], onDelete: SetNull)
+  dependentJobs MediaJob[] @relation("MediaJobDependency")
   logs JobLog[]
-  @@index([status, createdAt])
-}
-
-model Output {
-  id String @id @default(cuid())
-  projectId String
-  jobId String?
-  type OutputType
-  preview Boolean @default(false)
-  storagePath String
-  mimeType String
-  sizeBytes BigInt?
-  createdAt DateTime @default(now())
-  expiresAt DateTime?
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  publications Publication[]
+  @@index([status, priority, createdAt])
   @@index([projectId, createdAt])
+  @@index([dependsOnJobId])
 }
-
-model Publication {
-  id String @id @default(cuid())
-  projectId String
-  outputId String?
-  provider PublicationProvider
-  externalId String?
-  status PublicationStatus @default(QUEUED)
-  privacy PrivacyState @default(PRIVATE)
-  error String?
-  createdAt DateTime @default(now())
-  completedAt DateTime?
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  output Output? @relation(fields: [outputId], references: [id], onDelete: SetNull)
-  @@index([projectId, createdAt])
-}
-
-model JobLog {
-  id String @id @default(cuid())
-  jobId String
-  level JobLogLevel
-  message String
-  data Json?
-  createdAt DateTime @default(now())
-  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  @@index([jobId, createdAt])
-}
-
-model YouTubeConnection {
-  id String @id @default(cuid())
-  provider String @unique @default("youtube")
-  accessToken String
-  refreshToken String
-  tokenExpiry DateTime?
-  scope String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Asset {
-  id String @id @default(cuid())
-  assetKey String
-  type AssetType
-  storagePath String
-  mimeType String
-  width Int?
-  height Int?
-  sizeBytes BigInt
-  hasAlpha Boolean @default(false)
-  expiresAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  projects Project[]
-}
+model Output { id String @id @default(cuid()) projectId String jobId String? type OutputType preview Boolean @default(false) storagePath String mimeType String sizeBytes BigInt? createdAt DateTime @default(now()) expiresAt DateTime? project Project @relation(fields: [projectId], references: [id], onDelete: Cascade) publications Publication[] @@index([projectId, createdAt]) }
+model Publication { id String @id @default(cuid()) projectId String outputId String? provider PublicationProvider externalId String? status PublicationStatus @default(QUEUED) privacy PrivacyState @default(PRIVATE) error String? createdAt DateTime @default(now()) completedAt DateTime? project Project @relation(fields: [projectId], references: [id], onDelete: Cascade) output Output? @relation(fields: [outputId], references: [id], onDelete: SetNull) @@index([projectId, createdAt]) }
+model JobLog { id String @id @default(cuid()) jobId String level JobLogLevel message String data Json? createdAt DateTime @default(now()) job MediaJob @relation(fields: [jobId], references: [id], onDelete: Cascade) @@index([jobId, createdAt]) }
+model YouTubeConnection { id String @id @default(cuid()) provider String @unique @default("youtube") accessToken String refreshToken String tokenExpiry DateTime? scope String? createdAt DateTime @default(now()) updatedAt DateTime @updatedAt }
+model Asset { id String @id @default(cuid()) assetKey String type AssetType storagePath String mimeType String width Int? height Int? sizeBytes BigInt hasAlpha Boolean @default(false) expiresAt DateTime? createdAt DateTime @default(now()) updatedAt DateTime @updatedAt projects Project[] }
