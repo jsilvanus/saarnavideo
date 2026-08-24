@@ -12,57 +12,29 @@ The repository now contains the initial application foundation:
 - local source upload API
 - YouTube source reference model
 - database-backed generation worker
-- dedicated Docker worker image with FFmpeg and yt-dlp
+- dedicated self-contained Docker media worker with FFmpeg, ffprobe, Python, and yt-dlp
 - FFmpeg source-range rendering and separated-clip concatenation
 - downloadable generated outputs
 - Docker Compose development environment
 - Vitest renderer tests
 
-The web application no longer needs FFmpeg or yt-dlp installed in its container. Media acquisition and rendering run in the dedicated `worker` container, which is built from `Dockerfile.worker` and verifies both `ffmpeg` and `yt-dlp` during the image build.
+The web application does not need FFmpeg or yt-dlp installed in its container or on the host. Media acquisition and rendering run in the dedicated `worker` container. The worker image verifies its complete media toolchain during the image build.
 
 YouTube OAuth/download, transcription, rich slate/overlay rendering, and the complete template system are the next implementation steps described in `docs/technical-phase-plan.md`.
 
 ## Development
 
-Requirements:
+For the normal Docker workflow, the host only needs Docker/Compose. FFmpeg, ffprobe, yt-dlp, and Python are provided by the worker image.
 
-- Node.js 22+
-- PostgreSQL 17+ (or Docker)
-- FFmpeg for local rendering when running the worker directly on the host
-
-Start PostgreSQL with:
-
-```bash
-docker compose up postgres
-```
-
-Install dependencies and initialize Prisma:
-
-```bash
-npm install
-npx prisma generate
-npx prisma db push
-```
-
-Run the web application:
-
-```bash
-npm run dev
-```
-
-Run the worker separately on the host:
-
-```bash
-npm run worker
-```
-
-For the complete containerized stack, including the dedicated FFmpeg worker:
+Start the complete stack:
 
 ```bash
 docker compose up --build
 ```
 
-The worker polls the database-backed `GenerationJob` queue, claims queued work, acquires any required sources, renders with FFmpeg, creates outputs/thumbnails, and updates job state. The same worker image also contains `yt-dlp` for YouTube source acquisition.
+The worker polls the database-backed `GenerationJob` queue, claims queued work, acquires any required sources with `yt-dlp`, renders with FFmpeg, creates outputs/thumbnails, and updates job state. The same worker image handles both YouTube acquisition and rendering.
+
+For host-based development without Docker, Node.js 22+ and PostgreSQL 17+ are required; running the worker directly on the host also requires its media-processing dependencies.
 
 Run tests:
 
@@ -73,11 +45,25 @@ npm test
 ## Architecture
 
 ```text
-Project -> Source -> Composition -> GenerationJob -> Output -> optional Publication
-                         |                  |
-                    Template/theme      dedicated worker
-                                       (FFmpeg + yt-dlp)
+                    PostgreSQL
+                GenerationJob queue
+                        |
+                        v
+                 dedicated worker
+              +--------------------+
+              | Node.js            |
+              | yt-dlp             |
+              | FFmpeg / ffprobe   |
+              | media processing   |
+              +---------+----------+
+                        |
+                   /data/media
+                        |
+                        v
+                    Outputs
 ```
+
+The worker is stateless apart from PostgreSQL job state and the shared media volume, so multiple identical workers can consume the queue later.
 
 Large source and output media is temporary by design; the default retention period is seven days.
 
@@ -85,3 +71,4 @@ See:
 
 - `docs/plan.md` for the product and architecture plan.
 - `docs/technical-phase-plan.md` for the five implementation phases.
+- `docs/DEPLOYMENT.md` for Docker deployment and worker requirements.
