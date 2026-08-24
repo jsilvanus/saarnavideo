@@ -11,7 +11,10 @@ import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
 
 const execFileAsync = promisify(execFile);
-const POLL_MS = Math.min(Math.max(Number(process.env.WORKER_POLL_MS ?? 750), 50), 750);
+const MIN_POLL_MS = 500;
+const MAX_POLL_MS = 2000;
+const DEFAULT_POLL_MS = 750;
+const POLL_MS = Math.min(Math.max(Number(process.env.WORKER_POLL_MS ?? DEFAULT_POLL_MS), MIN_POLL_MS), MAX_POLL_MS);
 const PROGRESS_WRITE_MS = 750;
 const MEDIA_ROOT = process.env.MEDIA_ROOT ?? "/data/media";
 const RETENTION_MS = Number(process.env.MEDIA_RETENTION_DAYS ?? 7) * 24 * 60 * 60 * 1000;
