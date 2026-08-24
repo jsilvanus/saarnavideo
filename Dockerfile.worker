@@ -13,7 +13,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json package-lock.json* tsconfig.json next.config.* prisma ./
+COPY package.json package-lock.json* tsconfig.json next-env.d.ts prisma ./
 COPY src ./src
 
 RUN npx prisma generate \
