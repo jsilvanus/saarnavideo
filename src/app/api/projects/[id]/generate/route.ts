@@ -37,7 +37,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     for (const item of composition?.items ?? []) if (item.type === "source-clip" && item.sourceId) referencedIds.add(item.sourceId);
     let dependencyId: string | undefined;
     for (const source of project.sources.filter(s => referencedIds.has(s.id) && s.type === "YOUTUBE" && !s.storagePath)) {
-      const download = await prisma.mediaJob.create({ data: { projectId: id, sourceId: source.id, type: "DOWNLOAD", priority: 100, parameters: { sourceId: source.id } }, select: { id: true } });
+      const download = await prisma.mediaJob.create({ data: { projectId: id, sourceId: source.id, type: "DOWNLOAD", priority: 100, dependsOnJobId: dependencyId, parameters: { sourceId: source.id } }, select: { id: true } });
       dependencyId = download.id;
     }
     const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition } }, select: { id: true, type: true, status: true, progress: true } });
