@@ -5,6 +5,7 @@ export const GRAPHIC_PACKAGE_FORMAT = "saarnavideo-graphic" as const;
 export const GRAPHIC_PACKAGE_VERSION = 1 as const;
 
 export const graphicPackageAssetSchema = z.object({
+  sourceAssetId: z.string().min(1),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
   assetKey: z.string().min(1),
   mimeType: z.string().min(1),
@@ -25,13 +26,7 @@ export const graphicPackageManifestSchema = z.object({
 export type GraphicPackage = z.infer<typeof graphicPackageManifestSchema>;
 
 export function createGraphicPackage(graphic: Graphic, assets: GraphicPackage["assets"]): GraphicPackage {
-  return graphicPackageManifestSchema.parse({
-    format: GRAPHIC_PACKAGE_FORMAT,
-    version: GRAPHIC_PACKAGE_VERSION,
-    exportedAt: new Date().toISOString(),
-    graphic,
-    assets,
-  });
+  return graphicPackageManifestSchema.parse({ format: GRAPHIC_PACKAGE_FORMAT, version: GRAPHIC_PACKAGE_VERSION, exportedAt: new Date().toISOString(), graphic, assets });
 }
 
 export function parseGraphicPackage(input: unknown): GraphicPackage {
