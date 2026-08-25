@@ -5,15 +5,14 @@ import { z } from "zod";
 const updateSchema = z.object({ name: z.string().trim().min(1).max(120).optional(), parentId: z.string().nullable().optional() });
 
 async function isDescendant(folderId: string, possibleParentId: string): Promise<boolean> {
-  let current = await prisma.assetFolder.findUnique({ where: { id: possibleParentId }, select: { parentId: true } });
+  let currentId: string | null = possibleParentId;
   const seen = new Set<string>();
-  while (current) {
-    if (seen.has(possibleParentId)) return true;
-    seen.add(possibleParentId);
-    if (current.parentId === folderId) return true;
-    if (!current.parentId) return false;
-    const nextId = current.parentId;
-    current = await prisma.assetFolder.findUnique({ where: { id: nextId }, select: { parentId: true } });
+  while (currentId) {
+    if (currentId === folderId) return true;
+    if (seen.has(currentId)) return true;
+    seen.add(currentId);
+    const current = await prisma.assetFolder.findUnique({ where: { id: currentId }, select: { parentId: true } });
+    currentId = current?.parentId ?? null;
   }
   return false;
 }
