@@ -16,23 +16,17 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const definition = migrateProjectDefinition(project.definition, project.assets[0]?.id);
   const graphic = definition.graphics.find((item) => item.id === graphicId);
   if (!graphic) return NextResponse.json({ error: "Graphic not found" }, { status: 404 });
-
   const ids = referencedAssetIds(graphic, project.assets);
   const assets = [];
   for (const asset of project.assets.filter((item) => ids.includes(item.id))) {
     try {
       const data = await readFile(asset.storagePath);
-      assets.push({ contentHash: asset.contentHash ?? "", assetKey: asset.assetKey, mimeType: asset.mimeType, width: asset.width, height: asset.height, hasAlpha: asset.hasAlpha, dataBase64: data.toString("base64") });
+      if (!asset.contentHash) return NextResponse.json({ error: `Asset has no content hash: ${asset.assetKey}` }, { status: 409 });
+      assets.push({ sourceAssetId: asset.id, contentHash: asset.contentHash, assetKey: asset.assetKey, mimeType: asset.mimeType, width: asset.width, height: asset.height, hasAlpha: asset.hasAlpha, dataBase64: data.toString("base64") });
     } catch {
       return NextResponse.json({ error: `Asset file is unavailable: ${asset.assetKey}` }, { status: 409 });
     }
   }
-
   const pkg = createGraphicPackage(graphic, assets);
-  return new NextResponse(JSON.stringify(pkg, null, 2), {
-    headers: {
-      "Content-Type": "application/vnd.saarnavideo.graphic+json; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${graphic.name.replace(/[^a-z0-9-_]+/gi, "-") || "graphic"}.svgraphic"`,
-    },
-  });
+  return new NextResponse(JSON.stringify(pkg, null, 2), { headers: { "Content-Type": "application/vnd.saarnavideo.graphic+json; charset=utf-8", "Content-Disposition": `attachment; filename="${graphic.name.replace(/[^a-z0-9-_]+/gi, "-") || "graphic"}.svgraphic"` } });
 }
