@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import SidebarToggle from "@/components/SidebarToggle";
+import YouTubeConnection from "@/components/YouTubeConnection";
 
 export const metadata: Metadata = {
   title: "SaarnaVideo",
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="fi">
-      <body><SidebarToggle />{children}</body>
+      <body><SidebarToggle /><YouTubeConnection />{children}</body>
     </html>
   );
 }
