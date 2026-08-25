@@ -14,10 +14,7 @@ const commonAssetSchema = z.object({
   hasAlpha: z.boolean(),
 });
 
-const embeddedAssetSchema = commonAssetSchema.extend({
-  dataBase64: z.string().min(1),
-});
-
+const embeddedAssetSchema = commonAssetSchema.extend({ dataBase64: z.string().min(1) });
 const referencedAssetSchema = commonAssetSchema;
 
 export const graphicPackageAssetSchema = z.discriminatedUnion("assetMode", [
@@ -36,10 +33,11 @@ export const graphicPackageManifestSchema = z.object({
 
 export type GraphicPackage = z.infer<typeof graphicPackageManifestSchema>;
 export type GraphicPackageAsset = GraphicPackage["assets"][number];
+export type GraphicPackageAssetInput = Omit<GraphicPackageAsset, "assetMode"> | GraphicPackageAsset;
 
 export function createGraphicPackage(
   graphic: Graphic,
-  assets: GraphicPackageAsset[],
+  assets: GraphicPackageAssetInput[],
   assetMode: "embedded" | "referenced" = "embedded",
 ): GraphicPackage {
   const normalizedAssets = assets.map((asset) => {
@@ -47,7 +45,7 @@ export function createGraphicPackage(
       if (!("dataBase64" in asset) || !asset.dataBase64) throw new Error(`Embedded package asset is missing data: ${asset.assetKey}`);
       return { ...asset, assetMode: "embedded" as const };
     }
-    const { dataBase64: _dataBase64, ...reference } = asset as GraphicPackageAsset & { dataBase64?: string };
+    const { dataBase64: _dataBase64, assetMode: _assetMode, ...reference } = asset as GraphicPackageAsset & { dataBase64?: string };
     return { ...reference, assetMode: "referenced" as const };
   });
 
