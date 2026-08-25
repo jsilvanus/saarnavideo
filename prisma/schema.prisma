@@ -151,8 +151,10 @@ model Asset {
   height Int?
   sizeBytes BigInt
   hasAlpha Boolean @default(false)
+  contentHash String?
   expiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   projects Project[]
+  @@index([contentHash])
 }
