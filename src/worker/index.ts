@@ -74,7 +74,21 @@ async function processJob() { const job = await claimJob(); if (!job) return fal
 
 async function processPublication() { const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false; const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false; try { const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } }); const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" }); await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date() } }); } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } return true; }
 
-async function cleanupExpiredMedia() { const now = new Date(); const [sources, outputs] = await Promise.all([prisma.source.findMany({ where: { expiresAt: { not: null, lt: now }, storagePath: { not: null } }, select: { id: true, storagePath: true } }), prisma.output.findMany({ where: { expiresAt: { not: null, lt: now } }, select: { id: true, storagePath: true } })]); for (const source of sources) { if (source.storagePath) await rm(source.storagePath, { force: true }).catch(() => undefined); await prisma.source.update({ where: { id: source.id }, data: { storagePath: null } }).catch(() => undefined); } for (const output of outputs) { await rm(output.storagePath, { force: true }).catch(() => undefined); await prisma.output.delete({ where: { id: output.id } }).catch(() => undefined); } }
+async function cleanupExpiredMedia() {
+  const now = new Date();
+  const [sources, outputs] = await Promise.all([
+    prisma.source.findMany({ where: { expiresAt: { not: null, lt: now }, storagePath: { not: null } }, select: { id: true, storagePath: true } }),
+    prisma.output.findMany({ where: { expiresAt: { not: null, lt: now } }, select: { id: true, storagePath: true } }),
+  ]);
+  for (const source of sources) {
+    if (source.storagePath) {
+      const references = await prisma.source.count({ where: { storagePath: source.storagePath } });
+      if (references <= 1) await rm(source.storagePath, { force: true }).catch(() => undefined);
+    }
+    await prisma.source.update({ where: { id: source.id }, data: { storagePath: null } }).catch(() => undefined);
+  }
+  for (const output of outputs) { await rm(output.storagePath, { force: true }).catch(() => undefined); await prisma.output.delete({ where: { id: output.id } }).catch(() => undefined); }
+}
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); process.exit(0); });
 async function main() { let lastCleanup = 0; while (true) { try { if (Date.now() - lastCleanup > 60000) { await cleanupExpiredMedia(); lastCleanup = Date.now(); } const didWork = (await processPublication()) || (await processJob()); if (!didWork) await new Promise(resolve => setTimeout(resolve, POLL_MS)); } catch (error) { console.error("Worker loop error:", error); await new Promise(resolve => setTimeout(resolve, POLL_MS)); } } }
 main().catch(error => { console.error("Fatal error:", error); process.exit(1); });
