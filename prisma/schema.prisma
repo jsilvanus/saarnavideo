@@ -7,16 +7,57 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum SourceType { UPLOAD YOUTUBE }
-enum SourceStatus { PENDING AVAILABLE }
-enum OutputType { VIDEO THUMBNAIL }
-enum MediaJobType { DOWNLOAD THUMBNAIL PREVIEW VIDEO }
-enum MediaJobStatus { QUEUED RUNNING COMPLETED FAILED CANCELLED }
-enum JobLogLevel { DEBUG INFO WARN ERROR }
-enum PublicationProvider { YOUTUBE }
-enum PublicationStatus { QUEUED UPLOADING COMPLETED FAILED }
-enum PrivacyState { PRIVATE UNLISTED PUBLIC }
-enum AssetType { OVERLAY BACKGROUND LOGO FONT }
+enum SourceType {
+  UPLOAD
+  YOUTUBE
+}
+enum SourceStatus {
+  PENDING
+  AVAILABLE
+}
+enum OutputType {
+  VIDEO
+  THUMBNAIL
+}
+enum MediaJobType {
+  DOWNLOAD
+  THUMBNAIL
+  PREVIEW
+  VIDEO
+}
+enum MediaJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+enum JobLogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+enum PublicationProvider {
+  YOUTUBE
+}
+enum PublicationStatus {
+  QUEUED
+  UPLOADING
+  COMPLETED
+  FAILED
+}
+enum PrivacyState {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
+enum AssetType {
+  OVERLAY
+  BACKGROUND
+  LOGO
+  FONT
+}
 
 model Project {
   id String @id @default(cuid())
@@ -141,6 +182,18 @@ model YouTubeConnection {
   updatedAt DateTime @updatedAt
 }
 
+model AssetFolder {
+  id String @id @default(cuid())
+  name String
+  parentId String?
+  parent AssetFolder? @relation("AssetFolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children AssetFolder[] @relation("AssetFolderTree")
+  assets Asset[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([parentId])
+}
+
 model Asset {
   id String @id @default(cuid())
   assetKey String
@@ -151,8 +204,13 @@ model Asset {
   height Int?
   sizeBytes BigInt
   hasAlpha Boolean @default(false)
+  contentHash String?
+  folderId String?
+  folder AssetFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   expiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   projects Project[]
+  @@index([contentHash])
+  @@index([folderId])
 }

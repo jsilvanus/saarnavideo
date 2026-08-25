@@ -3,6 +3,23 @@ import { ANIMATIONS } from "./constants";
 import { parsePx, styleValue } from "./geometry";
 import type { Asset, Item, Layer } from "./types";
 
+async function exportGraphic(projectId: string, graphicId: string) {
+  const response = await fetch(`/api/projects/${projectId}/graphics/${graphicId}/export`);
+  if (!response.ok) { alert("Could not export graphic"); return; }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a"); link.href = url; link.download = `${graphicId}.svgraphic`; link.click(); URL.revokeObjectURL(url);
+}
+
+async function importGraphic(projectId: string, file: File) {
+  try {
+    const text = await file.text();
+    const response = await fetch(`/api/projects/${projectId}/graphics/import`, { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
+    if (!response.ok) { const data = await response.json().catch(() => null); alert(data?.error ?? "Could not import graphic"); return; }
+    window.location.reload();
+  } catch { alert("Could not import graphic"); }
+}
+
 export const GraphicsEditorProperties: FC<{
   projectId: string; item: Item; assets: Asset[]; primary: Layer | null; assetPicker: boolean;
   aspectLock: boolean;
@@ -10,8 +27,9 @@ export const GraphicsEditorProperties: FC<{
   onStyle: (id: string, key: string, value: string | number) => void;
   onChooseAsset: (key: string) => void; onToggleAssetPicker: () => void;
   onAspectLock: (value: boolean) => void;
-}> = ({ projectId: _projectId, item: _item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
+}> = ({ projectId, item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
   <aside className="ge-properties">
+    <div className="ge-section"><b>Graphic package</b><button onClick={() => void exportGraphic(projectId, item.id)}>Export .svgraphic</button><label>Import graphic<input type="file" accept=".svgraphic,application/vnd.saarnavideo.graphic+json,application/json" onChange={e => { const file = e.target.files?.[0]; if (file) void importGraphic(projectId, file); e.currentTarget.value = ""; }} /></label></div>
     {primary && <div className="ge-section"><b>Layer: {primary.id}</b><label>Type<span>{primary.type}</span></label>{primary.type === "text" && <label>Text<textarea value={primary.text ?? ""} onChange={e => onLayer(primary.id, { text: e.target.value })} /></label>}{primary.type === "image" && <label>Image<button onClick={onToggleAssetPicker}>{primary.src ? "Change image" : "Choose image"}</button></label>}
       <div className="ge-two"><label>X<input type="number" value={primary.x} onChange={e => onLayer(primary.id, { x: Number(e.target.value) })} /></label><label>Y<input type="number" value={primary.y} onChange={e => onLayer(primary.id, { y: Number(e.target.value) })} /></label></div>
       <div className="ge-two"><label>Width<input type="number" min="20" value={primary.width} onChange={e => onLayer(primary.id, { width: Number(e.target.value) })} /></label><label>Height<input type="number" min="20" value={primary.height} onChange={e => onLayer(primary.id, { height: Number(e.target.value) })} /></label></div>
