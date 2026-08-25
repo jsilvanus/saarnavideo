@@ -1,0 +1,48 @@
+"use client";
+
+import { DragEvent, useEffect, useMemo, useState } from "react";
+
+interface Asset { id:string; assetKey:string; type:string; mimeType:string; width:number|null; height:number|null; sizeBytes:string; folderId:string|null; projectCount:number; }
+interface Folder { id:string; name:string; parentId:string|null; }
+
+type DragItem = { kind:"asset"|"folder"; id:string };
+
+function treePath(folders:Folder[], id:string|null):Folder[]{ const out:Folder[]=[]; let current=id; while(current){const f=folders.find(x=>x.id===current);if(!f)break;out.unshift(f);current=f.parentId} return out; }
+
+export default function AssetLibraryPage(){
+ const [assets,setAssets]=useState<Asset[]>([]),[folders,setFolders]=useState<Folder[]>([]),[currentId,setCurrentId]=useState<string|null>(null),[dragOver,setDragOver]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState(""),[uploadOpen,setUploadOpen]=useState(false),[newFolderOpen,setNewFolderOpen]=useState(false),[newFolderName,setNewFolderName]=useState("");
+ const [file,setFile]=useState<File|null>(null),[assetKey,setAssetKey]=useState(""),[assetType,setAssetType]=useState("OVERLAY");
+ async function load(){const r=await fetch("/api/assets",{cache:"no-store"});if(!r.ok){setError("Could not load asset library");return}const d=await r.json();setAssets(d.assets??[]);setFolders(d.folders??[])}
+ useEffect(()=>{void load()},[]);
+ const visibleFolders=useMemo(()=>folders.filter(f=>f.parentId===currentId).sort((a,b)=>a.name.localeCompare(b.name)),[folders,currentId]);
+ const visibleAssets=useMemo(()=>assets.filter(a=>a.folderId===currentId),[assets,currentId]);
+ const path=useMemo(()=>treePath(folders,currentId),[folders,currentId]);
+ function startDrag(e:DragEvent, item:DragItem){e.dataTransfer.setData("application/json",JSON.stringify(item));e.dataTransfer.effectAllowed="move"}
+ function parseDrag(e:DragEvent):DragItem|null{try{return JSON.parse(e.dataTransfer.getData("application/json")) as DragItem}catch{return null}}
+ async function moveItem(item:DragItem,targetFolderId:string|null){setBusy(true);setError("");try{if(item.kind==="asset"){const r=await fetch(`/api/assets/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderId:targetFolderId})});if(!r.ok)throw new Error((await r.json()).error??"Could not move asset")}else{const r=await fetch(`/api/assets/folders/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:targetFolderId})});if(!r.ok)throw new Error((await r.json()).error??"Could not move folder")}await load();setMessage("Moved.")}catch(e){setError(e instanceof Error?e.message:"Could not move item")}finally{setBusy(false);setDragOver(null)}}
+ function allowDrop(e:DragEvent,target:string){e.preventDefault();e.dataTransfer.dropEffect="move";setDragOver(target)}
+ async function createFolder(){if(!newFolderName.trim())return;setBusy(true);try{const r=await fetch("/api/assets/folders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:newFolderName,parentId:currentId})});if(!r.ok)throw new Error((await r.json()).error??"Could not create folder");setNewFolderName("");setNewFolderOpen(false);await load();setMessage("Folder created.")}catch(e){setError(e instanceof Error?e.message:"Could not create folder")}finally{setBusy(false)}}
+ async function deleteFolder(){if(!currentId)return;const f=folders.find(x=>x.id===currentId);if(!f||!confirm(`Delete folder “${f.name}”? Its assets and child folders will move to the parent.`))return;setBusy(true);try{const r=await fetch(`/api/assets/folders/${currentId}`,{method:"DELETE"});if(!r.ok)throw new Error((await r.json()).error??"Could not delete folder");const parent=f.parentId;await load();setCurrentId(parent);setMessage("Folder deleted; contents moved to its parent.")}catch(e){setError(e instanceof Error?e.message:"Could not delete folder")}finally{setBusy(false)}}
+ async function upload(){if(!file||!assetKey.trim())return;setBusy(true);try{const form=new FormData();form.set("file",file);form.set("assetKey",assetKey.trim());form.set("type",assetType);if(currentId)form.set("folderId",currentId);const r=await fetch("/api/assets",{method:"POST",body:form});if(!r.ok)throw new Error((await r.json()).error??"Upload failed");setFile(null);setAssetKey("");setUploadOpen(false);await load();setMessage("Graphic added to the library.")}catch(e){setError(e instanceof Error?e.message:"Upload failed")}finally{setBusy(false)}}
+ const title=currentId?(folders.find(f=>f.id===currentId)?.name??"Folder"):"Graphics library";
+ return <main style={{maxWidth:1200,margin:"0 auto",padding:24,fontFamily:"system-ui, sans-serif"}}>
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,marginBottom:16}}><div><a href="/" style={{textDecoration:"none"}}>← Projects</a><h1 style={{margin:"8px 0 0"}}>Graphics library</h1></div><div style={{display:"flex",gap:8}}><button onClick={()=>setNewFolderOpen(true)}>New folder</button><button onClick={()=>setUploadOpen(true)}>Add graphic</button></div></div>
+  <div style={{fontSize:14,color:"#666",marginBottom:16}}>Reusable graphics are shared between projects. Drag graphics or folders to organize them.</div>
+  {error&&<div style={{padding:10,background:"#fee",marginBottom:10}}>{error}</div>}{message&&<div style={{padding:10,background:"#efe",marginBottom:10}}>{message}</div>}
+  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:14}}>
+   <button onClick={()=>setCurrentId(null)} onDragOver={e=>allowDrop(e,"root")} onDragLeave={()=>setDragOver(null)} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,null)}} style={{fontWeight:currentId?400:700,outline:dragOver==="root"?"2px solid #1976d2":undefined}}>Root</button>
+   {path.map(f=><span key={f.id}> / <button onClick={()=>setCurrentId(f.id)} onDragOver={e=>allowDrop(e,f.id)} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,f.id)}}>{f.name}</button></span>)}
+   {currentId&&<button onClick={deleteFolder} style={{marginLeft:"auto"}}>Delete folder</button>}
+  </div>
+  <section onDragOver={e=>allowDrop(e,currentId??"root")} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,currentId)}} style={{minHeight:420,padding:16,border:"2px dashed #bbb",borderRadius:10,background:dragOver===(currentId??"root")?"#f5f9ff":"transparent"}}>
+   <h2 style={{marginTop:0}}>{title}</h2>
+   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:14}}>
+    {visibleFolders.map(f=><div key={f.id} draggable onDragStart={e=>startDrag(e,{kind:"folder",id:f.id})} onDragOver={e=>allowDrop(e,f.id)} onDrop={e=>{e.preventDefault();e.stopPropagation();const i=parseDrag(e);if(i)void moveItem(i,f.id)}} onDoubleClick={()=>setCurrentId(f.id)} style={{padding:16,border:"1px solid #ccc",borderRadius:8,cursor:"grab",background:dragOver===f.id?"#eef6ff":"#fff"}}><div style={{fontSize:32}}>📁</div><strong>{f.name}</strong><div style={{fontSize:12,color:"#777"}}>Double-click to open</div></div>)}
+    {visibleAssets.map(a=><div key={a.id} draggable onDragStart={e=>startDrag(e,{kind:"asset",id:a.id})} style={{border:"1px solid #ddd",borderRadius:8,overflow:"hidden",cursor:"grab",background:"#fff"}}><div style={{height:120,background:"#f4f4f4",display:"grid",placeItems:"center"}}>{a.mimeType.startsWith("image/")?<img src={`/api/assets/${a.id}`} alt={a.assetKey} style={{maxWidth:"100%",maxHeight:120,objectFit:"contain"}}/>:"Graphic"}</div><div style={{padding:10}}><strong style={{display:"block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.assetKey}</strong><small>{a.width??"?"} × {a.height??"?"} · {a.projectCount} project{a.projectCount===1?"":"s"}</small></div></div>)}
+   </div>
+   {!visibleFolders.length&&!visibleAssets.length&&<div style={{padding:60,textAlign:"center",color:"#777"}}>Empty folder. Drop graphics or folders here.</div>}
+  </section>
+  {uploadOpen&&<div style={{position:"fixed",inset:0,background:"#0008",display:"grid",placeItems:"center"}}><div style={{background:"white",padding:24,borderRadius:10,width:420}}><h2>Add graphic</h2><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>setFile(e.target.files?.[0]??null)}/><input placeholder="Asset name / key" value={assetKey} onChange={e=>setAssetKey(e.target.value)} style={{display:"block",width:"100%",marginTop:12,padding:8}}/><select value={assetType} onChange={e=>setAssetType(e.target.value)} style={{display:"block",marginTop:12,padding:8}}><option value="OVERLAY">Overlay</option><option value="BACKGROUND">Background</option><option value="LOGO">Logo</option></select><div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}><button onClick={()=>setUploadOpen(false)}>Cancel</button><button disabled={busy||!file||!assetKey.trim()} onClick={()=>void upload()}>Add</button></div></div></div>}
+  {newFolderOpen&&<div style={{position:"fixed",inset:0,background:"#0008",display:"grid",placeItems:"center"}}><div style={{background:"white",padding:24,borderRadius:10,width:360}}><h2>New folder</h2><input autoFocus placeholder="Folder name" value={newFolderName} onChange={e=>setNewFolderName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")void createFolder()}} style={{width:"100%",padding:8}}/><div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}><button onClick={()=>setNewFolderOpen(false)}>Cancel</button><button disabled={busy||!newFolderName.trim()} onClick={()=>void createFolder()}>Create</button></div></div></div>}
+ </main>;
+}
