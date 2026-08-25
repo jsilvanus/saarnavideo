@@ -7,63 +7,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum SourceType {
-  UPLOAD
-  YOUTUBE
-}
-
-enum SourceStatus {
-  PENDING
-  AVAILABLE
-}
-
-enum OutputType {
-  VIDEO
-  THUMBNAIL
-}
-
-enum JobStatus {
-  QUEUED
-  ACQUIRING_SOURCE
-  PROCESSING
-  RENDERING
-  COMPLETED
-  FAILED
-  EXPIRED
-  CANCELLATION_REQUESTED
-  CANCELLED
-}
-
-enum JobLogLevel {
-  DEBUG
-  INFO
-  WARN
-  ERROR
-}
-
-enum PublicationProvider {
-  YOUTUBE
-}
-
-enum PublicationStatus {
-  QUEUED
-  UPLOADING
-  COMPLETED
-  FAILED
-}
-
-enum PrivacyState {
-  PRIVATE
-  UNLISTED
-  PUBLIC
-}
-
-enum AssetType {
-  OVERLAY
-  BACKGROUND
-  LOGO
-  FONT
-}
+enum SourceType { UPLOAD YOUTUBE }
+enum SourceStatus { PENDING AVAILABLE }
+enum OutputType { VIDEO THUMBNAIL }
+enum MediaJobType { DOWNLOAD THUMBNAIL PREVIEW VIDEO }
+enum MediaJobStatus { QUEUED RUNNING COMPLETED FAILED CANCELLED }
+enum JobLogLevel { DEBUG INFO WARN ERROR }
+enum PublicationProvider { YOUTUBE }
+enum PublicationStatus { QUEUED UPLOADING COMPLETED FAILED }
+enum PrivacyState { PRIVATE UNLISTED PUBLIC }
+enum AssetType { OVERLAY BACKGROUND LOGO FONT }
 
 model Project {
   id String @id @default(cuid())
@@ -77,7 +30,7 @@ model Project {
   updatedAt DateTime @updatedAt
   expiresAt DateTime?
   sources Source[]
-  jobs GenerationJob[]
+  jobs MediaJob[]
   outputs Output[]
   publications Publication[]
   assets Asset[]
@@ -98,26 +51,40 @@ model Source {
   createdAt DateTime @default(now())
   expiresAt DateTime?
   projects Project[]
+  jobs MediaJob[]
 }
 
-model GenerationJob {
+model MediaJob {
   id String @id @default(cuid())
   projectId String
-  status JobStatus @default(QUEUED)
+  sourceId String?
+  type MediaJobType
+  status MediaJobStatus @default(QUEUED)
   progress Int @default(0)
+  phase String?
+  message String?
+  currentMs BigInt?
+  totalMs BigInt?
+  bytesProcessed BigInt?
+  totalBytes BigInt?
+  speed String?
+  etaSeconds Int?
+  priority Int @default(0)
+  parameters Json?
   error String?
-  cancellationRequested Boolean @default(false)
-  cancelledAt DateTime?
-  preview Boolean @default(false)
   createdAt DateTime @default(now())
   startedAt DateTime?
   completedAt DateTime?
-  estimatedDurationSeconds Int?
-  resourceMetrics Json?
-  renderDefinition Json?
+  updatedAt DateTime @updatedAt
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  dependsOnJobId String?
+  dependsOnJob MediaJob? @relation("MediaJobDependency", fields: [dependsOnJobId], references: [id], onDelete: SetNull)
+  dependentJobs MediaJob[] @relation("MediaJobDependency")
   logs JobLog[]
-  @@index([status, createdAt])
+  @@index([status, priority, createdAt])
+  @@index([projectId, createdAt])
+  @@index([dependsOnJobId])
 }
 
 model Output {
@@ -159,7 +126,7 @@ model JobLog {
   message String
   data Json?
   createdAt DateTime @default(now())
-  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job MediaJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   @@index([jobId, createdAt])
 }
 

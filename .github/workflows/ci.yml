@@ -34,3 +34,10 @@ jobs:
       - run: npx prisma db push
       - run: npx tsc --noEmit
       - run: npm test
+      - name: Build self-contained media worker
+        run: docker build -f Dockerfile.worker -t saarnavideo-worker:ci .
+      - name: Verify worker toolchain
+        run: |
+          docker run --rm saarnavideo-worker:ci ffmpeg -version
+          docker run --rm saarnavideo-worker:ci ffprobe -version
+          docker run --rm saarnavideo-worker:ci yt-dlp --version
