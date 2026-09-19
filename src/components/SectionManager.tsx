@@ -25,7 +25,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
   const rangeStart = parent?.startSeconds ?? 0;
   const rangeEnd = parent?.endSeconds ?? availableDuration;
 
-  async function addLines(origin: Section["origin"] = "MANUAL") {
+  async function addLines() {
     const labels = lines.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     if (!labels.length) return;
     const next = labels.map((label, index) => ({
@@ -84,7 +84,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
     <p className="muted">{canPlace ? "New sections are evenly placed from " + formatTime(rangeStart) + " to " + formatTime(rangeEnd) + ". AI assistance can later refine those boundaries." : "Sections can be created without timestamps; choose a source/range when you want automatic placement."}</p>
     <div className="list">
       {visible.map(section => <div className="row" key={section.id}>
-        <span><strong>{section.label}</strong><small>{section.startSeconds !== undefined ? formatTime(section.startSeconds) + " → " + formatTime(section.endSeconds ?? section.startSeconds) : "No position yet"} · " + section.origin.toLowerCase() + "</small></span>
+        <span><strong>{section.label}</strong><small>{section.startSeconds !== undefined ? formatTime(section.startSeconds) + " → " + formatTime(section.endSeconds ?? section.startSeconds) : "No position yet"} · {section.origin.toLowerCase()}</small></span>
         <span className="button-row"><button onClick={() => setParentId(section.id)}>Section inside…</button><button onClick={() => void removeSection(section.id)}>Remove</button></span>
       </div>)}
       {!visible.length && <p className="muted">{parentId ? "No subsections yet." : "No sections yet."}</p>}
