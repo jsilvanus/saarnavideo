@@ -79,7 +79,9 @@ Source acquisition should be isolated behind a source-provider abstraction. The 
 
 The application should expose generated files as downloadable outputs. Download is a transport operation, not a separate editing model.
 
-## Semantic source selections
+## Legacy semantic source selections
+
+The existing semanticSegments field is retained for renderer compatibility. New semantic structure should use the first-class sections model described below.
 
 A project may identify semantic ranges such as:
 
