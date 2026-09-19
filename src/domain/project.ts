@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { graphicSchema, type Graphic } from "@/domain/graphics";
+import { sectionSchema, type Section } from "@/domain/sections";
 
 export const transitionSchema = z.object({
   type: z.enum(["cut", "fade", "crossfade"]),
@@ -75,6 +76,7 @@ export const templateSchema = z.object({
 export const projectDefinitionSchema = z.object({
   version: z.literal(1),
   semanticSegments: z.array(semanticSegmentSchema),
+  sections: z.array(sectionSchema).default([]),
   graphics: z.array(graphicSchema).default([]),
   template: templateSchema.optional(),
   composition: compositionSchema,
@@ -83,6 +85,7 @@ export const projectDefinitionSchema = z.object({
 export type Transition = z.infer<typeof transitionSchema>;
 export type TimelineItem = z.infer<typeof timelineItemSchema>;
 export type SemanticSegment = z.infer<typeof semanticSegmentSchema>;
+export type { Section };
 export type TemplateDefinition = z.infer<typeof templateSchema>;
 export type ProjectDefinition = z.infer<typeof projectDefinitionSchema>;
 export type { Graphic };
@@ -119,6 +122,7 @@ export function migrateProjectDefinition(input: unknown, fallbackSourceId?: stri
   return projectDefinitionSchema.parse({
     version: 1,
     semanticSegments: parsed.semanticSegments,
+    sections: parsed.semanticSegments.map((segment) => ({ ...segment, scope: "SOURCE" as const, origin: "MANUAL" as const })),
     graphics: [],
     template: parsed.template,
     composition: { sourceStartSeconds: parsed.composition.sourceStartSeconds ?? 0, sourceEndSeconds: parsed.composition.sourceEndSeconds ?? 0.001, items: migratedItems },
