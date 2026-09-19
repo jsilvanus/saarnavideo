@@ -229,3 +229,24 @@ SaarnaVideo supports multiple reusable composition templates and can reliably pr
 10. **Keep human confirmation in the loop.** Automatic transcription and section detection may suggest edits but should not silently publish or make irreversible final decisions.
 11. **Prefer deterministic rendering.** Given the same source, project definition, template, and renderer version, the output should be reproducible as far as practical.
 12. **Avoid general editor scope.** The UI should remain a structured publishing workflow, not become a manual timeline editor.
+
+---
+
+## Semantic sections — implemented foundation
+
+Semantic sections are now modeled independently from source-range/timeline items.
+
+The foundation supports:
+- source-scoped and composition-scoped sections;
+- sections without timestamps;
+- optional parent sections for later nesting;
+- manual and template origins;
+- line-separated section entry;
+- deterministic even placement across a known range;
+- reusable section templates, including Normal Mass and Sermon;
+- drilling into a main section to create subsections;
+- independent semantic structure for the source recording and finished composition.
+
+AI-assisted positioning remains a later assistance layer. It should consume transcript/audio information and propose boundary corrections, never silently replace the user's semantic structure or rendering decisions.
+
+The existing semanticSegments field remains as a compatibility representation for the current renderer while the new section tree becomes the authoritative semantic model. Source clips and composition timeline items remain rendering instructions rather than semantic sections.
