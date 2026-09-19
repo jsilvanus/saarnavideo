@@ -339,3 +339,24 @@ A first-time user should be able to:
 7. receive a finished MP4 and thumbnail as downloadable outputs;
 8. optionally have the finished video uploaded privately to YouTube;
 9. return later and see the project/output/publication status without keeping the large working files forever.
+
+## Semantic section model
+
+Sections are semantic/editorial structure, not source cuts. A section may exist without a timestamp, and a timestamped section does not imply a separate physical video file.
+
+The same model is used in two scopes:
+- source sections describe the original recording;
+- composition sections describe the finished product.
+
+Sections may have a title, optional parent, optional range, optional source/provenance relationship, and an origin of manual, template, or AI assistance.
+
+Initial section creation is deliberately flat. Users can then select a main section and create subsections inside it, for example:
+
+Sermon
+  Bible Study
+  Our Life
+  Future
+
+Users can paste a line-separated list of sections and place them evenly across a known range. Reusable section-template buttons provide common structures such as Normal Mass and Sermon. Even placement is only a deterministic starting point; future AI assistance can refine boundaries from transcript/audio analysis while the user remains authoritative.
+
+Source sections and composition sections have independent timelines. This distinction allows a source sermon to retain its semantic identity even when the final product trims, combines, or rearranges its source media. The same semantic structure can later drive transcript navigation, product chapters, YouTube chapters, and assisted timestamping without making those features depend on FFmpeg cuts.
