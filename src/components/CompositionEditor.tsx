@@ -6,15 +6,15 @@ type Source = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AV
 type Graphic = { id: string; name: string; width: number; height: number; backgroundColor?: string; layers: unknown[] };
 type Transition = { type: "cut" | "fade" | "crossfade"; durationSeconds: number };
 type Item = { type: "source-clip" | "overlay" | "slate"; sourceId?: string; graphicId?: string; sectionId?: string; startSeconds?: number; endSeconds?: number; template?: string; mode?: "standalone" | "overlay"; durationSeconds?: number; kind?: "text" | "rectangle" | "image"; imageAsset?: string; opacity?: number; data?: Record<string, string>; transitionIn?: Transition; transitionOut?: Transition };
-type Segment = { id: string; label: string; startSeconds: number; endSeconds: number; sourceId?: string };
-type Definition = { version?: 1; semanticSegments: Segment[]; graphics?: Graphic[]; composition: { sourceStartSeconds: number; sourceEndSeconds: number; items: Item[] } };
+type Segment = { id: string; label: string; startSeconds: number; endSeconds: number; sourceId?: string };\ntype SemanticSection = { id: string; label: string; scope: "SOURCE"|"COMPOSITION"; parentId?: string|null; sourceId?: string; startSeconds?: number; endSeconds?: number; origin?: "MANUAL"|"TEMPLATE"|"AI" };
+type Definition = { version?: 1; semanticSegments: Segment[]; sections?: SemanticSection[]; graphics?: Graphic[]; composition: { sourceStartSeconds: number; sourceEndSeconds: number; items: Item[] } };
 type Props = { definition: Definition; sources: Source[]; onChange: (definition: Definition) => Promise<void> };
 type DragPayload = { kind: "graphic" | "source"; id: string };
 
 export default function CompositionEditor({ definition, sources, onChange }: Props) {
   const graphics = definition.graphics ?? [];
   const items = definition.composition.items;
-  const sections = definition.semanticSegments;
+  const sections: Segment[] = (definition.sections?.filter(section => section.scope === "SOURCE" && section.startSeconds !== undefined && section.endSeconds !== undefined).map(section => ({ id: section.id, label: section.label, sourceId: section.sourceId, startSeconds: section.startSeconds!, endSeconds: section.endSeconds! })) ?? definition.semanticSegments);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const commit = async (nextItems: Item[]) => onChange({ ...definition, composition: { ...definition.composition, items: nextItems } });
   const payloadFromEvent = (event: React.DragEvent): DragPayload | null => { const raw = event.dataTransfer.getData("application/json"); if (!raw) return null; try { return JSON.parse(raw) as DragPayload; } catch { return null; } };
