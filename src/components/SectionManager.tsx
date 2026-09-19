@@ -36,7 +36,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
       sourceId: scope === "SOURCE" ? sourceId || undefined : undefined,
       startSeconds: rangeEnd > rangeStart ? rangeStart + ((rangeEnd - rangeStart) * index) / labels.length : undefined,
       endSeconds: rangeEnd > rangeStart ? rangeStart + ((rangeEnd - rangeStart) * (index + 1)) / labels.length : undefined,
-      origin,
+      origin: "MANUAL" as const,
     })) as Section[];
     await onChange([...sections, ...next]);
     setLines("");
