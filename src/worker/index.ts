@@ -11,6 +11,7 @@ import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
+import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -100,18 +101,6 @@ function serializeTranscribeParameters(params: TranscribeParameters): Record<str
 
 async function cleanupTempClip(tempClipPath: string | undefined) { if (!tempClipPath) return; await rm(tempClipPath, { force: true }).catch(() => undefined); }
 
-/**
- * Rough confidence heuristic mirrored from confidenceFromAvgLogprob in
- * src/integrations/auditorStt/provider.ts: clamp(avg_logprob + 1.0, 0, 1).
- * Kept as a small local copy since the worker talks to AuditorSttClient
- * directly rather than going through that provider (see "Cancellation" in
- * docs/transcription-editor-contract.md for why).
- */
-function confidenceFromAvgLogprob(avgLogprob: number | null): number | undefined {
-  if (avgLogprob === null || avgLogprob === undefined) return undefined;
-  return Math.max(0, Math.min(1, avgLogprob + 1));
-}
-
 async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds: number, rangeEndSeconds: number): Promise<string> {
   const tmpDir = path.join(MEDIA_ROOT, "tmp");
   await mkdir(tmpDir, { recursive: true });
@@ -147,7 +136,7 @@ async function processTranscription(job: MediaJobRow) {
 
   if (!params.auditorJobId) {
     const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
-    const isPartial = params.rangeStartSeconds > 0 || (durationSeconds !== undefined && params.rangeEndSeconds < durationSeconds);
+    const isPartial = isPartialRange(params.rangeStartSeconds, params.rangeEndSeconds, durationSeconds);
     let filePath = source.storagePath;
     if (isPartial) {
       await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: "Extracting requested range", progress: 0 }, true);
@@ -199,15 +188,7 @@ async function processTranscription(job: MediaJobRow) {
   }
 
   const result = await client.getJobResult(auditorJobId);
-  // The result's segments are time-zeroed to the submitted clip, not the source - add back rangeStartSeconds before persisting anything.
-  const segments = result.segments
-    .filter((segment) => segment.end > segment.start)
-    .map((segment) => ({
-      startSeconds: segment.start + params.rangeStartSeconds,
-      endSeconds: segment.end + params.rangeStartSeconds,
-      text: segment.text,
-      confidence: confidenceFromAvgLogprob(segment.avg_logprob),
-    }));
+  const segments = applyRangeOffset(result.segments, params.rangeStartSeconds);
 
   await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, segments });
 
