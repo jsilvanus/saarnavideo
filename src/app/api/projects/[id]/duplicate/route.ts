@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
@@ -26,7 +27,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         gospelRef: source.gospelRef,
         gospelText: source.gospelText,
         templateKey: source.templateKey,
-        definition: source.definition,
+        definition: source.definition === null ? Prisma.JsonNull : source.definition,
         assets: { connect: source.assets.map((item) => ({ id: item.id })) },
       },
     });

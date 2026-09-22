@@ -36,7 +36,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     for (const item of pkg.assets) {
       let asset = await prisma.asset.findFirst({ where: { contentHash: item.contentHash, mimeType: item.mimeType } });
 
-      if (pkg.assetMode === "referenced") {
+      if (item.assetMode === "referenced") {
         if (!asset) unresolved.push(item.assetKey);
         else {
           idMap.set(item.sourceAssetId, asset.id);

@@ -1,7 +1,7 @@
 import { buildSourceRenderPlan, type FfmpegPlan } from "@/renderer/ffmpeg";
-import type { Graphic, ProjectDefinition, TimelineItem } from "@/domain/project";
+import type { Graphic, GraphicCarrierItem, ProjectDefinition } from "@/domain/project";
 
-function withGraphicLayers(item: TimelineItem, graphic: Graphic): TimelineItem {
+function withGraphicLayers(item: GraphicCarrierItem, graphic: Graphic): GraphicCarrierItem {
   const data = { ...(item.data ?? {}), layers: JSON.stringify(graphic.layers), backgroundColor: graphic.backgroundColor };
   if (item.type === "slate") return { ...item, template: "rich", data };
   return { ...item, template: "rich", kind: "text", data };

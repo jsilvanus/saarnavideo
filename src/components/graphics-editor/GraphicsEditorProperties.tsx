@@ -21,15 +21,15 @@ async function importGraphic(projectId: string, file: File) {
 }
 
 export const GraphicsEditorProperties: FC<{
-  projectId: string; item: Item; assets: Asset[]; primary: Layer | null; assetPicker: boolean;
+  projectId: string; graphicId: string; item: Item; assets: Asset[]; primary: Layer | null; assetPicker: boolean;
   aspectLock: boolean;
   onLayer: (id: string, patch: Partial<Layer>) => void;
   onStyle: (id: string, key: string, value: string | number) => void;
   onChooseAsset: (key: string) => void; onToggleAssetPicker: () => void;
   onAspectLock: (value: boolean) => void;
-}> = ({ projectId, item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
+}> = ({ projectId, graphicId, item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
   <aside className="ge-properties">
-    <div className="ge-section"><b>Graphic package</b><button onClick={() => void exportGraphic(projectId, item.id)}>Export .svgraphic</button><label>Import graphic<input type="file" accept=".svgraphic,application/vnd.saarnavideo.graphic+json,application/json" onChange={e => { const file = e.target.files?.[0]; if (file) void importGraphic(projectId, file); e.currentTarget.value = ""; }} /></label></div>
+    <div className="ge-section"><b>Graphic package</b><button onClick={() => void exportGraphic(projectId, graphicId)}>Export .svgraphic</button><label>Import graphic<input type="file" accept=".svgraphic,application/vnd.saarnavideo.graphic+json,application/json" onChange={e => { const file = e.target.files?.[0]; if (file) void importGraphic(projectId, file); e.currentTarget.value = ""; }} /></label></div>
     {primary && <div className="ge-section"><b>Layer: {primary.id}</b><label>Type<span>{primary.type}</span></label>{primary.type === "text" && <label>Text<textarea value={primary.text ?? ""} onChange={e => onLayer(primary.id, { text: e.target.value })} /></label>}{primary.type === "image" && <label>Image<button onClick={onToggleAssetPicker}>{primary.src ? "Change image" : "Choose image"}</button></label>}
       <div className="ge-two"><label>X<input type="number" value={primary.x} onChange={e => onLayer(primary.id, { x: Number(e.target.value) })} /></label><label>Y<input type="number" value={primary.y} onChange={e => onLayer(primary.id, { y: Number(e.target.value) })} /></label></div>
       <div className="ge-two"><label>Width<input type="number" min="20" value={primary.width} onChange={e => onLayer(primary.id, { width: Number(e.target.value) })} /></label><label>Height<input type="number" min="20" value={primary.height} onChange={e => onLayer(primary.id, { height: Number(e.target.value) })} /></label></div>

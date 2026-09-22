@@ -11,7 +11,7 @@ async function isDescendant(folderId: string, possibleParentId: string): Promise
     if (currentId === folderId) return true;
     if (seen.has(currentId)) return true;
     seen.add(currentId);
-    const current = await prisma.assetFolder.findUnique({ where: { id: currentId }, select: { parentId: true } });
+    const current: { parentId: string | null } | null = await prisma.assetFolder.findUnique({ where: { id: currentId }, select: { parentId: true } });
     currentId = current?.parentId ?? null;
   }
   return false;
