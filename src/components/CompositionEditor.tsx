@@ -6,7 +6,8 @@ type Source = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AV
 type Graphic = { id: string; name: string; width: number; height: number; backgroundColor?: string; layers: unknown[] };
 type Transition = { type: "cut" | "fade" | "crossfade"; durationSeconds: number };
 type Item = { type: "source-clip" | "overlay" | "slate"; sourceId?: string; graphicId?: string; sectionId?: string; startSeconds?: number; endSeconds?: number; template?: string; mode?: "standalone" | "overlay"; durationSeconds?: number; kind?: "text" | "rectangle" | "image"; imageAsset?: string; opacity?: number; data?: Record<string, string>; transitionIn?: Transition; transitionOut?: Transition };
-type Segment = { id: string; label: string; startSeconds: number; endSeconds: number; sourceId?: string };\ntype SemanticSection = { id: string; label: string; scope: "SOURCE"|"COMPOSITION"; parentId?: string|null; sourceId?: string; startSeconds?: number; endSeconds?: number; origin?: "MANUAL"|"TEMPLATE"|"AI" };
+type Segment = { id: string; label: string; startSeconds: number; endSeconds: number; sourceId?: string };
+type SemanticSection = { id: string; label: string; scope: "SOURCE"|"COMPOSITION"; parentId?: string|null; sourceId?: string; startSeconds?: number; endSeconds?: number; origin?: "MANUAL"|"TEMPLATE"|"AI" };
 type Definition = { version?: 1; semanticSegments: Segment[]; sections?: SemanticSection[]; graphics?: Graphic[]; composition: { sourceStartSeconds: number; sourceEndSeconds: number; items: Item[] } };
 type Props = { definition: Definition; sources: Source[]; onChange: (definition: Definition) => Promise<void> };
 type DragPayload = { kind: "graphic" | "source"; id: string };
