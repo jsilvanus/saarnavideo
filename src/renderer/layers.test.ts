@@ -6,6 +6,8 @@ const source = new Map([["source-a", "/tmp/source-a.mp4"]]);
 const base = {
   version: 1 as const,
   semanticSegments: [],
+  sections: [],
+  graphics: [],
   template: { key: "generic", width: 1920, height: 1080, fps: 30, backgroundColor: "black", textColor: "white" },
   composition: { sourceStartSeconds: 0, sourceEndSeconds: 60, items: [] },
 };

@@ -24,6 +24,7 @@ enum MediaJobType {
   THUMBNAIL
   PREVIEW
   VIDEO
+  TRANSCRIBE
 }
 enum MediaJobStatus {
   QUEUED
@@ -31,6 +32,16 @@ enum MediaJobStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+enum TranscriptionRunOrigin {
+  SERVICE
+  UPLOAD
+  MANUAL
+}
+enum TranscriptionRunStatus {
+  PENDING
+  APPLIED
+  DISCARDED
 }
 enum JobLogLevel {
   DEBUG
@@ -93,6 +104,8 @@ model Source {
   expiresAt DateTime?
   projects Project[]
   jobs MediaJob[]
+  transcriptionRuns TranscriptionRun[]
+  transcriptSegments TranscriptSegment[]
 }
 
 model MediaJob {
@@ -113,6 +126,7 @@ model MediaJob {
   priority Int @default(0)
   parameters Json?
   error String?
+  cancelRequested Boolean @default(false)
   createdAt DateTime @default(now())
   startedAt DateTime?
   completedAt DateTime?
@@ -123,6 +137,7 @@ model MediaJob {
   dependsOnJob MediaJob? @relation("MediaJobDependency", fields: [dependsOnJobId], references: [id], onDelete: SetNull)
   dependentJobs MediaJob[] @relation("MediaJobDependency")
   logs JobLog[]
+  transcriptionRun TranscriptionRun?
   @@index([status, priority, createdAt])
   @@index([projectId, createdAt])
   @@index([dependsOnJobId])
@@ -213,4 +228,40 @@ model Asset {
   projects Project[]
   @@index([contentHash])
   @@index([folderId])
+}
+
+model TranscriptionRun {
+  id String @id @default(cuid())
+  sourceId String
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  jobId String? @unique
+  job MediaJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  origin TranscriptionRunOrigin
+  language String
+  rangeStartSeconds Float
+  rangeEndSeconds Float
+  status TranscriptionRunStatus @default(PENDING)
+  appliedAt DateTime?
+  appliedStrategy String?
+  error String?
+  createdAt DateTime @default(now())
+  segments TranscriptSegment[]
+  @@index([sourceId, status])
+}
+
+model TranscriptSegment {
+  id String @id @default(cuid())
+  sourceId String
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  runId String?
+  run TranscriptionRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  isActive Boolean @default(false)
+  startSeconds Float
+  endSeconds Float
+  text String
+  confidence Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([sourceId, isActive, startSeconds])
+  @@index([runId])
 }

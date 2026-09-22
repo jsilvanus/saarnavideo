@@ -34,6 +34,7 @@ export default function GraphicEditor({
   return (
     <GraphicsEditor
       projectId={projectId}
+      graphicId={graphic.id}
       item={item}
       assets={assets}
       title={graphic.name}

@@ -84,13 +84,15 @@ export const projectDefinitionSchema = z.object({
 
 export type Transition = z.infer<typeof transitionSchema>;
 export type TimelineItem = z.infer<typeof timelineItemSchema>;
+/** The two TimelineItem variants that carry graphic-editor state (`data`, `graphicId`) — everything but source-clip. */
+export type GraphicCarrierItem = Extract<TimelineItem, { type: "overlay" }> | Extract<TimelineItem, { type: "slate" }>;
 export type SemanticSegment = z.infer<typeof semanticSegmentSchema>;
 export type { Section };
 export type TemplateDefinition = z.infer<typeof templateSchema>;
 export type ProjectDefinition = z.infer<typeof projectDefinitionSchema>;
 export type { Graphic };
 
-export function createProjectDefinition(input: Omit<ProjectDefinition, "version">): ProjectDefinition {
+export function createProjectDefinition(input: Omit<z.input<typeof projectDefinitionSchema>, "version">): ProjectDefinition {
   return projectDefinitionSchema.parse({ version: 1, ...input });
 }
 
@@ -134,6 +136,6 @@ export function validateCompositionSources(definition: ProjectDefinition, source
   const missingSourceIds = definition.composition.items.filter(isSourceClip).map((item) => item.sourceId).filter((sourceId) => !sourceIdSet.has(sourceId));
   if (missingSourceIds.length > 0) throw new Error(`Composition references missing sources: ${Array.from(new Set(missingSourceIds)).join(", ")}`);
   const graphicIds = new Set(definition.graphics.map((graphic) => graphic.id));
-  const missingGraphics = definition.composition.items.filter((item) => item.type !== "source-clip" && item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
+  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem => item.type !== "source-clip" && !!item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
   if (missingGraphics.length > 0) throw new Error(`Composition references missing graphics: ${Array.from(new Set(missingGraphics)).join(", ")}`);
 }

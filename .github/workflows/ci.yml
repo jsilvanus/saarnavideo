@@ -30,8 +30,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm install
-      - run: npx prisma generate
-      - run: npx prisma db push
+      - run: npx prisma generate --schema prisma/schema.postgresql.prisma
+      - run: npx prisma db push --schema prisma/schema.postgresql.prisma
       - run: npx tsc --noEmit
       - run: npm test
       - name: Build self-contained media worker

@@ -4,6 +4,8 @@ import { buildCompositionRenderPlan, buildSourceRenderPlan } from "./ffmpeg";
 const base = {
   version: 1 as const,
   semanticSegments: [],
+  sections: [],
+  graphics: [],
 };
 
 const baseComposition = {
@@ -120,7 +122,7 @@ describe("buildCompositionRenderPlan", () => {
         new Map([["source-a", "/tmp/source-a.mp4"]]),
         "/tmp/output.mp4",
       );
-    }).toThrow("Composition must contain at least one source clip or slate");
+    }).toThrow("Composition must contain at least one source clip or standalone slate");
   });
 
   it("applies cut transition (no-op)", () => {
@@ -215,7 +217,7 @@ describe("buildCompositionRenderPlan", () => {
       {
         ...base,
         composition: {          ...baseComposition,          items: [
-            { type: "slate", template: "sermon", durationSeconds: 3, data: { title: "Gospel", subtitle: "Matthew 5" } },
+            { type: "slate", template: "sermon", mode: "standalone", durationSeconds: 3, data: { title: "Gospel", subtitle: "Matthew 5" } },
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
           ],
         },
@@ -247,7 +249,7 @@ describe("buildCompositionRenderPlan", () => {
           ...baseComposition,
           items: [
             { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 30 },
-            { type: "overlay", template: "gospel", startSeconds: 15, endSeconds: 25, data: { text: "John 3:16" } },
+            { type: "overlay", template: "gospel", kind: "text", opacity: 1, startSeconds: 15, endSeconds: 25, data: { text: "John 3:16" } },
           ],
         },
       },
@@ -269,7 +271,7 @@ describe("buildCompositionRenderPlan", () => {
         composition: {
           ...baseComposition,
           items: [
-            { type: "slate", template: "sermon", durationSeconds: 2, data: { title: "Opening" }, transitionIn: { type: "fade", durationSeconds: 0.5 } },
+            { type: "slate", template: "sermon", mode: "standalone", durationSeconds: 2, data: { title: "Opening" }, transitionIn: { type: "fade", durationSeconds: 0.5 } },
             { type: "source-clip", sourceId: "source-a", startSeconds: 0, endSeconds: 10 },
           ],
         },
@@ -297,7 +299,7 @@ describe("buildCompositionRenderPlan", () => {
         composition: {
           ...baseComposition,
           items: [
-            { type: "slate", template: "custom", durationSeconds: 2, data: { title: "4K Title" } },
+            { type: "slate", template: "custom", mode: "standalone", durationSeconds: 2, data: { title: "4K Title" } },
           ],
         },
       },

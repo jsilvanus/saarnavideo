@@ -9,6 +9,9 @@ import { resolveSourcePaths } from "@/worker/source-resolution";
 import { downloadYouTubeSource, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
+import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
+import { createTranscriptionRun } from "@/lib/transcriptionRuns";
+import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -70,7 +73,153 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: `${type === "PREVIEW" ? "Preview" : "Video"} ready`, completedAt: new Date() }, true);
 }
 
-async function processJob() { const job = await claimJob(); if (!job) return false; try { if (job.type === "DOWNLOAD") await processDownload(job); else await runFfmpegJob(job, job.type); } catch (error) { const message = error instanceof Error ? error.message : String(error); await updateProgress(job.id, { status: "FAILED", phase: "FAILED", message, error: message }, true); await logJobEvent(job.id, "ERROR", "Media job failed", { error: message, type: job.type }); } return true; }
+type MediaJobRow = NonNullable<Awaited<ReturnType<typeof claimJob>>>;
+
+type TranscribeParameters = {
+  rangeStartSeconds: number;
+  rangeEndSeconds: number;
+  language: string;
+  auditorJobId?: string;
+  tempClipPath?: string;
+};
+
+// See docs/transcription-editor-contract.md, "MediaJob.parameters shape for a TRANSCRIBE job".
+function readTranscribeParameters(parameters: unknown): TranscribeParameters {
+  const params = (parameters && typeof parameters === "object" ? parameters : {}) as Partial<TranscribeParameters>;
+  if (typeof params.rangeStartSeconds !== "number" || typeof params.rangeEndSeconds !== "number" || typeof params.language !== "string") {
+    throw new Error("TRANSCRIBE job is missing rangeStartSeconds/rangeEndSeconds/language parameters");
+  }
+  return { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath };
+}
+
+function serializeTranscribeParameters(params: TranscribeParameters): Record<string, string | number> {
+  const result: Record<string, string | number> = { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language };
+  if (params.auditorJobId) result.auditorJobId = params.auditorJobId;
+  if (params.tempClipPath) result.tempClipPath = params.tempClipPath;
+  return result;
+}
+
+async function cleanupTempClip(tempClipPath: string | undefined) { if (!tempClipPath) return; await rm(tempClipPath, { force: true }).catch(() => undefined); }
+
+async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds: number, rangeEndSeconds: number): Promise<string> {
+  const tmpDir = path.join(MEDIA_ROOT, "tmp");
+  await mkdir(tmpDir, { recursive: true });
+  const tempClipPath = path.join(tmpDir, `${jobId}.wav`);
+  // -ss/-to placed after -i so the cut is sample-accurate rather than keyframe-snapped.
+  await execFileAsync("ffmpeg", ["-y", "-i", sourceStoragePath, "-ss", String(rangeStartSeconds), "-to", String(rangeEndSeconds), "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", tempClipPath]);
+  return tempClipPath;
+}
+
+/**
+ * Submits (or resumes watching) a TRANSCRIBE job against liturgos-auditor-stt,
+ * applies the mandatory range-offset correction to the result, and persists it
+ * as a new TranscriptionRun. See docs/transcription-editor-contract.md for the
+ * full contract this implements (partial-range extraction, offset correction,
+ * cancellation, resumability).
+ */
+async function processTranscription(job: MediaJobRow) {
+  if (!job.sourceId) throw new Error("TRANSCRIBE job has no source");
+  const source = await prisma.source.findUnique({ where: { id: job.sourceId } });
+  if (!source) throw new Error("Source not found");
+  if (!source.storagePath) throw new Error("Source has no media available to transcribe");
+
+  let params = readTranscribeParameters(job.parameters);
+  const client = new AuditorSttClient();
+
+  // Honor a cancellation that arrived while this job was still QUEUED (claimJob just flipped it to RUNNING and we haven't submitted anything yet).
+  const preStart = await prisma.mediaJob.findUnique({ where: { id: job.id }, select: { cancelRequested: true } });
+  if (preStart?.cancelRequested) {
+    await cleanupTempClip(params.tempClipPath);
+    await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled before transcription started", completedAt: new Date() }, true);
+    return;
+  }
+
+  if (!params.auditorJobId) {
+    const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
+    const isPartial = isPartialRange(params.rangeStartSeconds, params.rangeEndSeconds, durationSeconds);
+    let filePath = source.storagePath;
+    if (isPartial) {
+      await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: "Extracting requested range", progress: 0 }, true);
+      const tempClipPath = await extractTranscriptionClip(job.id, source.storagePath, params.rangeStartSeconds, params.rangeEndSeconds);
+      params = { ...params, tempClipPath };
+      await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
+      filePath = tempClipPath;
+    }
+    await updateProgress(job.id, { phase: "SUBMITTING", message: "Submitting to transcription service", progress: 0 }, true);
+    const submission = await client.submitJob(filePath, { language: params.language });
+    params = { ...params, auditorJobId: submission.id };
+    // Persisted before the first poll so a worker restart can resume watching this job (see "Resumability").
+    await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
+  }
+
+  const auditorJobId = params.auditorJobId!;
+  let pollMs = DEFAULT_POLL_MS;
+  let finalStatus: JobStatusResponse | null = null;
+  for (;;) {
+    const current = await prisma.mediaJob.findUnique({ where: { id: job.id }, select: { cancelRequested: true } });
+    if (current?.cancelRequested) {
+      await client.deleteJob(auditorJobId).catch(() => undefined);
+      await cleanupTempClip(params.tempClipPath);
+      await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true);
+      return;
+    }
+    const status = await client.getJobStatus(auditorJobId);
+    await updateProgress(job.id, {
+      phase: status.phase,
+      message: status.phase,
+      progress: Math.round(status.progress),
+      currentMs: BigInt(Math.round(status.current_seconds * 1000)),
+      totalMs: BigInt(Math.round(status.total_seconds * 1000)),
+      etaSeconds: status.eta_seconds ?? undefined,
+    });
+    if (status.status === "completed" || status.status === "failed" || status.status === "cancelled") { finalStatus = status; break; }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    pollMs = Math.min(MAX_POLL_MS, pollMs + 250);
+  }
+
+  if (finalStatus.status === "cancelled") {
+    await cleanupTempClip(params.tempClipPath);
+    await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled", completedAt: new Date() }, true);
+    return;
+  }
+  if (finalStatus.status === "failed") {
+    await cleanupTempClip(params.tempClipPath);
+    throw new Error(finalStatus.error ?? "Auditor STT job failed");
+  }
+
+  const result = await client.getJobResult(auditorJobId);
+  const segments = applyRangeOffset(result.segments, params.rangeStartSeconds);
+
+  await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, segments });
+
+  await cleanupTempClip(params.tempClipPath);
+  await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Transcription complete", completedAt: new Date() }, true);
+}
+
+/**
+ * On worker startup, resume watching any TRANSCRIBE job left RUNNING by a
+ * prior worker process that already persisted an auditorJobId - the
+ * liturgos-auditor-stt job itself is durable, so there is nothing to redo,
+ * only to resume polling. Runs once, before the claim loop starts. A RUNNING
+ * job with no auditorJobId yet (crashed before submitting) is left as-is,
+ * matching the pre-existing orphaning behavior for ffmpeg jobs.
+ */
+async function resumeInterruptedTranscriptions() {
+  const stuck = await prisma.mediaJob.findMany({ where: { type: "TRANSCRIBE", status: "RUNNING" } });
+  for (const job of stuck) {
+    const params = job.parameters && typeof job.parameters === "object" ? (job.parameters as Record<string, unknown>) : {};
+    if (typeof params.auditorJobId !== "string") continue;
+    try {
+      await processTranscription(job);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await updateProgress(job.id, { status: "FAILED", phase: "FAILED", message, error: message }, true);
+      await logJobEvent(job.id, "ERROR", "Resumed transcription job failed", { error: message });
+    }
+  }
+}
+
+async function processJob() { const job = await claimJob(); if (!job) return false; try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else await runFfmpegJob(job, job.type); } catch (error) { const message = error instanceof Error ? error.message : String(error); await updateProgress(job.id, { status: "FAILED", phase: "FAILED", message, error: message }, true); await logJobEvent(job.id, "ERROR", "Media job failed", { error: message, type: job.type }); } return true; }
 
 async function processPublication() { const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false; const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false; try { const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } }); const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" }); await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date() } }); } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } return true; }
 
@@ -90,5 +239,5 @@ async function cleanupExpiredMedia() {
   for (const output of outputs) { await rm(output.storagePath, { force: true }).catch(() => undefined); await prisma.output.delete({ where: { id: output.id } }).catch(() => undefined); }
 }
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); process.exit(0); });
-async function main() { let lastCleanup = 0; while (true) { try { if (Date.now() - lastCleanup > 60000) { await cleanupExpiredMedia(); lastCleanup = Date.now(); } const didWork = (await processPublication()) || (await processJob()); if (!didWork) await new Promise(resolve => setTimeout(resolve, POLL_MS)); } catch (error) { console.error("Worker loop error:", error); await new Promise(resolve => setTimeout(resolve, POLL_MS)); } } }
+async function main() { await resumeInterruptedTranscriptions().catch(error => console.error("Failed to resume interrupted transcriptions:", error)); let lastCleanup = 0; while (true) { try { if (Date.now() - lastCleanup > 60000) { await cleanupExpiredMedia(); lastCleanup = Date.now(); } const didWork = (await processPublication()) || (await processJob()); if (!didWork) await new Promise(resolve => setTimeout(resolve, POLL_MS)); } catch (error) { console.error("Worker loop error:", error); await new Promise(resolve => setTimeout(resolve, POLL_MS)); } } }
 main().catch(error => { console.error("Fatal error:", error); process.exit(1); });

@@ -6,6 +6,8 @@ function definitionFor(sourceIds: string[]): ProjectDefinition {
   return {
     version: 1,
     semanticSegments: [],
+    sections: [],
+    graphics: [],
     composition: {
       sourceStartSeconds: 0,
       sourceEndSeconds: 30,

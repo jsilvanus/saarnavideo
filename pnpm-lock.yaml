@@ -55,6 +55,55 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(supports-color@7.2.0)(tsx@4.23.12)
 
+  C:/Users/jsilv/Code/saarnavideo:
+    dependencies:
+      '@prisma/client':
+        specifier: ^6.15.0
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      next:
+        specifier: ^15.5.0
+        version: 15.5.23(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      pnpm:
+        specifier: ^11.22.0
+        version: 11.22.0
+      react:
+        specifier: ^19.1.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.8(react@19.2.8)
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.4(@types/react@19.2.18)
+      eslint:
+        specifier: ^8.57.0
+        version: 8.57.1(supports-color@7.2.0)
+      eslint-config-next:
+        specifier: ^15.5.0
+        version: 15.5.23(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      prisma:
+        specifier: ^6.15.0
+        version: 6.19.3(typescript@5.9.3)
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.12
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(supports-color@7.2.0)(tsx@4.23.12)
+
 packages:
 
   '@emnapi/core@1.10.0':

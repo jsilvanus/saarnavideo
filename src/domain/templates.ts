@@ -144,6 +144,7 @@ export function sermonComposition(
   items.push({
     type: "slate",
     template: "opening",
+    mode: "standalone",
     durationSeconds: 3,
     data: { title: "Service", subtitle: "" },
   });
@@ -159,6 +160,8 @@ export function sermonComposition(
     items.push({
       type: "overlay",
       template: "gospel-text",
+      kind: "text",
+      opacity: 1,
       startSeconds: 0,
       endSeconds: segments.gospel.endSeconds - segments.gospel.startSeconds,
       data: { text: "Gospel" },
@@ -179,6 +182,7 @@ export function sermonComposition(
   items.push({
     type: "slate",
     template: "ending",
+    mode: "standalone",
     durationSeconds: 2,
     data: { title: "Thank you" },
   });
@@ -200,6 +204,7 @@ export function liturgyComposition(
   items.push({
     type: "slate",
     template: "opening",
+    mode: "standalone",
     durationSeconds: 2,
     data: { title: "Divine Liturgy" },
   });
@@ -238,6 +243,7 @@ export function vespersComposition(
   items.push({
     type: "slate",
     template: "opening",
+    mode: "standalone",
     durationSeconds: 2,
     data: { title: "Vespers" },
   });
