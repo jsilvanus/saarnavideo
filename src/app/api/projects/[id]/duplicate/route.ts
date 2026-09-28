@@ -1,10 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-
-function jsonSafe(value: unknown) {
-  return JSON.parse(JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item));
-}
+import { jsonError, jsonSafe } from "@/app/api/_lib/http";
 
 const SOURCE_RETENTION_MS = Number(process.env.MEDIA_RETENTION_DAYS ?? 7) * 24 * 60 * 60 * 1000;
 
@@ -14,7 +11,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     where: { id },
     include: { sources: true, assets: true },
   });
-  if (!source) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (!source) return jsonError("Project not found", 404);
 
   // A duplicate is a new project instance: source records are copied so each
   // project can later change/remove its own source without affecting the

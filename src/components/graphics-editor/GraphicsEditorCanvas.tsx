@@ -1,14 +1,14 @@
 import type { FC, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { HANDLE_LIST } from "./constants";
 import { anchor, layerStyle } from "./geometry";
-import type { Layer } from "./types";
+import type { Layer, PointerHandler } from "./types";
 
 export const GraphicsEditorCanvas: FC<{
   canvasRef: RefObject<HTMLDivElement | null>;
   artboardRef: RefObject<HTMLDivElement | null>;
   layers: Layer[]; selectedIds: Set<string>; grid: boolean; safe: boolean; background: string;
   onPointerMove: (e: ReactPointerEvent) => void; onPointerUp: () => void; onCanvasPointerDown: () => void;
-  onLayerPointerDown: (e: ReactPointerEvent, id: string, kind: string, handle?: string) => void;
+  onLayerPointerDown: PointerHandler;
 }> = ({ canvasRef, artboardRef, layers, selectedIds, grid, safe, background, onPointerMove, onPointerUp, onCanvasPointerDown, onLayerPointerDown }) => (
   <div className="ge-canvas-wrap">
     <div ref={canvasRef} className="ge-canvas" onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onPointerDown={onCanvasPointerDown}>

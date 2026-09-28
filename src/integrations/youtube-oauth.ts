@@ -13,6 +13,14 @@ function config() {
   return { clientId, clientSecret, redirectUri };
 }
 
+function tokenExpiry(expiresIn?: number): Date | null {
+  return expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+}
+
+async function requestToken(params: Record<string, string>): Promise<Response> {
+  return fetch(TOKEN_URL, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params) });
+}
+
 export function youtubeAuthorizationUrl(state: string): string {
   const { clientId, redirectUri } = config();
   const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: "code", scope: SCOPE, access_type: "offline", prompt: "consent", state });
@@ -21,23 +29,22 @@ export function youtubeAuthorizationUrl(state: string): string {
 
 export async function exchangeYouTubeCode(code: string) {
   const { clientId, clientSecret, redirectUri } = config();
-  const response = await fetch(TOKEN_URL, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: "authorization_code" }) });
+  const response = await requestToken({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: "authorization_code" });
   if (!response.ok) throw new Error(`YouTube OAuth token exchange failed (${response.status})`);
   const token = await response.json() as { access_token: string; refresh_token?: string; expires_in?: number; scope?: string };
   if (!token.access_token || !token.refresh_token) throw new Error("YouTube OAuth did not return a refresh token");
-  return prisma.youTubeConnection.upsert({ where: { provider: "youtube" }, update: { accessToken: encryptYouTubeToken(token.access_token), refreshToken: encryptYouTubeToken(token.refresh_token), tokenExpiry: token.expires_in ? new Date(Date.now() + token.expires_in * 1000) : null, scope: token.scope }, create: { provider: "youtube", accessToken: encryptYouTubeToken(token.access_token), refreshToken: encryptYouTubeToken(token.refresh_token), tokenExpiry: token.expires_in ? new Date(Date.now() + token.expires_in * 1000) : null, scope: token.scope } });
+  const data = { accessToken: encryptYouTubeToken(token.access_token), refreshToken: encryptYouTubeToken(token.refresh_token), tokenExpiry: tokenExpiry(token.expires_in), scope: token.scope };
+  return prisma.youTubeConnection.upsert({ where: { provider: "youtube" }, update: data, create: { provider: "youtube", ...data } });
 }
 
 export async function getYouTubeAccessToken(): Promise<string> {
   const connection = await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" } });
   if (!connection) throw new Error("YouTube account is not connected");
-  const accessToken = decryptYouTubeToken(connection.accessToken);
-  const refreshToken = decryptYouTubeToken(connection.refreshToken);
-  if (connection.tokenExpiry && connection.tokenExpiry.getTime() > Date.now() + 60_000) return accessToken;
+  if (connection.tokenExpiry && connection.tokenExpiry.getTime() > Date.now() + 60_000) return decryptYouTubeToken(connection.accessToken);
   const { clientId, clientSecret } = config();
-  const response = await fetch(TOKEN_URL, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }) });
+  const response = await requestToken({ client_id: clientId, client_secret: clientSecret, refresh_token: decryptYouTubeToken(connection.refreshToken), grant_type: "refresh_token" });
   if (!response.ok) throw new Error(`YouTube token refresh failed (${response.status})`);
   const token = await response.json() as { access_token: string; expires_in?: number };
-  await prisma.youTubeConnection.update({ where: { id: connection.id }, data: { accessToken: encryptYouTubeToken(token.access_token), tokenExpiry: token.expires_in ? new Date(Date.now() + token.expires_in * 1000) : null } });
+  await prisma.youTubeConnection.update({ where: { id: connection.id }, data: { accessToken: encryptYouTubeToken(token.access_token), tokenExpiry: tokenExpiry(token.expires_in) } });
   return token.access_token;
 }

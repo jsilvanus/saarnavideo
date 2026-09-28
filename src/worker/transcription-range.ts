@@ -1,4 +1,7 @@
 import type { JobResultSegment } from "@/integrations/auditorStt/client";
+import { confidenceFromAvgLogprob } from "@/integrations/auditorStt/provider";
+
+export { confidenceFromAvgLogprob };
 
 /**
  * Pure helpers for the "one correctness-critical rule" in
@@ -22,15 +25,6 @@ export function isPartialRange(rangeStartSeconds: number, rangeEndSeconds: numbe
 }
 
 export type CorrectedSegment = { startSeconds: number; endSeconds: number; text: string; confidence?: number };
-
-/**
- * Rough confidence heuristic mirrored from confidenceFromAvgLogprob in
- * src/integrations/auditorStt/provider.ts: clamp(avg_logprob + 1.0, 0, 1).
- */
-export function confidenceFromAvgLogprob(avgLogprob: number | null): number | undefined {
-  if (avgLogprob === null || avgLogprob === undefined) return undefined;
-  return Math.max(0, Math.min(1, avgLogprob + 1));
-}
 
 /**
  * The result's segments come back time-zeroed to the submitted clip, not the

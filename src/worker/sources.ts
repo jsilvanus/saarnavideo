@@ -1,14 +1,9 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { migrateProjectDefinition, validateCompositionSources } from "../domain/project";
+import { migrateProjectDefinition, validateCompositionSources } from "@/domain/project";
+import { getReferencedSourceIds, type SourceRecord } from "@/worker/source-resolution";
 
-export type WorkerSource = {
-  id: string;
-  type: "UPLOAD" | "YOUTUBE";
-  storagePath: string | null;
-  youtubeVideoId: string | null;
-  youtubeUrl: string | null;
-};
+export type WorkerSource = SourceRecord;
 
 export type SourcePathMap = Record<string, string>;
 
@@ -16,7 +11,7 @@ export function resolveRequiredSourceIds(definitionInput: unknown, sources: Work
   const fallbackSourceId = sources.length === 1 ? sources[0]?.id : undefined;
   const definition = migrateProjectDefinition(definitionInput, fallbackSourceId);
   validateCompositionSources(definition, sources.map((source) => source.id));
-  return Array.from(new Set(definition.composition.items.filter((item) => item.type === "source-clip").map((item) => item.sourceId)));
+  return getReferencedSourceIds(definition);
 }
 
 export async function acquireRequiredSources(input: {
@@ -40,8 +35,7 @@ export async function acquireRequiredSources(input: {
     }
     if (source.type !== "YOUTUBE" || !source.youtubeUrl || !source.youtubeVideoId) throw new Error(`Source ${sourceId} has no usable media`);
 
-    const directory = path.join(input.mediaRoot, "sources", input.projectId);
-    const storagePath = path.join(directory, `${source.youtubeVideoId}.mp4`);
+    const storagePath = path.join(input.mediaRoot, "sources", input.projectId, `${source.youtubeVideoId}.mp4`);
     await input.downloadYouTubeSource({ videoId: source.youtubeVideoId, url: source.youtubeUrl }, storagePath);
     const sizeBytes = (await stat(storagePath)).size;
     await input.updateSource(sourceId, { storagePath, mimeType: "video/mp4", sizeBytes });

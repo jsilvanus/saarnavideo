@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { jsonError } from "@/app/api/_lib/http";
 
 const updateSchema = z.object({ name: z.string().trim().min(1).max(120).optional(), parentId: z.string().nullable().optional() });
 
@@ -21,20 +22,20 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   try {
     const { id } = await context.params;
     const folder = await prisma.assetFolder.findUnique({ where: { id } });
-    if (!folder) return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+    if (!folder) return jsonError("Folder not found", 404);
     const parsed = updateSchema.safeParse(await request.json());
-    if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid folder update" }, { status: 400 });
-    if (parsed.data.parentId === id) return NextResponse.json({ error: "A folder cannot contain itself" }, { status: 400 });
+    if (!parsed.success) return jsonError(parsed.error.issues[0]?.message ?? "Invalid folder update", 400);
+    if (parsed.data.parentId === id) return jsonError("A folder cannot contain itself", 400);
     if (parsed.data.parentId) {
       const parent = await prisma.assetFolder.findUnique({ where: { id: parsed.data.parentId } });
-      if (!parent) return NextResponse.json({ error: "Parent folder not found" }, { status: 404 });
-      if (await isDescendant(id, parsed.data.parentId)) return NextResponse.json({ error: "A folder cannot be moved into its own descendant" }, { status: 400 });
+      if (!parent) return jsonError("Parent folder not found", 404);
+      if (await isDescendant(id, parsed.data.parentId)) return jsonError("A folder cannot be moved into its own descendant", 400);
     }
     const updated = await prisma.assetFolder.update({ where: { id }, data: { ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}), ...(parsed.data.parentId !== undefined ? { parentId: parsed.data.parentId } : {}) } });
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Asset folder update error:", error);
-    return NextResponse.json({ error: "Failed to update folder" }, { status: 500 });
+    return jsonError("Failed to update folder", 500);
   }
 }
 
@@ -42,7 +43,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   try {
     const { id } = await context.params;
     const folder = await prisma.assetFolder.findUnique({ where: { id }, select: { id: true, parentId: true } });
-    if (!folder) return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+    if (!folder) return jsonError("Folder not found", 404);
     await prisma.$transaction(async tx => {
       await tx.asset.updateMany({ where: { folderId: id }, data: { folderId: folder.parentId } });
       await tx.assetFolder.updateMany({ where: { parentId: id }, data: { parentId: folder.parentId } });
@@ -51,6 +52,6 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return new Response(null, { status: 204 });
   } catch (error) {
     console.error("Asset folder deletion error:", error);
-    return NextResponse.json({ error: "Failed to delete folder" }, { status: 500 });
+    return jsonError("Failed to delete folder", 500);
   }
 }

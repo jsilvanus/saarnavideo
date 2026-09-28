@@ -7,13 +7,15 @@ export const transitionSchema = z.object({
   durationSeconds: z.number().nonnegative().default(0),
 });
 
-export const sourceClipSchema = z.object({
-  type: z.literal("source-clip"),
-  sourceId: z.string().min(1),
+const endAfterStart = [(v: { startSeconds: number; endSeconds: number }) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds"] as const;
+
+const sourceClipFields = {
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
   transitionIn: transitionSchema.optional(),
-}).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
+};
+
+export const sourceClipSchema = z.object({ type: z.literal("source-clip"), sourceId: z.string().min(1), ...sourceClipFields }).refine(...endAfterStart);
 
 export const overlaySchema = z.object({
   type: z.literal("overlay"),
@@ -31,7 +33,7 @@ export const overlaySchema = z.object({
   height: z.number().positive().optional(),
   color: z.string().optional(),
   data: z.record(z.string(), z.string()).default({}),
-}).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
+}).refine(...endAfterStart);
 
 export const slateSchema = z.object({
   type: z.literal("slate"),
@@ -55,7 +57,7 @@ export const semanticSegmentSchema = z.object({
   sourceId: z.string().min(1).optional(),
   startSeconds: z.number().nonnegative(),
   endSeconds: z.number().positive(),
-}).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
+}).refine(...endAfterStart);
 
 export const compositionSchema = z.object({
   sourceStartSeconds: z.number().nonnegative(),
@@ -96,12 +98,7 @@ export function createProjectDefinition(input: Omit<z.input<typeof projectDefini
   return projectDefinitionSchema.parse({ version: 1, ...input });
 }
 
-const legacySourceClipSchema = z.object({
-  type: z.literal("source-clip"),
-  startSeconds: z.number().nonnegative(),
-  endSeconds: z.number().positive(),
-  transitionIn: transitionSchema.optional(),
-}).refine((v) => v.endSeconds > v.startSeconds, "endSeconds must be greater than startSeconds");
+const legacySourceClipSchema = z.object({ type: z.literal("source-clip"), ...sourceClipFields }).refine(...endAfterStart);
 
 const legacyTimelineItemSchema = z.discriminatedUnion("type", [legacySourceClipSchema, overlaySchema, slateSchema]);
 const legacyProjectDefinitionSchema = z.object({
@@ -117,7 +114,11 @@ export function migrateProjectDefinition(input: unknown, fallbackSourceId?: stri
   const parsedCurrent = projectDefinitionSchema.safeParse(input);
   if (parsedCurrent.success) return parsedCurrent.data;
   const parsed = legacyProjectDefinitionSchema.parse(input);
-  const migratedItems = parsed.composition.items.map((item) => item.type !== "source-clip" ? item : { ...item, sourceId: fallbackSourceId ?? (() => { throw new Error("A source clip is missing sourceId"); })() });
+  const migratedItems: TimelineItem[] = parsed.composition.items.map((item) => {
+    if (item.type !== "source-clip") return item;
+    if (fallbackSourceId == null) throw new Error("A source clip is missing sourceId");
+    return { ...item, sourceId: fallbackSourceId };
+  });
   if (migratedItems.length === 0 && fallbackSourceId && parsed.composition.sourceEndSeconds && parsed.composition.sourceStartSeconds !== undefined) {
     migratedItems.push({ type: "source-clip", sourceId: fallbackSourceId, startSeconds: parsed.composition.sourceStartSeconds, endSeconds: parsed.composition.sourceEndSeconds });
   }

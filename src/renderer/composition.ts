@@ -2,7 +2,7 @@ import { buildSourceRenderPlan, type FfmpegPlan } from "@/renderer/ffmpeg";
 import type { Graphic, GraphicCarrierItem, ProjectDefinition } from "@/domain/project";
 
 function withGraphicLayers(item: GraphicCarrierItem, graphic: Graphic): GraphicCarrierItem {
-  const data = { ...(item.data ?? {}), layers: JSON.stringify(graphic.layers), backgroundColor: graphic.backgroundColor };
+  const data = { ...item.data, layers: JSON.stringify(graphic.layers), backgroundColor: graphic.backgroundColor };
   if (item.type === "slate") return { ...item, template: "rich", data };
   return { ...item, template: "rich", kind: "text", data };
 }
@@ -11,8 +11,7 @@ function withGraphicLayers(item: GraphicCarrierItem, graphic: Graphic): GraphicC
 export function materializeGraphics(definition: ProjectDefinition): ProjectDefinition {
   const graphics = new Map(definition.graphics.map((graphic) => [graphic.id, graphic]));
   const items = definition.composition.items.map((item) => {
-    if (item.type === "source-clip") return item;
-    if (!item.graphicId) return item;
+    if (item.type === "source-clip" || !item.graphicId) return item;
     const graphic = graphics.get(item.graphicId);
     if (!graphic) throw new Error(`Missing graphic definition: ${item.graphicId}`);
     return withGraphicLayers(item, graphic);

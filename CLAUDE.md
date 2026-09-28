@@ -59,11 +59,11 @@ Core domain models using Zod for type-safe validation:
 
 #### `/src/components` - React UI Components
 - **`CompositionEditor.tsx`** - Interactive composition editor
-- **`GraphicEditor.tsx`** - Individual graphic editing
 - **`GraphicsEditor.tsx`** - Scene graph editor
 - **`SidebarToggle.tsx`** - UI toggle component
-- **`/graphics-editor/`** - Graphics editor subcomponents
-- **`graphicsEditor*.ts`** - Geometry and interaction logic
+- **`/graphics-editor/`** - Graphics editor subcomponents, geometry and types
+- **`SourcePlayer.tsx`** - Shared YouTube/local source preview player hook
+- **`api.ts`**, **`format.ts`** - Shared fetch and formatting helpers
 
 #### `/src/integrations` - External Service Integration
 - **`youtube.ts`** - YouTube API client

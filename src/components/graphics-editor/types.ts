@@ -1,4 +1,4 @@
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 
 export type Asset = { id: string; assetKey: string; type: string; mimeType?: string | null; width?: number | null; height?: number | null };
 export type GraphicKind = "slate" | "overlay";
@@ -15,4 +15,3 @@ export type Item = {
   opacity?: number; backgroundImage?: string; data?: Record<string, string>;
 };
 export type PointerHandler = (e: ReactPointerEvent, layerId: string, kind: string, handle?: string) => void;
-export type LayerCss = CSSProperties;

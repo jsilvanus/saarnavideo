@@ -47,14 +47,13 @@ export async function applyRunWithStrategy(
       }
     }
     if (conflicts.size > 0) return { ok: false, conflicts: [...conflicts] };
-    await tx.transcriptSegment.updateMany({ where: { runId: run.id }, data: { isActive: true } });
   } else {
     await tx.transcriptSegment.updateMany({
       where: { sourceId: run.sourceId, isActive: true, startSeconds: { lt: run.rangeEndSeconds }, endSeconds: { gt: run.rangeStartSeconds } },
       data: { isActive: false },
     });
-    await tx.transcriptSegment.updateMany({ where: { runId: run.id }, data: { isActive: true } });
   }
+  await tx.transcriptSegment.updateMany({ where: { runId: run.id }, data: { isActive: true } });
   await tx.transcriptionRun.update({ where: { id: run.id }, data: { status: "APPLIED", appliedAt: new Date(), appliedStrategy: strategy } });
   return { ok: true };
 }

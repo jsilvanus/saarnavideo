@@ -32,28 +32,34 @@ export type Section = z.infer<typeof sectionSchema>;
 export type SectionScope = z.infer<typeof sectionScopeSchema>;
 export type SectionOrigin = z.infer<typeof sectionOriginSchema>;
 
+type RangeOptions = { startSeconds?: number; endSeconds?: number };
+
+/**
+ * Slice [startSeconds, endSeconds] into `count` equal parts and return part `index`.
+ * Returns undefined bounds when the range is missing or empty.
+ */
+export function evenRangeSlice(index: number, count: number, { startSeconds: start, endSeconds: end }: RangeOptions): RangeOptions {
+  if (start === undefined || end === undefined || end <= start) return { startSeconds: undefined, endSeconds: undefined };
+  return {
+    startSeconds: start + ((end - start) * index) / count,
+    endSeconds: start + ((end - start) * (index + 1)) / count,
+  };
+}
+
 export function createSectionsFromLines(
   labels: string[],
   scope: SectionScope,
-  options: { sourceId?: string; startSeconds?: number; endSeconds?: number; origin?: SectionOrigin } = {},
+  options: { sourceId?: string; origin?: SectionOrigin } & RangeOptions = {},
 ): Section[] {
   const clean = labels.map(label => label.trim()).filter(Boolean);
-  const start = options.startSeconds;
-  const end = options.endSeconds;
-  const hasRange = start !== undefined && end !== undefined && end > start;
-  return clean.map((label, index) => {
-    const sectionStart = hasRange ? start! + ((end! - start!) * index) / clean.length : undefined;
-    const sectionEnd = hasRange ? start! + ((end! - start!) * (index + 1)) / clean.length : undefined;
-    return sectionSchema.parse({
-      id: crypto.randomUUID(),
-      label,
-      scope,
-      sourceId: options.sourceId,
-      startSeconds: sectionStart,
-      endSeconds: sectionEnd,
-      origin: options.origin ?? "MANUAL",
-    });
-  });
+  return clean.map((label, index) => sectionSchema.parse({
+    id: crypto.randomUUID(),
+    label,
+    scope,
+    sourceId: options.sourceId,
+    ...evenRangeSlice(index, clean.length, options),
+    origin: options.origin ?? "MANUAL",
+  }));
 }
 
 export function getRootSections(sections: Section[], scope: SectionScope): Section[] {

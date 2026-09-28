@@ -138,21 +138,15 @@ export interface JobLogger {
 export class MemoryJobLogger implements JobLogger {
   private logs: Array<{ level: string; message: string; data?: Record<string, unknown>; timestamp: Date }> = [];
 
-  async debug(message: string, data?: Record<string, unknown>): Promise<void> {
-    this.logs.push({ level: "DEBUG", message, data, timestamp: new Date() });
+  private record(level: string, message: string, data?: Record<string, unknown>): Promise<void> {
+    this.logs.push({ level, message, data, timestamp: new Date() });
+    return Promise.resolve();
   }
 
-  async info(message: string, data?: Record<string, unknown>): Promise<void> {
-    this.logs.push({ level: "INFO", message, data, timestamp: new Date() });
-  }
-
-  async warn(message: string, data?: Record<string, unknown>): Promise<void> {
-    this.logs.push({ level: "WARN", message, data, timestamp: new Date() });
-  }
-
-  async error(message: string, data?: Record<string, unknown>): Promise<void> {
-    this.logs.push({ level: "ERROR", message, data, timestamp: new Date() });
-  }
+  debug(message: string, data?: Record<string, unknown>) { return this.record("DEBUG", message, data); }
+  info(message: string, data?: Record<string, unknown>) { return this.record("INFO", message, data); }
+  warn(message: string, data?: Record<string, unknown>) { return this.record("WARN", message, data); }
+  error(message: string, data?: Record<string, unknown>) { return this.record("ERROR", message, data); }
 
   getLogs() {
     return this.logs;

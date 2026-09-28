@@ -11,52 +11,28 @@ const basePrisma = globalForPrisma.prisma ?? new PrismaClient();
  * prevent new/updated sources and outputs from acquiring an expiry and ignore
  * expiry filters from legacy cleanup code.
  */
+type QueryHook = { args: { data?: unknown; where?: unknown }; query: (args: never) => Promise<unknown> };
+
+async function clearExpiry({ args, query }: QueryHook) {
+  (args.data as { expiresAt?: Date | null }).expiresAt = null;
+  return query(args as never);
+}
+
+async function ignoreExpiryFilter({ args, query }: QueryHook) {
+  const where = args.where as Record<string, unknown> | undefined;
+  if (where && "expiresAt" in where) {
+    const { expiresAt: _expiresAt, ...withoutExpiry } = where;
+    args.where = withoutExpiry;
+  }
+  return query(args as never);
+}
+
+const persistentMedia = { create: clearExpiry, update: clearExpiry, updateMany: clearExpiry, findMany: ignoreExpiryFilter };
+
 export const prisma = basePrisma.$extends({
   query: {
-    source: {
-      async create({ args, query }) {
-        (args.data as { expiresAt?: Date | null }).expiresAt = null;
-        return query(args);
-      },
-      async update({ args, query }) {
-        (args.data as { expiresAt?: Date | null }).expiresAt = null;
-        return query(args);
-      },
-      async updateMany({ args, query }) {
-        (args.data as { expiresAt?: Date | null }).expiresAt = null;
-        return query(args);
-      },
-      async findMany({ args, query }) {
-        const where = args.where as Record<string, unknown> | undefined;
-        if (where && "expiresAt" in where) {
-          const { expiresAt: _expiresAt, ...withoutExpiry } = where;
-          args.where = withoutExpiry;
-        }
-        return query(args);
-      },
-    },
-    output: {
-      async create({ args, query }) {
-        (args.data as { expiresAt?: Date | null }).expiresAt = null;
-        return query(args);
-      },
-      async update({ args, query }) {
-        (args.data as { expiresAt?: Date | null }).expiresAt = null;
-        return query(args);
-      },
-      async updateMany({ args, query }) {
-        (args.data as { expiresAt?: Date | null }).expiresAt = null;
-        return query(args);
-      },
-      async findMany({ args, query }) {
-        const where = args.where as Record<string, unknown> | undefined;
-        if (where && "expiresAt" in where) {
-          const { expiresAt: _expiresAt, ...withoutExpiry } = where;
-          args.where = withoutExpiry;
-        }
-        return query(args);
-      },
-    },
+    source: persistentMedia,
+    output: persistentMedia,
   },
 });
 
