@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatTime, isWithinSegment } from "./TranscriptionEditor";
+import { formatTime } from "./format";
+import { isWithinSegment } from "./TranscriptionEditor";
 
 describe("TranscriptionEditor helpers", () => {
   describe("formatTime", () => {

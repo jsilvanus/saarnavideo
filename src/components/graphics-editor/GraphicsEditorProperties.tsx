@@ -43,8 +43,7 @@ export const GraphicsEditorProperties: FC<{
         <label>Text shadow<input value={styleValue(primary, "text-shadow")} onChange={e => onStyle(primary.id, "text-shadow", e.target.value)} placeholder="0 3px 10px #000" /></label>
         <label>Text stroke<input value={styleValue(primary, "-webkit-text-stroke")} onChange={e => onStyle(primary.id, "-webkit-text-stroke", e.target.value)} placeholder="1px #000" /></label>
       </>}
-      {primary.type === "rect" && <label>Background<input type="text" value={styleValue(primary, "background", "#000")} onChange={e => onStyle(primary.id, "background", e.target.value)} /></label>}
-      {primary.type === "ellipse" && <label>Background<input type="text" value={styleValue(primary, "background", "#fff")} onChange={e => onStyle(primary.id, "background", e.target.value)} /></label>}
+      {(primary.type === "rect" || primary.type === "ellipse") && <label>Background<input type="text" value={styleValue(primary, "background", primary.type === "ellipse" ? "#fff" : "#000")} onChange={e => onStyle(primary.id, "background", e.target.value)} /></label>}
       <label>Animation<select value={(primary.animation ?? "").split(" ")[0]} onChange={e => onLayer(primary.id, { animation: e.target.value ? `${e.target.value} 1s ease 0s 1 normal forwards` : undefined })}>{ANIMATIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
       <label><span>Aspect lock</span><input type="checkbox" checked={aspectLock} onChange={e => onAspectLock(e.target.checked)} /></label>
     </div>}

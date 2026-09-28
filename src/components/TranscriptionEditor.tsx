@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { errorMessage, jsonInit, requestJson } from "./api";
+import { formatTime, sourceLabel } from "./format";
+import { SourcePlayer, useSourcePlayer } from "./SourcePlayer";
 
 type Source = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; originalName?: string | null; youtubeUrl?: string | null; youtubeVideoId?: string | null; durationMs?: number | null; referenceDurationMs?: number | null };
 type Job = { id: string; type?: string | null; sourceId?: string | null; status: string; progress: number; phase?: string | null; etaSeconds?: number | null; currentMs?: string | number | null; totalMs?: string | number | null; error?: string | null };
@@ -8,9 +11,6 @@ type TranscriptSegment = { id: string; sourceId: string; runId?: string | null; 
 type PendingRun = { id: string; origin: "SERVICE" | "UPLOAD" | "MANUAL"; language: string; rangeStartSeconds: number; rangeEndSeconds: number; status: "PENDING"; createdAt: string; error?: string | null; segments: TranscriptSegment[] };
 type CaptionsResponse = { active: TranscriptSegment[]; pendingRuns: PendingRun[] };
 type ApplyStrategy = "replace_overlap" | "append";
-
-type YouTubePlayer = { getCurrentTime: () => number; seekTo: (seconds: number, allowSeekAhead: boolean) => void; destroy: () => void };
-type YTWindow = Window & { YT?: { Player: new (element: HTMLElement, options: { videoId: string; events?: { onReady?: () => void } }) => YouTubePlayer }; onYouTubeIframeAPIReady?: () => void };
 
 type Props = {
   projectId: string;
@@ -24,7 +24,6 @@ const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 
 export default function TranscriptionEditor({ projectId, sources, pendingFiles = {}, jobs = [], onProjectRefresh }: Props) {
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
-  const [current, setCurrent] = useState(0);
   const [mode, setMode] = useState<"whole" | "range">("whole");
   const [rangeStart, setRangeStart] = useState(0);
   const [rangeEnd, setRangeEnd] = useState(60);
@@ -43,60 +42,15 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
   const [newEnd, setNewEnd] = useState(2);
   const [newText, setNewText] = useState("");
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const ytRef = useRef<YouTubePlayer | null>(null);
-  const ytHostRef = useRef<HTMLDivElement>(null);
-  const localUrlRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const source = sources.find(s => s.id === sourceId) || sources[0];
 
   useEffect(() => { if (sources.length && !sources.some(s => s.id === sourceId)) setSourceId(sources[0].id); }, [sources, sourceId]);
 
-  // Reset player + range state when the selected source changes.
-  useEffect(() => {
-    setRangeStart(0); setRangeEnd(60); setCurrent(0);
-    ytRef.current?.destroy(); ytRef.current = null;
-    if (localUrlRef.current) { URL.revokeObjectURL(localUrlRef.current); localUrlRef.current = null; }
-  }, [sourceId]);
-
-  // YouTube iframe player wiring (same pattern as SectionPicker in page.tsx).
-  useEffect(() => {
-    if (source?.type !== "YOUTUBE" || !source.youtubeVideoId || !ytHostRef.current) return;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    let cancelled = false;
-    const win = window as YTWindow;
-    const create = () => {
-      if (cancelled || !win.YT || !ytHostRef.current || !source.youtubeVideoId) return;
-      ytRef.current?.destroy();
-      ytRef.current = new win.YT.Player(ytHostRef.current, { videoId: source.youtubeVideoId, events: { onReady: () => { timer = setInterval(() => setCurrent(ytRef.current?.getCurrentTime() ?? 0), 250); } } });
-    };
-    if (win.YT) create();
-    else {
-      const existing = document.getElementById("youtube-iframe-api");
-      if (!existing) { const script = document.createElement("script"); script.id = "youtube-iframe-api"; script.src = "https://www.youtube.com/iframe_api"; document.body.appendChild(script); }
-      const previous = win.onYouTubeIframeAPIReady;
-      win.onYouTubeIframeAPIReady = () => { previous?.(); create(); };
-    }
-    return () => { cancelled = true; if (timer) clearInterval(timer); ytRef.current?.destroy(); ytRef.current = null; };
-  }, [source?.type, source?.youtubeVideoId, sourceId]);
-
   const localFile = source ? pendingFiles[source.id] : undefined;
-  useEffect(() => {
-    if (source?.status === "PENDING" && localFile) {
-      if (localUrlRef.current) URL.revokeObjectURL(localUrlRef.current);
-      localUrlRef.current = URL.createObjectURL(localFile);
-      setCurrent(0); setRangeStart(0); setRangeEnd(60);
-    }
-    return () => { if (localUrlRef.current) { URL.revokeObjectURL(localUrlRef.current); localUrlRef.current = null; } };
-  }, [source?.id, source?.status, localFile]);
-
-  const seek = (seconds: number) => {
-    const n = Math.max(0, seconds);
-    setCurrent(n);
-    if (source?.type === "YOUTUBE") ytRef.current?.seekTo(n, true);
-    else if (videoRef.current) videoRef.current.currentTime = n;
-  };
+  const player = useSourcePlayer(source, sourceId, localFile, () => { setRangeStart(0); setRangeEnd(60); });
+  const { current, seek } = player;
 
   function stopPolling() { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } }
   function startPolling(jobId: string) { stopPolling(); pollRef.current = setInterval(() => { void pollJob(jobId); }, 2000); }
@@ -148,13 +102,12 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
         if (!(rangeEnd > rangeStart)) throw new Error("End must be greater than start.");
         body.rangeStartSeconds = rangeStart; body.rangeEndSeconds = rangeEnd;
       }
-      const r = await fetch(`/api/projects/${projectId}/source/${source.id}/transcription-jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = await r.json().catch(() => ({})) as { id?: string; status?: string; progress?: number; error?: string };
-      if (!r.ok || !data.id) throw new Error(data.error ?? "Could not start transcription");
+      const data = await requestJson<{ id?: string; status?: string; progress?: number }>(`/api/projects/${projectId}/source/${source.id}/transcription-jobs`, jsonInit("POST", body), "Could not start transcription");
+      if (!data.id) throw new Error(data.error ?? "Could not start transcription");
       setJob({ id: data.id, type: "TRANSCRIBE", sourceId: source.id, status: data.status ?? "QUEUED", progress: data.progress ?? 0 });
       startPolling(data.id);
       setMessage("Transcription queued.");
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not start transcription"); }
+    } catch (e) { setError(errorMessage(e, "Could not start transcription")); }
     finally { setStartBusy(false); }
   }
 
@@ -162,11 +115,9 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     if (!job) return;
     setError("");
     try {
-      const r = await fetch(`/api/projects/${projectId}/jobs/${job.id}/cancel`, { method: "POST" });
-      const data = await r.json().catch(() => ({})) as { error?: string };
-      if (!r.ok) throw new Error(data.error ?? "Could not cancel transcription");
+      await requestJson(`/api/projects/${projectId}/jobs/${job.id}/cancel`, { method: "POST" }, "Could not cancel transcription");
       setMessage("Cancellation requested.");
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not cancel transcription"); }
+    } catch (e) { setError(errorMessage(e, "Could not cancel transcription")); }
   }
 
   async function uploadVtt() {
@@ -181,13 +132,11 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
         form.set("rangeStartSeconds", String(rangeStart));
         form.set("rangeEndSeconds", String(rangeEnd));
       }
-      const r = await fetch(`/api/sources/${source.id}/transcription-runs/upload`, { method: "POST", body: form });
-      const data = await r.json().catch(() => ({})) as { error?: string };
-      if (!r.ok) throw new Error(data.error ?? "Could not import the .vtt file");
+      await requestJson(`/api/sources/${source.id}/transcription-runs/upload`, { method: "POST", body: form }, "Could not import the .vtt file");
       setVttFile(null);
       setMessage("Transcript imported.");
       await loadCaptions();
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not import the .vtt file"); }
+    } catch (e) { setError(errorMessage(e, "Could not import the .vtt file")); }
     finally { setUploadBusy(false); }
   }
 
@@ -195,7 +144,7 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     if (!source) return;
     setApplyBusyId(runId); setRunErrors(prev => ({ ...prev, [runId]: "" })); setError("");
     try {
-      const r = await fetch(`/api/sources/${source.id}/transcription-runs/${runId}/apply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategy }) });
+      const r = await fetch(`/api/sources/${source.id}/transcription-runs/${runId}/apply`, jsonInit("POST", { strategy }));
       const data = await r.json().catch(() => ({})) as { active?: TranscriptSegment[]; error?: string; conflicts?: string[] };
       if (r.status === 409) {
         setRunErrors(prev => ({ ...prev, [runId]: `Blocked: this run overlaps ${data.conflicts?.length ?? "existing"} already-active line(s). Choose "Replace overlapping lines" to redo that stretch, or edit/remove the conflicting lines first.` }));
@@ -204,7 +153,7 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
       if (!r.ok) throw new Error(data.error ?? "Could not apply this run");
       setMessage("Run applied.");
       await loadCaptions();
-    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: e instanceof Error ? e.message : "Could not apply this run" })); }
+    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: errorMessage(e, "Could not apply this run") })); }
     finally { setApplyBusyId(null); }
   }
 
@@ -212,31 +161,27 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     if (!source) return;
     setApplyBusyId(runId); setRunErrors(prev => ({ ...prev, [runId]: "" })); setError("");
     try {
-      const r = await fetch(`/api/sources/${source.id}/transcription-runs/${runId}/discard`, { method: "POST" });
-      if (!r.ok) { const data = await r.json().catch(() => ({})) as { error?: string }; throw new Error(data.error ?? "Could not discard this run"); }
+      await requestJson(`/api/sources/${source.id}/transcription-runs/${runId}/discard`, { method: "POST" }, "Could not discard this run");
       setMessage("Run discarded.");
       await loadCaptions();
-    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: e instanceof Error ? e.message : "Could not discard this run" })); }
+    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: errorMessage(e, "Could not discard this run") })); }
     finally { setApplyBusyId(null); }
   }
 
   async function saveSegment(id: string, patch: Partial<Pick<TranscriptSegment, "text" | "startSeconds" | "endSeconds">>) {
     setError("");
     try {
-      const r = await fetch(`/api/transcript-segments/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-      const data = await r.json().catch(() => ({})) as Partial<TranscriptSegment> & { error?: string };
-      if (!r.ok) throw new Error(data.error ?? "Could not save the caption line");
+      const data = await requestJson<Partial<TranscriptSegment>>(`/api/transcript-segments/${id}`, jsonInit("PATCH", patch), "Could not save the caption line");
       setCaptions(prev => prev ? { ...prev, active: prev.active.map(s => s.id === id ? { ...s, ...data } : s) } : prev);
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not save the caption line"); }
+    } catch (e) { setError(errorMessage(e, "Could not save the caption line")); }
   }
 
   async function deleteSegment(id: string) {
     setError("");
     try {
-      const r = await fetch(`/api/transcript-segments/${id}`, { method: "DELETE" });
-      if (!r.ok) { const data = await r.json().catch(() => ({})) as { error?: string }; throw new Error(data.error ?? "Could not delete the caption line"); }
+      await requestJson(`/api/transcript-segments/${id}`, { method: "DELETE" }, "Could not delete the caption line");
       setCaptions(prev => prev ? { ...prev, active: prev.active.filter(s => s.id !== id) } : prev);
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not delete the caption line"); }
+    } catch (e) { setError(errorMessage(e, "Could not delete the caption line")); }
   }
 
   async function addSegment() {
@@ -244,12 +189,10 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     if (!(newEnd > newStart)) { setError("End must be greater than start."); return; }
     setError("");
     try {
-      const r = await fetch(`/api/sources/${source.id}/transcript-segments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ startSeconds: newStart, endSeconds: newEnd, text: newText }) });
-      const data = await r.json().catch(() => ({})) as { error?: string };
-      if (!r.ok) throw new Error(data.error ?? "Could not add the caption line");
+      await requestJson(`/api/sources/${source.id}/transcript-segments`, jsonInit("POST", { startSeconds: newStart, endSeconds: newEnd, text: newText }), "Could not add the caption line");
       setNewText(""); setMessage("Line added.");
       await loadCaptions();
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not add the caption line"); }
+    } catch (e) { setError(errorMessage(e, "Could not add the caption line")); }
   }
 
   const sortedActive = useMemo(() => [...(captions?.active ?? [])].sort((a, b) => a.startSeconds - b.startSeconds), [captions]);
@@ -259,25 +202,11 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
 
   return <div className="transcription-editor">
     <div className="picker-controls">
-      <label>Source<select value={source.id} onChange={e => setSourceId(e.target.value)}>{sources.map(s => <option key={s.id} value={s.id}>{s.type} · {s.originalName || s.youtubeUrl || s.id}{s.status === "PENDING" ? " · upload later" : ""}</option>)}</select></label>
+      <label>Source<select value={source.id} onChange={e => setSourceId(e.target.value)}>{sources.map(s => <option key={s.id} value={s.id}>{s.type} · {sourceLabel(s)}{s.status === "PENDING" ? " · upload later" : ""}</option>)}</select></label>
       <label>Language<select value={language} onChange={e => setLanguage(e.target.value)}><option value="fi">Finnish</option><option value="en">English</option><option value="sv">Swedish</option><option value="auto">Auto detect</option></select></label>
     </div>
 
-    <div className="picker-player">
-      {source.type === "YOUTUBE" && source.youtubeVideoId ? <div ref={ytHostRef} />
-        : source.status === "PENDING" && localFile ? <video ref={videoRef} src={localUrlRef.current ?? undefined} controls onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} />
-        : source.status === "PENDING" ? <div className="muted">Choose the local file in Sources to preview it.</div>
-        : <video ref={videoRef} src={`/api/sources/${source.id}`} controls preload="metadata" onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} onLoadedMetadata={e => { if (e.currentTarget.duration && rangeEnd === 60) setRangeEnd(Math.min(60, e.currentTarget.duration)); }} />}
-    </div>
-    <div className="picker-time">
-      <strong>{formatTime(current)}</strong>
-      <div className="picker-buttons">
-        <button type="button" onClick={() => seek(current - 30)}>−30s</button>
-        <button type="button" onClick={() => seek(current - 5)}>−5s</button>
-        <button type="button" onClick={() => seek(current + 5)}>+5s</button>
-        <button type="button" onClick={() => seek(current + 30)}>+30s</button>
-      </div>
-    </div>
+    <SourcePlayer source={source} player={player} localFile={localFile} remoteSrc={`/api/sources/${source.id}`} onDuration={d => { if (rangeEnd === 60) setRangeEnd(Math.min(60, d)); }} />
 
     <div className="transcription-mode-toggle">
       <button type="button" className={mode === "whole" ? "mode-active" : ""} onClick={() => setMode("whole")}>Whole video</button>
@@ -291,7 +220,7 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
 
     <div className="transcription-start-row">
       <button className="primary" disabled={startBusy || (source.status === "PENDING" && source.type === "UPLOAD" && !localFile)} onClick={() => void startTranscription()}>{startBusy ? "Starting…" : "Start transcription"}</button>
-      {source.status === "PENDING" && source.type === "UPLOAD" && !localFile && <small className="muted">Upload this source's file first (Sources tab).</small>}
+      {source.status === "PENDING" && source.type === "UPLOAD" && !localFile && <small className="muted">Upload this source&apos;s file first (Sources tab).</small>}
       <div className="transcription-upload">
         <span className="muted">— or upload your own .vtt —</span>
         <input type="file" accept=".vtt,text/vtt" onChange={e => setVttFile(e.target.files?.[0] ?? null)} />
@@ -383,10 +312,4 @@ function SegmentRow({ segment, current, onSeek, onSave, onDelete }: { segment: T
 
 export function isWithinSegment(current: number, segment: { startSeconds: number; endSeconds: number }) {
   return current >= segment.startSeconds && current < segment.endSeconds;
-}
-
-export function formatTime(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 }

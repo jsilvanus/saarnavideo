@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { SECTION_TEMPLATES, instantiateSectionTemplate } from "@/domain/section-templates";
 import type { Section } from "@/domain/sections";
+import { formatTime, sourceLabel } from "./format";
 
 type Source = { id: string; originalName?: string | null; youtubeUrl?: string | null; durationMs?: number | null; referenceDurationMs?: number | null };
 type Props = {
@@ -72,7 +73,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
   const canPlace = rangeEnd > rangeStart;
   return <div className="section-manager">
     <div className="form-grid">
-      {scope === "SOURCE" && <label>Source<select value={sourceId} onChange={e => setSourceId(e.target.value)}>{sources.map(source => <option key={source.id} value={source.id}>{source.originalName || source.youtubeUrl || source.id}</option>)}</select></label>}
+      {scope === "SOURCE" && <label>Source<select value={sourceId} onChange={e => setSourceId(e.target.value)}>{sources.map(source => <option key={source.id} value={source.id}>{sourceLabel(source)}</option>)}</select></label>}
       <label>Section level<select value={parentId} onChange={e => setParentId(e.target.value)}><option value="">Top level</option>{roots.map(section => <option key={section.id} value={section.id}>Inside: {section.label}</option>)}</select></label>
     </div>
     <label>Sections, one per line<textarea rows={6} value={lines} onChange={e => setLines(e.target.value)} placeholder={"Opening\nPsalm\nGospel\nSermon\nPrayers\nClosing"} /></label>
@@ -90,12 +91,4 @@ export default function SectionManager({ scope, sections, sources = [], duration
       {!visible.length && <p className="muted">{parentId ? "No subsections yet." : "No sections yet."}</p>}
     </div>
   </div>;
-}
-
-function formatTime(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return h ? h + ":" + String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0") : m + ":" + String(sec).padStart(2, "0");
 }
