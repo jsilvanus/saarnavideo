@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type { AssetType } from "@prisma/client";
 
 /**
@@ -83,28 +82,25 @@ export function detectImageMetadata(data: Buffer, mimeType: string): ImageMetada
 }
 
 /**
- * Parse PNG header for dimensions and IHDR chunk.
+ * Parse PNG header for dimensions and IHDR chunk. Callers wrap these parsers
+ * in detectImageMetadata's try/catch, so out-of-range reads just yield null.
  * PNG structure: signature (8) + IHDR chunk with width/height at offset 16-24
  */
 function parsePNG(data: Buffer): Omit<ImageMetadata, "mimeType" | "format"> | null {
-  try {
-    if (data.length < 24) return null;
+  if (data.length < 24) return null;
 
-    // IHDR is first chunk after signature (8 bytes)
-    // Chunk format: length (4) + type (4) + data + CRC (4)
-    const width = data.readUInt32BE(16);
-    const height = data.readUInt32BE(20);
+  // IHDR is first chunk after signature (8 bytes)
+  // Chunk format: length (4) + type (4) + data + CRC (4)
+  const width = data.readUInt32BE(16);
+  const height = data.readUInt32BE(20);
 
-    // Detect alpha channel:
-    // Color type at offset 25
-    // 2=RGB, 3=indexed, 4=grayscale+alpha, 6=RGBA
-    const colorType = data[25];
-    const hasAlpha = colorType === 4 || colorType === 6;
+  // Detect alpha channel:
+  // Color type at offset 25
+  // 2=RGB, 3=indexed, 4=grayscale+alpha, 6=RGBA
+  const colorType = data[25];
+  const hasAlpha = colorType === 4 || colorType === 6;
 
-    return { width, height, hasAlpha };
-  } catch {
-    return null;
-  }
+  return { width, height, hasAlpha };
 }
 
 /**
@@ -112,36 +108,32 @@ function parsePNG(data: Buffer): Omit<ImageMetadata, "mimeType" | "format"> | nu
  * JPEG markers: FF D9 = EOI, FF D8 = SOI, FF C0/C2 = SOF
  */
 function parseJPEG(data: Buffer): Omit<ImageMetadata, "mimeType" | "format"> | null {
-  try {
-    let offset = 2; // Skip SOI marker (FF D8)
-    while (offset < data.length - 8) {
-      // Look for marker
-      if (data[offset] !== 0xff) {
-        offset++;
-        continue;
-      }
-
-      const marker = data[offset + 1];
-
-      // SOF markers: C0 (baseline), C1, C2 (progressive)
-      if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
-        // Height at offset+5, width at offset+7
-        if (offset + 9 > data.length) return null;
-        const height = data.readUInt16BE(offset + 5);
-        const width = data.readUInt16BE(offset + 7);
-        return { width, height, hasAlpha: false }; // JPEG never has alpha
-      }
-
-      // Skip this segment: length is 2 bytes after marker
-      if (offset + 4 > data.length) break;
-      const segmentLength = data.readUInt16BE(offset + 2);
-      offset += segmentLength + 2;
+  let offset = 2; // Skip SOI marker (FF D8)
+  while (offset < data.length - 8) {
+    // Look for marker
+    if (data[offset] !== 0xff) {
+      offset++;
+      continue;
     }
 
-    return null;
-  } catch {
-    return null;
+    const marker = data[offset + 1];
+
+    // SOF markers: C0 (baseline), C1, C2 (progressive)
+    if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+      // Height at offset+5, width at offset+7
+      if (offset + 9 > data.length) return null;
+      const height = data.readUInt16BE(offset + 5);
+      const width = data.readUInt16BE(offset + 7);
+      return { width, height, hasAlpha: false }; // JPEG never has alpha
+    }
+
+    // Skip this segment: length is 2 bytes after marker
+    if (offset + 4 > data.length) break;
+    const segmentLength = data.readUInt16BE(offset + 2);
+    offset += segmentLength + 2;
   }
+
+  return null;
 }
 
 /**
@@ -149,53 +141,49 @@ function parseJPEG(data: Buffer): Omit<ImageMetadata, "mimeType" | "format"> | n
  * WebP format: RIFF header + WEBP signature + VP8/VP8L/VP8X chunk
  */
 function parseWebP(data: Buffer): Omit<ImageMetadata, "mimeType" | "format"> | null {
-  try {
-    if (data.length < 30) return null;
+  if (data.length < 30) return null;
 
-    let offset = 12; // Skip RIFF + size + WEBP
-    while (offset + 8 <= data.length) {
-      const chunkFourCC = data.slice(offset, offset + 4).toString("ascii");
-      const chunkSize = data.readUInt32LE(offset + 4);
+  let offset = 12; // Skip RIFF + size + WEBP
+  while (offset + 8 <= data.length) {
+    const chunkFourCC = data.toString("ascii", offset, offset + 4);
+    const chunkSize = data.readUInt32LE(offset + 4);
 
-      if (chunkFourCC === "VP8X") {
-        // Extended format with features at offset+8
-        const flags = data[offset + 8];
-        const hasAlpha = (flags & 0x10) !== 0;
+    if (chunkFourCC === "VP8X") {
+      // Extended format with features at offset+8
+      const flags = data[offset + 8];
+      const hasAlpha = (flags & 0x10) !== 0;
 
-        // Canvas width/height: 24-bit values at offset+12 and +15 (little-endian)
-        const width = (data.readUInt32LE(offset + 12) & 0xffffff) + 1;
-        const height = (data.readUInt32LE(offset + 15) & 0xffffff) + 1;
-        return { width, height, hasAlpha };
-      }
-
-      if (chunkFourCC === "VP8 ") {
-        // Lossy format: dimensions in bitstream
-        // Frame header starts at offset+10, use simple heuristic
-        if (offset + 30 > data.length) return null;
-        const width = data.readUInt16LE(offset + 12) & 0x3fff;
-        const height = data.readUInt16LE(offset + 14) & 0x3fff;
-        return { width: width + 1, height: height + 1, hasAlpha: false };
-      }
-
-      if (chunkFourCC === "VP8L") {
-        // Lossless format: width/height in first 8 bytes of chunk data
-        if (offset + 12 > data.length) return null;
-        const bits = data.readUInt32LE(offset + 8);
-        const width = ((bits & 0x3fff) + 1) || 1;
-        const height = (((bits >> 14) & 0x3fff) + 1) || 1;
-
-        // Lossless WebP may have alpha
-        const hasAlpha = (bits >> 28) & 0x1;
-        return { width, height, hasAlpha: !!hasAlpha };
-      }
-
-      offset += chunkSize + 8;
+      // Canvas width/height: 24-bit values at offset+12 and +15 (little-endian)
+      const width = (data.readUInt32LE(offset + 12) & 0xffffff) + 1;
+      const height = (data.readUInt32LE(offset + 15) & 0xffffff) + 1;
+      return { width, height, hasAlpha };
     }
 
-    return null;
-  } catch {
-    return null;
+    if (chunkFourCC === "VP8 ") {
+      // Lossy format: dimensions in bitstream
+      // Frame header starts at offset+10, use simple heuristic
+      if (offset + 30 > data.length) return null;
+      const width = data.readUInt16LE(offset + 12) & 0x3fff;
+      const height = data.readUInt16LE(offset + 14) & 0x3fff;
+      return { width: width + 1, height: height + 1, hasAlpha: false };
+    }
+
+    if (chunkFourCC === "VP8L") {
+      // Lossless format: width/height in first 8 bytes of chunk data
+      if (offset + 12 > data.length) return null;
+      const bits = data.readUInt32LE(offset + 8);
+      const width = ((bits & 0x3fff) + 1) || 1;
+      const height = (((bits >> 14) & 0x3fff) + 1) || 1;
+
+      // Lossless WebP may have alpha
+      const hasAlpha = (bits >> 28) & 0x1;
+      return { width, height, hasAlpha: !!hasAlpha };
+    }
+
+    offset += chunkSize + 8;
   }
+
+  return null;
 }
 
 /**
@@ -285,7 +273,7 @@ export function getExtensionFromMimeType(mimeType: string): string {
  * Validate asset key format.
  */
 export function validateAssetKey(key: string): { valid: boolean; reason?: string } {
-  if (!key || key.length === 0) {
+  if (!key) {
     return { valid: false, reason: "Asset key cannot be empty" };
   }
   if (key.length > 64) {
@@ -300,10 +288,11 @@ export function validateAssetKey(key: string): { valid: boolean; reason?: string
 /**
  * Validate asset type.
  */
+const VALID_ASSET_TYPES: readonly AssetType[] = ["OVERLAY", "BACKGROUND", "LOGO", "FONT"];
+
 export function validateAssetType(type: string): { valid: boolean; reason?: string } {
-  const validTypes: AssetType[] = ["OVERLAY", "BACKGROUND", "LOGO", "FONT"];
-  if (!validTypes.includes(type as AssetType)) {
-    return { valid: false, reason: `Asset type must be one of: ${validTypes.join(", ")}` };
+  if (!VALID_ASSET_TYPES.includes(type as AssetType)) {
+    return { valid: false, reason: `Asset type must be one of: ${VALID_ASSET_TYPES.join(", ")}` };
   }
   return { valid: true };
 }

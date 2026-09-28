@@ -56,8 +56,8 @@ export class AuditorSttCancelledError extends Error {
  * liturgos-auditor/docs/integration.md, "Segment fields"); this is a rough
  * proxy for "the model was fairly sure", not a calibrated probability.
  */
-function confidenceFromAvgLogprob(avgLogprob: number | null): number | undefined {
-  if (avgLogprob === null || avgLogprob === undefined) return undefined;
+export function confidenceFromAvgLogprob(avgLogprob: number | null): number | undefined {
+  if (avgLogprob == null) return undefined;
   return Math.max(0, Math.min(1, avgLogprob + 1));
 }
 
