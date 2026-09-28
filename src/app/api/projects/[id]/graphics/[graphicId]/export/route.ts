@@ -3,34 +3,35 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { migrateProjectDefinition } from "@/domain/project";
 import { createGraphicPackage } from "@/domain/graphic-package";
+import { jsonError } from "@/app/api/_lib/http";
 
-function referencedAssetIds(graphic: any, assets: any[]) {
+function referencedAssets<T extends { id: string; assetKey: string }>(graphic: unknown, assets: T[]) {
   const values = JSON.stringify(graphic);
-  return assets.filter((asset) => values.includes(asset.id) || values.includes(asset.assetKey)).map((asset) => asset.id);
+  return assets.filter((asset) => values.includes(asset.id) || values.includes(asset.assetKey));
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string; graphicId: string }> }) {
   const { id, graphicId } = await context.params;
   const project = await prisma.project.findUnique({ where: { id }, include: { assets: true } });
-  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (!project) return jsonError("Project not found", 404);
   const definition = migrateProjectDefinition(project.definition, project.assets[0]?.id);
   const graphic = definition.graphics.find((item) => item.id === graphicId);
-  if (!graphic) return NextResponse.json({ error: "Graphic not found" }, { status: 404 });
+  if (!graphic) return jsonError("Graphic not found", 404);
 
   const assetMode = new URL(request.url).searchParams.get("assetMode") === "referenced" ? "referenced" : "embedded";
-  const ids = referencedAssetIds(graphic, project.assets);
   const assets = [];
-  for (const asset of project.assets.filter((item) => ids.includes(item.id))) {
-    if (!asset.contentHash) return NextResponse.json({ error: `Asset has no content hash: ${asset.assetKey}` }, { status: 409 });
+  for (const asset of referencedAssets(graphic, project.assets)) {
+    if (!asset.contentHash) return jsonError(`Asset has no content hash: ${asset.assetKey}`, 409);
+    const entry = { sourceAssetId: asset.id, contentHash: asset.contentHash, assetKey: asset.assetKey, mimeType: asset.mimeType, width: asset.width, height: asset.height, hasAlpha: asset.hasAlpha };
     if (assetMode === "referenced") {
-      assets.push({ sourceAssetId: asset.id, contentHash: asset.contentHash, assetKey: asset.assetKey, mimeType: asset.mimeType, width: asset.width, height: asset.height, hasAlpha: asset.hasAlpha });
+      assets.push(entry);
       continue;
     }
     try {
       const data = await readFile(asset.storagePath);
-      assets.push({ sourceAssetId: asset.id, contentHash: asset.contentHash, assetKey: asset.assetKey, mimeType: asset.mimeType, width: asset.width, height: asset.height, hasAlpha: asset.hasAlpha, dataBase64: data.toString("base64") });
+      assets.push({ ...entry, dataBase64: data.toString("base64") });
     } catch {
-      return NextResponse.json({ error: `Asset file is unavailable: ${asset.assetKey}` }, { status: 409 });
+      return jsonError(`Asset file is unavailable: ${asset.assetKey}`, 409);
     }
   }
 

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { jsonError } from "@/app/api/_lib/http";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string; jobId: string }> }) {
   const { id, jobId } = await context.params;
   try {
     const job = await prisma.mediaJob.findFirst({ where: { id: jobId, projectId: id } });
-    if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    if (!job) return jsonError("Job not found", 404);
     return NextResponse.json({
       id: job.id,
       type: job.type,
@@ -19,6 +20,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     });
   } catch (error) {
     console.error("Job status lookup error:", error);
-    return NextResponse.json({ error: "Failed to load job" }, { status: 500 });
+    return jsonError("Failed to load job", 500);
   }
 }

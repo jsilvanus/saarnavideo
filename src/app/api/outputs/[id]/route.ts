@@ -3,13 +3,14 @@ import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { jsonError } from "@/app/api/_lib/http";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const output = await prisma.output.findUnique({ where: { id } });
-  if (!output) return NextResponse.json({ error: "Output not found" }, { status: 404 });
+  if (!output) return jsonError("Output not found", 404);
   if (output.expiresAt && output.expiresAt < new Date()) {
-    return NextResponse.json({ error: "Output expired" }, { status: 410 });
+    return jsonError("Output expired", 410);
   }
 
   try {
@@ -23,6 +24,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       },
     });
   } catch {
-    return NextResponse.json({ error: "Output file is unavailable" }, { status: 404 });
+    return jsonError("Output file is unavailable", 404);
   }
 }

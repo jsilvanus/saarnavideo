@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { createProjectDefinition } from "@/domain/project";
+import { jsonError } from "@/app/api/_lib/http";
 
 const fieldsSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -18,7 +19,7 @@ export async function POST(request: Request) {
   try {
     const form = await request.formData();
     const file = form.get("file");
-    if (!(file instanceof File)) return NextResponse.json({ error: "A source file is required" }, { status: 400 });
+    if (!(file instanceof File)) return jsonError("A source file is required", 400);
 
     const fields = fieldsSchema.parse({ title: form.get("title"), preacher: form.get("preacher") ?? "", gospelStart: form.get("gospelStart"), gospelEnd: form.get("gospelEnd"), sermonStart: form.get("sermonStart"), sermonEnd: form.get("sermonEnd") });
     const projectId = crypto.randomUUID();
@@ -59,8 +60,8 @@ export async function POST(request: Request) {
     const updatedProject = await prisma.project.update({ where: { id: projectId }, data: { definition }, select: { id: true } });
     return NextResponse.json(updatedProject, { status: 201 });
   } catch (error) {
-    if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid upload" }, { status: 400 });
+    if (error instanceof z.ZodError) return jsonError(error.issues[0]?.message ?? "Invalid upload", 400);
     console.error(error);
-    return NextResponse.json({ error: "Unable to create uploaded project" }, { status: 500 });
+    return jsonError("Unable to create uploaded project", 500);
   }
 }

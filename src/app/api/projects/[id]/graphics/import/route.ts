@@ -1,13 +1,9 @@
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { migrateProjectDefinition } from "@/domain/project";
 import { parseGraphicPackage } from "@/domain/graphic-package";
-
-const MEDIA_ROOT = process.env.MEDIA_ROOT ?? "/data/media";
-const MAX_ASSET_SIZE = Number(process.env.MAX_ASSET_SIZE_BYTES ?? 10 * 1024 * 1024);
+import { MAX_ASSET_SIZE, sha256, storeLibraryFile } from "@/app/api/_lib/assets";
+import { jsonError } from "@/app/api/_lib/http";
 
 function replaceAssetReferences(value: unknown, idMap: Map<string, string>): unknown {
   if (Array.isArray(value)) return value.map((item) => replaceAssetReferences(item, idMap));
@@ -26,7 +22,7 @@ function replaceAssetReferences(value: unknown, idMap: Map<string, string>): unk
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const project = await prisma.project.findUnique({ where: { id } });
-  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (!project) return jsonError("Project not found", 404);
   try {
     const pkg = parseGraphicPackage(await request.json());
     const idMap = new Map<string, string>();
@@ -47,15 +43,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
 
       const data = Buffer.from(item.dataBase64, "base64");
-      if (data.length > MAX_ASSET_SIZE) return NextResponse.json({ error: `Asset ${item.assetKey} is too large` }, { status: 413 });
-      const actualHash = createHash("sha256").update(data).digest("hex");
-      if (actualHash !== item.contentHash) return NextResponse.json({ error: `Asset hash mismatch: ${item.assetKey}` }, { status: 400 });
+      if (data.length > MAX_ASSET_SIZE) return jsonError(`Asset ${item.assetKey} is too large`, 413);
+      if (sha256(data) !== item.contentHash) return jsonError(`Asset hash mismatch: ${item.assetKey}`, 400);
       if (!asset) {
         const ext = item.mimeType === "image/png" ? "png" : item.mimeType === "image/webp" ? "webp" : item.mimeType === "image/jpeg" ? "jpg" : "bin";
-        const dir = path.join(MEDIA_ROOT, "assets", "library");
-        await mkdir(dir, { recursive: true });
-        const storagePath = path.join(dir, `${item.contentHash}.${ext}`);
-        await writeFile(storagePath, data, { flag: "wx" }).catch((error) => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
+        const storagePath = await storeLibraryFile(data, item.contentHash, ext);
         asset = await prisma.asset.create({ data: { assetKey: item.assetKey, type: "OVERLAY", storagePath, mimeType: item.mimeType, width: item.width, height: item.height, hasAlpha: item.hasAlpha, sizeBytes: BigInt(data.length), contentHash: item.contentHash, expiresAt: null } });
       }
       idMap.set(item.sourceAssetId, asset.id);
@@ -64,16 +56,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     if (unresolved.length) {
-      return NextResponse.json({ error: "Referenced package requires assets that are not in this asset library", unresolvedAssets: unresolved }, { status: 409 });
+      return jsonError("Referenced package requires assets that are not in this asset library", 409, { unresolvedAssets: unresolved });
     }
 
     const definition = migrateProjectDefinition(project.definition);
     const imported = replaceAssetReferences({ ...pkg.graphic, id: crypto.randomUUID() }, idMap) as typeof pkg.graphic;
     const nextDefinition = { ...definition, graphics: [...definition.graphics, imported] };
-    await prisma.project.update({ where: { id }, data: { definition: nextDefinition, assets: { connect: Array.from(new Set(assetIds)).map((assetId) => ({ id: assetId })) } } });
-    return NextResponse.json({ graphic: imported, assetIds: Array.from(new Set(assetIds)), assetMode: pkg.assetMode }, { status: 201 });
+    const uniqueAssetIds = Array.from(new Set(assetIds));
+    await prisma.project.update({ where: { id }, data: { definition: nextDefinition, assets: { connect: uniqueAssetIds.map((assetId) => ({ id: assetId })) } } });
+    return NextResponse.json({ graphic: imported, assetIds: uniqueAssetIds, assetMode: pkg.assetMode }, { status: 201 });
   } catch (error) {
     console.error("Graphic import failed:", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid graphic package" }, { status: 400 });
+    return jsonError(error instanceof Error ? error.message : "Invalid graphic package", 400);
   }
 }

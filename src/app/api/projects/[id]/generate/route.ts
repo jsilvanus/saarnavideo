@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { jsonError } from "@/app/api/_lib/http";
 
 function findDurationViolations(definition: unknown, sources: Array<{ id: string; durationMs: number | null }>) {
   if (!definition || typeof definition !== "object") return [];
@@ -11,11 +12,10 @@ function findDurationViolations(definition: unknown, sources: Array<{ id: string
 function clampDefinition(definition: unknown, sources: Array<{ id: string; durationMs: number | null }>) {
   const cloned = JSON.parse(JSON.stringify(definition ?? {})) as Record<string, any>;
   const durations = new Map(sources.filter(s => s.durationMs !== null).map(s => [s.id, s.durationMs! / 1000]));
-  const violations = findDurationViolations(cloned, sources);
   for (const segment of Array.isArray(cloned.semanticSegments) ? cloned.semanticSegments : []) { const duration = typeof segment?.sourceId === "string" ? durations.get(segment.sourceId) : undefined; if (duration !== undefined && typeof segment.endSeconds === "number") segment.endSeconds = Math.min(segment.endSeconds, duration); }
   const composition = cloned.composition;
   if (composition && Array.isArray(composition.items)) { for (const item of composition.items) { if (item?.type !== "source-clip" || typeof item.sourceId !== "string") continue; const duration = durations.get(item.sourceId); if (duration === undefined) continue; if (typeof item.startSeconds === "number" && item.startSeconds >= duration) throw new Error(`Section starts at ${item.startSeconds}s but the source ends at ${duration}s; choose another file or edit the section.`); if (typeof item.endSeconds === "number") item.endSeconds = Math.min(item.endSeconds, duration); } if (typeof composition.sourceEndSeconds === "number") { const referencedDurations = Array.from(durations.values()); if (referencedDurations.length) composition.sourceEndSeconds = Math.min(composition.sourceEndSeconds, Math.max(...referencedDurations)); } }
-  return { definition: cloned, violations };
+  return cloned;
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -24,13 +24,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; type?: "VIDEO" | "PREVIEW" | "THUMBNAIL" };
     const type = body.type ?? "VIDEO";
     const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, storagePath: true, youtubeVideoId: true, youtubeUrl: true, durationMs: true, referenceDurationMs: true } } } });
-    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    if (!project) return jsonError("Project not found", 404);
     const pending = project.sources.filter(source => source.status === "PENDING");
     if (pending.length) return NextResponse.json({ error: "Upload pending local sources before generating.", pendingSources: pending.map(source => ({ id: source.id, originalName: source.originalName })) }, { status: 409 });
     const violations = findDurationViolations(project.definition, project.sources);
     if (violations.length && !body.allowClamping) return NextResponse.json({ error: "One or more sections extend beyond the selected source file.", code: "SOURCE_DURATION_MISMATCH", violations, message: "The source file is shorter than the recording used to define these sections. No timestamps are silently clamped." }, { status: 409 });
     let renderDefinition = project.definition;
-    if (violations.length && body.allowClamping) { try { renderDefinition = clampDefinition(project.definition, project.sources).definition; } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Cannot clamp the affected sections" }, { status: 409 }); } }
+    if (violations.length && body.allowClamping) { try { renderDefinition = clampDefinition(project.definition, project.sources); } catch (error) { return jsonError(error instanceof Error ? error.message : "Cannot clamp the affected sections", 409); } }
     const referencedIds = new Set<string>();
     const composition = (renderDefinition as { composition?: { items?: Array<{ type?: string; sourceId?: string }> } }).composition;
     for (const item of composition?.items ?? []) if (item.type === "source-clip" && item.sourceId) referencedIds.add(item.sourceId);
@@ -43,5 +43,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
     if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id, parameters: { renderDefinition } }, select: { id: true } });
     return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0 });
-  } catch (error) { console.error("Media job queue error:", error); return NextResponse.json({ error: error instanceof Error ? error.message : "Could not queue media job" }, { status: 500 }); }
+  } catch (error) { console.error("Media job queue error:", error); return jsonError(error instanceof Error ? error.message : "Could not queue media job", 500); }
 }

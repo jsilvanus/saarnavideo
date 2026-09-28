@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { jsonError } from "@/app/api/_lib/http";
 
 const CANCELLABLE_STATUSES = ["QUEUED", "RUNNING"] as const;
 
@@ -9,14 +10,11 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   try {
     const job = await prisma.mediaJob.findFirst({ where: { id: jobId, projectId: id } });
     if (!job) {
-      return NextResponse.json({ error: "Job not found" }, { status: 404 });
+      return jsonError("Job not found", 404);
     }
 
     if (!CANCELLABLE_STATUSES.includes(job.status as (typeof CANCELLABLE_STATUSES)[number])) {
-      return NextResponse.json(
-        { error: `Cannot cancel job in status ${job.status}. Only queued or running jobs can be cancelled.` },
-        { status: 400 }
-      );
+      return jsonError(`Cannot cancel job in status ${job.status}. Only queued or running jobs can be cancelled.`, 400);
     }
 
     const updated = await prisma.mediaJob.update({
@@ -28,6 +26,6 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Job cancellation error:", error);
-    return NextResponse.json({ error: "Failed to cancel job" }, { status: 500 });
+    return jsonError("Failed to cancel job", 500);
   }
 }

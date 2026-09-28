@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { jsonError } from "@/app/api/_lib/http";
 
 export async function GET(_request: Request, context: { params: Promise<{ sourceId: string }> }) {
   const { sourceId } = await context.params;
   try {
     const source = await prisma.source.findUnique({ where: { id: sourceId }, select: { id: true } });
-    if (!source) return NextResponse.json({ error: "Source not found" }, { status: 404 });
+    if (!source) return jsonError("Source not found", 404);
 
     const [active, pendingRuns] = await Promise.all([
       prisma.transcriptSegment.findMany({ where: { sourceId, isActive: true }, orderBy: { startSeconds: "asc" } }),
@@ -32,6 +33,6 @@ export async function GET(_request: Request, context: { params: Promise<{ source
     });
   } catch (error) {
     console.error("Captions lookup error:", error);
-    return NextResponse.json({ error: "Failed to load captions" }, { status: 500 });
+    return jsonError("Failed to load captions", 500);
   }
 }
