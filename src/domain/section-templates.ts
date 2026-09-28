@@ -1,4 +1,4 @@
-import type { Section } from "@/domain/sections";
+import { evenRangeSlice, type Section } from "@/domain/sections";
 
 export type SectionTemplate = {
   key: string;
@@ -41,22 +41,12 @@ export function instantiateSectionTemplate(
   scope: Section["scope"],
   options: { sourceId?: string; startSeconds?: number; endSeconds?: number } = {},
 ): Section[] {
-  const hasRange = options.startSeconds !== undefined && options.endSeconds !== undefined && options.endSeconds > options.startSeconds;
-  return template.sections.map((label, index) => {
-    const startSeconds = hasRange
-      ? options.startSeconds! + ((options.endSeconds! - options.startSeconds!) * index) / template.sections.length
-      : undefined;
-    const endSeconds = hasRange
-      ? options.startSeconds! + ((options.endSeconds! - options.startSeconds!) * (index + 1)) / template.sections.length
-      : undefined;
-    return {
-      id: crypto.randomUUID(),
-      label,
-      scope,
-      sourceId: options.sourceId,
-      startSeconds,
-      endSeconds,
-      origin: "TEMPLATE",
-    };
-  });
+  return template.sections.map((label, index) => ({
+    id: crypto.randomUUID(),
+    label,
+    scope,
+    sourceId: options.sourceId,
+    ...evenRangeSlice(index, template.sections.length, options),
+    origin: "TEMPLATE",
+  }));
 }

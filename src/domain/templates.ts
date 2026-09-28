@@ -191,6 +191,36 @@ export function sermonComposition(
 }
 
 /**
+ * Opening slate followed by one continuous source clip spanning the segments
+ * (from the earliest-starting segment's start to the latest-starting segment's end).
+ */
+function continuousComposition(
+  sourceId: string,
+  segments: Record<string, { startSeconds: number; endSeconds: number }>,
+  title: string,
+): TimelineItem[] {
+  const items: TimelineItem[] = [{
+    type: "slate",
+    template: "opening",
+    mode: "standalone",
+    durationSeconds: 2,
+    data: { title },
+  }];
+
+  const ordered = Object.values(segments).sort((a, b) => a.startSeconds - b.startSeconds);
+  if (ordered.length > 0) {
+    items.push({
+      type: "source-clip",
+      sourceId,
+      startSeconds: ordered[0].startSeconds,
+      endSeconds: ordered[ordered.length - 1].endSeconds,
+    });
+  }
+
+  return items;
+}
+
+/**
  * Liturgy template: continuous source with section markers.
  */
 export function liturgyComposition(
@@ -198,35 +228,7 @@ export function liturgyComposition(
   segments: Record<string, { startSeconds: number; endSeconds: number }>,
   _theme: Theme
 ): TimelineItem[] {
-  const items: TimelineItem[] = [];
-
-  // Opening slate
-  items.push({
-    type: "slate",
-    template: "opening",
-    mode: "standalone",
-    durationSeconds: 2,
-    data: { title: "Divine Liturgy" },
-  });
-
-  // Collect all segments in order
-  const allSegments = Object.entries(segments)
-    .map(([label, range]) => ({ label, ...range }))
-    .sort((a, b) => a.startSeconds - b.startSeconds);
-
-  if (allSegments.length > 0) {
-    const firstStart = allSegments[0].startSeconds;
-    const lastEnd = allSegments[allSegments.length - 1].endSeconds;
-
-    items.push({
-      type: "source-clip",
-      sourceId,
-      startSeconds: firstStart,
-      endSeconds: lastEnd,
-    });
-  }
-
-  return items;
+  return continuousComposition(sourceId, segments, "Divine Liturgy");
 }
 
 /**
@@ -237,35 +239,7 @@ export function vespersComposition(
   segments: Record<string, { startSeconds: number; endSeconds: number }>,
   _theme: Theme
 ): TimelineItem[] {
-  const items: TimelineItem[] = [];
-
-  // Opening slate
-  items.push({
-    type: "slate",
-    template: "opening",
-    mode: "standalone",
-    durationSeconds: 2,
-    data: { title: "Vespers" },
-  });
-
-  // Collect all segments in order
-  const allSegments = Object.entries(segments)
-    .map(([label, range]) => ({ label, ...range }))
-    .sort((a, b) => a.startSeconds - b.startSeconds);
-
-  if (allSegments.length > 0) {
-    const firstStart = allSegments[0].startSeconds;
-    const lastEnd = allSegments[allSegments.length - 1].endSeconds;
-
-    items.push({
-      type: "source-clip",
-      sourceId,
-      startSeconds: firstStart,
-      endSeconds: lastEnd,
-    });
-  }
-
-  return items;
+  return continuousComposition(sourceId, segments, "Vespers");
 }
 
 /** Default composition factories by key */
@@ -317,6 +291,15 @@ export function initializeDefaultTemplates(): TemplateRegistry {
 
   registry.registerTheme(defaultTheme);
 
+  const renderSettings = (bitrate: string) => ({
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    bitrate,
+    audioCodec: "aac",
+    audioSampleRate: 48000,
+  });
+
   // Register default templates
   const sermonTemplate: TemplateDefinition = {
     key: "sermon",
@@ -325,14 +308,7 @@ export function initializeDefaultTemplates(): TemplateRegistry {
     themeKey: "default",
     version: 1,
     expectedSegments: ["gospel", "sermon"],
-    renderSettings: {
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      bitrate: "5000k",
-      audioCodec: "aac",
-      audioSampleRate: 48000,
-    },
+    renderSettings: renderSettings("5000k"),
     compositionFactory: "sermon",
     thumbnail: { height: 720, width: 1280, factory: "sermon-thumbnail" },
   };
@@ -344,14 +320,7 @@ export function initializeDefaultTemplates(): TemplateRegistry {
     themeKey: "default",
     version: 1,
     expectedSegments: [],
-    renderSettings: {
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      bitrate: "4000k",
-      audioCodec: "aac",
-      audioSampleRate: 48000,
-    },
+    renderSettings: renderSettings("4000k"),
     compositionFactory: "liturgy",
     thumbnail: { height: 720, width: 1280, factory: "generic-thumbnail" },
   };
@@ -363,26 +332,15 @@ export function initializeDefaultTemplates(): TemplateRegistry {
     themeKey: "default",
     version: 1,
     expectedSegments: [],
-    renderSettings: {
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      bitrate: "4000k",
-      audioCodec: "aac",
-      audioSampleRate: 48000,
-    },
+    renderSettings: renderSettings("4000k"),
     compositionFactory: "vespers",
     thumbnail: { height: 720, width: 1280, factory: "generic-thumbnail" },
   };
 
+  // registerTemplate throws on an unknown theme, so no separate validate() pass is needed here.
   registry.registerTemplate(sermonTemplate);
   registry.registerTemplate(liturgyTemplate);
   registry.registerTemplate(vespersTemplate);
-
-  const validation = registry.validate();
-  if (!validation.valid) {
-    throw new Error(`Template registry validation failed: ${validation.errors.join("; ")}`);
-  }
 
   globalRegistry = registry;
   return registry;

@@ -15,11 +15,10 @@ const commonAssetSchema = z.object({
 });
 
 const embeddedAssetSchema = commonAssetSchema.extend({ dataBase64: z.string().min(1) });
-const referencedAssetSchema = commonAssetSchema;
 
 export const graphicPackageAssetSchema = z.discriminatedUnion("assetMode", [
   embeddedAssetSchema.extend({ assetMode: z.literal("embedded") }),
-  referencedAssetSchema.extend({ assetMode: z.literal("referenced") }),
+  commonAssetSchema.extend({ assetMode: z.literal("referenced") }),
 ]);
 
 export const graphicPackageManifestSchema = z.object({
