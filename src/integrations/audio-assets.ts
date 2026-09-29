@@ -30,8 +30,6 @@ const MIME_ALIASES: Record<string, string> = {
 
 const EXTENSION_TYPES: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", ogg: "audio/ogg", oga: "audio/ogg", webm: "audio/webm" };
 
-export const AUDIO_ACCEPT = "audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/webm,.mp3,.m4a,.wav,.ogg,.webm";
-
 /**
  * Canonical audio MIME type for an upload, or null when it is not one of mp3/m4a/wav/ogg/webm. The declared type wins
  * (codec parameters such as `audio/webm;codecs=opus` are dropped); a generic or missing type falls back to the file extension.
@@ -43,10 +41,6 @@ export function canonicalAudioType(declaredType: string | undefined, fileName?: 
   if (declared && declared !== "application/octet-stream") return null;
   const extension = fileName?.split(".").pop()?.toLowerCase();
   return (extension && EXTENSION_TYPES[extension]) || null;
-}
-
-export function isAudioMimeType(mimeType: string): boolean {
-  return mimeType in AUDIO_TYPES;
 }
 
 export function audioExtension(mimeType: string): string {

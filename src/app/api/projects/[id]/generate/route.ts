@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
 import { captionOptionsSchema, wantsBurnedCaptions } from "@/domain/captions";
-import { podcastSettingsSchema } from "@/domain/project";
+import { podcastSettingsSchema, type Graphic } from "@/domain/project";
+import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import { validateRenderSettings } from "@/domain/render-settings";
 import { computeDurationReport } from "@/lib/duration-report";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
@@ -45,10 +46,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const pending = project.sources.filter(source => source.status === "PENDING");
     if (pending.length) return NextResponse.json({ error: "Upload pending local sources before generating.", pendingSources: pending.map(source => ({ id: source.id, originalName: source.originalName })) }, { status: 409 });
     if (captions.data.styleGraphicId && wantsBurnedCaptions(captions.data)) {
-      const graphics = (project.definition as { graphics?: Array<{ id?: unknown; layers?: Array<{ type?: unknown }> }> } | null)?.graphics ?? [];
+      const graphics = (project.definition as { graphics?: Array<Partial<Graphic>> } | null)?.graphics ?? [];
       const style = graphics.find(graphic => graphic?.id === captions.data.styleGraphicId);
       if (!style) return jsonError("Caption style graphic not found in this project", 400);
-      if (!style.layers?.some(layer => layer?.type === "caption")) return jsonError("The chosen graphic has no caption layer, so it is not a caption style", 400);
+      if (!isCaptionStyleGraphic({ layers: style.layers ?? [] })) return jsonError("The chosen graphic has no caption layer, so it is not a caption style", 400);
     }
     // Voiceovers (and the podcast intro/outro) must be audio assets of the library.
     const podcastSettings = readPodcastSettings((project.definition ?? {}) as { podcast?: unknown }, { podcast: podcast.data });

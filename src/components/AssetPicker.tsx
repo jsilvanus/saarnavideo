@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage, requestJson } from "./api";
+import { formatTime } from "./format";
 
 export type LibraryAsset = { id: string; assetKey: string; type: string; mimeType: string; width: number | null; height: number | null; durationMs?: number | null; sizeBytes: string; folderId: string | null; projectCount: number };
 type Folder = { id: string; name: string; parentId: string | null };
@@ -17,7 +18,7 @@ function folderPath(folders: Folder[], id: string | null): Folder[] {
   return out;
 }
 
-const fmtDuration = (ms?: number | null) => ms ? `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}` : "?";
+const fmtDuration = (ms?: number | null) => ms ? formatTime(ms / 1000) : "?";
 
 /**
  * Modal browser for the global asset library. Choosing an asset links it to the project (unless it already is) and then

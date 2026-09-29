@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errorMessage, jsonInit, requestJson } from "./api";
 
 export type Publication = { id: string; provider: "YOUTUBE" | "FACEBOOK"; status: "QUEUED" | "UPLOADING" | "COMPLETED" | "FAILED"; privacy: string; externalId?: string | null; error?: string | null; createdAt?: string };
@@ -35,12 +35,15 @@ export default function PublishPanel({ projectId, publications, hasVideo, onRefr
   }, []);
 
   // Publications finish in the worker; keep the list fresh while one is running.
+  // The latest onRefresh is read through a ref, so a new callback identity on each parent render does not restart the timer.
   const running = publications.some(p => ACTIVE.has(p.status));
+  const refresh = useRef(onRefresh);
+  refresh.current = onRefresh;
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(onRefresh, 3000);
+    const timer = setInterval(() => refresh.current(), 3000);
     return () => clearInterval(timer);
-  }, [running, onRefresh]);
+  }, [running]);
 
   function choosePlatform(next: Platform) {
     setPlatform(next);

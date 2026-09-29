@@ -12,13 +12,12 @@ export async function GET() {
   if (!config) return NextResponse.json({ configured: false });
   const key = `${config.pageId}|${config.version}|${config.baseUrl}`;
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return NextResponse.json(cache.body);
-  let body: Record<string, unknown>;
-  try {
-    body = { configured: true, pageId: config.pageId, pageName: await getFacebookPageName(config), graphVersion: config.version };
-  } catch (error) {
-    // Configured, but the token or Page is not usable right now: report it so the UI can warn before a publish fails.
-    body = { configured: true, pageId: config.pageId, pageName: null, graphVersion: config.version, error: error instanceof Error ? error.message : "Could not reach Facebook" };
-  }
+  const base = { configured: true, pageId: config.pageId, graphVersion: config.version };
+  // Configured, but the token or Page may not be usable right now: report it so the UI can warn before a publish fails.
+  const body: Record<string, unknown> = await getFacebookPageName(config).then(
+    pageName => ({ ...base, pageName }),
+    (error: unknown) => ({ ...base, pageName: null, error: error instanceof Error ? error.message : "Could not reach Facebook" }),
+  );
   cache = { key, at: Date.now(), body };
   return NextResponse.json(body);
 }

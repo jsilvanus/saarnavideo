@@ -10,7 +10,7 @@ import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
 import VoiceoverPanel from "@/components/VoiceoverPanel";
 import PodcastPanel from "@/components/PodcastPanel";
-import type { PodcastSettings } from "@/domain/project";
+import { baseItemDuration, isBaseItem, type PodcastSettings, type TimelineItem } from "@/domain/project";
 import SectionManager from "@/components/SectionManager";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
 import OutputSettings from "@/components/OutputSettings";
@@ -66,7 +66,7 @@ export default function HomePage(){
  async function saveOutput(patch:Record<string,unknown>){const def=currentDefinition(),next={...(def.template??currentDefinition().template!),...patch} as Record<string,unknown>;for(const k of Object.keys(patch))if(patch[k]===undefined)delete next[k];await saveDefinition({...def,template:next as Definition["template"]});setMessage("Output settings saved.")}
  async function saveSectionReframe(id:string,reframe:Reframe|undefined){const def=currentDefinition();await saveDefinition({...def,sections:(def.sections??[]).map(x=>{if(x.id!==id)return x;const {reframe:_old,...rest}=x;return reframe?{...rest,reframe}:rest})});setMessage("Reframe saved.")}
  const durationNotice=selected?<DurationNotice definition={currentDefinition()} assets={selected.assets}/>:null;
- function compositionDurationSeconds(){return currentDefinition().composition.items.reduce((total,item)=>{if(item.type==="source-clip")return total+Math.max(0,(item.endSeconds??0)-(item.startSeconds??0));if(item.type==="slate"&&item.mode!=="overlay")return total+(item.durationSeconds??0);if(item.type==="audio-clip"&&item.mode!=="mix")return total+Math.max(0,(item.endSeconds??0)-(item.startSeconds??0));return total},0)}
+ function compositionDurationSeconds(){return (currentDefinition().composition.items as TimelineItem[]).filter(isBaseItem).reduce((total,item)=>total+Math.max(0,baseItemDuration(item)),0)}
  async function refreshAssets(){if(!selected)return;const r=await fetch(`/api/projects/${selected.id}`,{cache:"no-store"});if(!r.ok)return;const p=await r.json() as Project;setSelected(cur=>cur&&cur.id===p.id?{...cur,assets:p.assets}:cur)}
  function askRemoveAsset(asset:Asset){setRemoveAsset({asset,usage:selected?findAssetUsage(currentDefinition(),asset):[]})}
  async function confirmRemoveAsset(){if(!selected||!removeAsset)return;const {asset}=removeAsset;setRemoveAsset(null);await withBusy("Could not remove the asset from the project",async()=>{await requestJson(`/api/projects/${selected.id}/assets/${asset.id}?force=1`,{method:"DELETE"},"Could not remove the asset from the project");await refreshAssets();setMessage(`“${asset.assetKey}” removed from this project. It is still in the library.`)})}

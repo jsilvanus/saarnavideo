@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { errorMessage, jsonInit, requestJson } from "@/components/api";
 import { formatTime } from "@/components/format";
+import { podcastSettingsSchema, type PodcastSettings as DomainPodcastSettings } from "@/domain/project";
 
 type LibraryAudio = { id: string; assetKey: string; type: string; durationMs?: number | null };
-type PodcastSettings = { introAssetId?: string; outroAssetId?: string; format?: "mp3" | "m4a"; channels?: "mono" | "stereo"; crossfadeSeconds?: number; title?: string; artist?: string; album?: string; date?: string; comment?: string };
+type PodcastSettings = Partial<DomainPodcastSettings>;
 type Definition = { podcast?: PodcastSettings; [key: string]: unknown };
 type Output = { id: string; type: string; createdAt?: string; mimeType?: string };
 type Job = { id: string; type?: string | null; status: string; progress: number; phase?: string | null; error?: string | null; errorMessage?: string | null };
@@ -16,14 +17,14 @@ type Props = { projectId: string; projectTitle: string; preacher?: string | null
 
 export default function PodcastPanel({ projectId, projectTitle, preacher, gospelRef, definition, outputs, jobs, onSaveDefinition, onQueued }: Props) {
   const saved = definition.podcast ?? {};
-  const [settings, setSettings] = useState<PodcastSettings>({ format: "mp3", channels: "mono", crossfadeSeconds: 0.5, ...saved });
+  const [settings, setSettings] = useState<PodcastSettings>(() => ({ ...podcastSettingsSchema.parse({}), ...saved }));
   const [library, setLibrary] = useState<LibraryAudio[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const set = (patch: PodcastSettings) => setSettings(current => ({ ...current, ...patch }));
 
-  useEffect(() => { void fetch("/api/assets", { cache: "no-store" }).then(r => r.ok ? r.json() : { assets: [] }).then((d: { assets?: LibraryAudio[] }) => setLibrary((d.assets ?? []).filter(a => a.type === "AUDIO"))).catch(() => undefined); }, []);
+  useEffect(() => { void requestJson<{ assets?: LibraryAudio[] }>("/api/assets", { cache: "no-store" }, "Could not load the library").then(d => setLibrary((d.assets ?? []).filter(a => a.type === "AUDIO"))).catch(() => undefined); }, []);
 
   const podcastJobs = jobs.filter(job => job.type === "PODCAST");
   const active = podcastJobs.find(job => ACTIVE.includes(job.status));

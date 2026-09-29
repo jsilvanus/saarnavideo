@@ -4,6 +4,7 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAssetKey, validateAssetType, validateImageFile, type ImageMetadata } from "@/integrations/image-assets";
 import { MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFile } from "@/integrations/audio-assets";
+import { prisma } from "@/lib/prisma";
 import { jsonError } from "./http";
 import { mediaRoot, rangedFileResponse } from "./files";
 
@@ -85,4 +86,21 @@ export async function storeAudioAsset(upload: AudioUpload): Promise<{ storagePat
     return jsonError("The file could not be read as audio", 400);
   }
   return { storagePath, durationMs: probe.durationMs };
+}
+
+/**
+ * Reuses the library asset with the same audio bytes (moving it to `folderId` / linking `projectId` when given) or stores
+ * and probes the upload as a new AUDIO asset. Returns an error response when the file is not decodable audio.
+ */
+export async function findOrCreateAudioAsset(upload: AudioUpload, options: { assetKey: string; folderId?: string | null; projectId?: string }) {
+  const link = options.projectId ? { projects: { connect: { id: options.projectId } } } : {};
+  const existing = await prisma.asset.findFirst({ where: { contentHash: upload.contentHash, mimeType: upload.mimeType, type: "AUDIO" } });
+  if (existing) {
+    const asset = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: options.folderId ?? existing.folderId, expiresAt: null, ...link } });
+    return { asset, created: false };
+  }
+  const stored = await storeAudioAsset(upload);
+  if (stored instanceof Response) return stored;
+  const asset = await prisma.asset.create({ data: { assetKey: options.assetKey, type: "AUDIO", storagePath: stored.storagePath, mimeType: upload.mimeType, durationMs: stored.durationMs, sizeBytes: BigInt(upload.buffer.length), contentHash: upload.contentHash, folderId: options.folderId ?? null, expiresAt: null, ...link } });
+  return { asset, created: true };
 }

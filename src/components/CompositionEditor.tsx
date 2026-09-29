@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Section as SemanticSection } from "@/domain/sections";
 import type { Graphic } from "@/domain/graphics";
-import type { TimelineItem } from "@/domain/project";
+import { isBaseItem, type TimelineItem } from "@/domain/project";
 import { layoutTimeline } from "@/renderer/caption-timeline";
 import { formatTime, sourceLabel } from "./format";
 import ReframeEditor from "./ReframeEditor";
@@ -74,7 +74,7 @@ export default function CompositionEditor({ definition, sources, audioAssets = [
           </div>{dropBetween(itemIndex + 1, "Drop graphic here for a standalone slate")}
         </div>;
       })}
-      {!items.some(item => item.type === "source-clip" || (item.type === "slate" && item.mode !== "overlay") || item.type === "audio-clip") && <div className="empty-composition">Create sections first, then drag graphics between them or into a section.</div>}
+      {!(items as TimelineItem[]).some(isBaseItem) && <div className="empty-composition">Create sections first, then drag graphics between them or into a section.</div>}
     </div>
   </div>;
 }
