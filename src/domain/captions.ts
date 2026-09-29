@@ -2,15 +2,22 @@ import { z } from "zod";
 
 /**
  * Caption options of a generate request. "none" renders no captions; "soft"
- * muxes a mov_text track into the MP4 and stores sidecar SRT/VTT outputs.
- * A later "burn" mode (captions drawn into the picture) extends this enum.
+ * muxes a mov_text track into the MP4 and stores sidecar SRT/VTT outputs;
+ * "burn" draws the captions into the picture (via an ASS file and libass);
+ * "both" does both. `styleGraphicId` names a graphic of the project that
+ * contains a caption layer (see caption-style.ts); without it the built-in
+ * default style is used. It only matters for "burn" and "both".
  */
 export const captionOptionsSchema = z.object({
-  mode: z.enum(["none", "soft"]).default("none"),
+  mode: z.enum(["none", "soft", "burn", "both"]).default("none"),
+  styleGraphicId: z.string().trim().min(1).optional(),
   /** BCP 47 style tag ("fi", "fi-FI") or ISO 639-2 code ("fin"). Defaults to the transcript's own language. */
   language: z.string().trim().regex(/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/, "language must be a language tag such as fi, fin or fi-FI").optional(),
 });
 export type CaptionOptions = z.infer<typeof captionOptionsSchema>;
+
+export const wantsSoftCaptions = (options: Pick<CaptionOptions, "mode">) => options.mode === "soft" || options.mode === "both";
+export const wantsBurnedCaptions = (options: Pick<CaptionOptions, "mode">) => options.mode === "burn" || options.mode === "both";
 
 // ISO 639-1 -> ISO 639-2/T, for the languages a Finnish congregation is likely to use.
 const ISO_639_2: Record<string, string> = {

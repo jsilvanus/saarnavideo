@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
-import { captionOptionsSchema } from "@/domain/captions";
+import { captionOptionsSchema, wantsBurnedCaptions } from "@/domain/captions";
 
 function findDurationViolations(definition: unknown, sources: Array<{ id: string; durationMs: number | null }>) {
   if (!definition || typeof definition !== "object") return [];
@@ -30,6 +30,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!project) return jsonError("Project not found", 404);
     const pending = project.sources.filter(source => source.status === "PENDING");
     if (pending.length) return NextResponse.json({ error: "Upload pending local sources before generating.", pendingSources: pending.map(source => ({ id: source.id, originalName: source.originalName })) }, { status: 409 });
+    if (captions.data.styleGraphicId && wantsBurnedCaptions(captions.data)) {
+      const graphics = (project.definition as { graphics?: Array<{ id?: unknown; layers?: Array<{ type?: unknown }> }> } | null)?.graphics ?? [];
+      const style = graphics.find(graphic => graphic?.id === captions.data.styleGraphicId);
+      if (!style) return jsonError("Caption style graphic not found in this project", 400);
+      if (!style.layers?.some(layer => layer?.type === "caption")) return jsonError("The chosen graphic has no caption layer, so it is not a caption style", 400);
+    }
     const violations = findDurationViolations(project.definition, project.sources);
     if (violations.length && !body.allowClamping) return NextResponse.json({ error: "One or more sections extend beyond the selected source file.", code: "SOURCE_DURATION_MISMATCH", violations, message: "The source file is shorter than the recording used to define these sections. No timestamps are silently clamped." }, { status: 409 });
     let renderDefinition = project.definition;

@@ -12,8 +12,8 @@ import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/v
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
 import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
-import { buildCaptionFiles, clipSourceIds, readCaptionOptions } from "@/worker/captions";
-import { CAPTION_MIME, toIso6392 } from "@/domain/captions";
+import { buildBurnedCaptionAss, buildCaptionFiles, clipSourceIds, readCaptionOptions } from "@/worker/captions";
+import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
 
 const execFileAsync = promisify(execFile);
@@ -61,23 +61,47 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>) {
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
 
+/** Family name of a font file for libass (which looks fonts up by name), read with fontconfig's fc-scan; undefined when unavailable. */
+async function fontFamilyOfFile(fontFile: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("fc-scan", ["--format", "%{family}\\n", fontFile]);
+    return stdout.split("\n")[0]?.split(",")[0]?.trim() || undefined;
+  } catch { return undefined; }
+}
+
 /**
- * Soft captions: maps the active transcript of every clip source onto the output timeline and writes
- * sidecar SRT/VTT files next to the video. Returns null (and logs) when there is nothing to caption.
+ * Maps the active transcript of every clip source onto the output timeline and prepares what the requested caption
+ * modes need: sidecar SRT/VTT files (soft) and/or an ASS file (burned-in). Returns null (and logs) when there is nothing to caption.
  */
-async function prepareSoftCaptions(jobId: string, definition: ProjectDefinition, outputPath: string, requestedLanguage?: string) {
+async function prepareCaptions(jobId: string, definition: ProjectDefinition, outputPath: string, options: CaptionOptions) {
   const sourceIds = clipSourceIds(definition);
   const segments = await prisma.transcriptSegment.findMany({ where: { sourceId: { in: sourceIds }, isActive: true }, orderBy: { startSeconds: "asc" } });
   const bySource = new Map<string, typeof segments>();
   for (const segment of segments) bySource.set(segment.sourceId, [...(bySource.get(segment.sourceId) ?? []), segment]);
   const files = buildCaptionFiles(definition, bySource);
-  if (!files.cues.length) { await logJobEvent(jobId, "WARN", "Soft captions requested but no active transcript segments fall inside the composition; rendering without captions"); return null; }
-  const run = requestedLanguage ? null : await prisma.transcriptionRun.findFirst({ where: { sourceId: { in: sourceIds }, status: "APPLIED" }, orderBy: { appliedAt: "desc" }, select: { language: true } });
-  const language = requestedLanguage ?? run?.language ?? "und";
-  const base = outputPath.replace(/\.mp4$/, ""); const srtPath = `${base}.srt`; const vttPath = `${base}.vtt`;
-  await writeFile(srtPath, files.srt, "utf8"); await writeFile(vttPath, files.vtt, "utf8");
-  await logJobEvent(jobId, "INFO", "Soft captions prepared", { cues: files.cues.length, language });
-  return { srtPath, vttPath, language };
+  if (!files.cues.length) { await logJobEvent(jobId, "WARN", `Captions (${options.mode}) requested but no active transcript segments fall inside the composition; rendering without captions`); return null; }
+  const base = outputPath.replace(/\.mp4$/, "");
+  let soft: { srtPath: string; vttPath: string; language: string } | null = null;
+  if (wantsSoftCaptions(options)) {
+    const run = options.language ? null : await prisma.transcriptionRun.findFirst({ where: { sourceId: { in: sourceIds }, status: "APPLIED" }, orderBy: { appliedAt: "desc" }, select: { language: true } });
+    const language = options.language ?? run?.language ?? "und";
+    const srtPath = `${base}.srt`; const vttPath = `${base}.vtt`;
+    await writeFile(srtPath, files.srt, "utf8"); await writeFile(vttPath, files.vtt, "utf8");
+    soft = { srtPath, vttPath, language };
+    await logJobEvent(jobId, "INFO", "Soft captions prepared", { cues: files.cues.length, language });
+  }
+  let burn: { assPath: string; fontsDir?: string } | null = null;
+  if (wantsBurnedCaptions(options)) {
+    const fontFile = definition.template?.fontFile;
+    const fontName = fontFile ? await fontFamilyOfFile(fontFile) : undefined;
+    const built = buildBurnedCaptionAss(definition, files.cues, options, fontName);
+    if (built.warning) await logJobEvent(jobId, "WARN", built.warning);
+    const assPath = `${base}.ass`;
+    await writeFile(assPath, built.ass, "utf8");
+    burn = { assPath, fontsDir: fontFile && fontName ? path.dirname(fontFile) : undefined };
+    await logJobEvent(jobId, "INFO", "Burned-in captions prepared", { cues: files.cues.length, displayCues: built.lines, styleGraphicId: options.styleGraphicId ?? "default", font: fontName ?? built.style.fontFamily });
+  }
+  return { soft, burn };
 }
 
 async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VIDEO" | "PREVIEW" | "THUMBNAIL") {
@@ -90,8 +114,8 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await execFileAsync("ffmpeg", ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath]); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
   const sourcePaths = resolveSourcePaths(definition, project.sources); const assetPaths = new Map<string, string>(); for (const asset of project.assets) { assetPaths.set(asset.assetKey, asset.storagePath); assetPaths.set(asset.id, asset.storagePath); assetPaths.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
-  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const captionFiles = captions.mode === "soft" ? await prepareSoftCaptions(job.id, definition, outputPath, captions.language) : null;
-  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, captionFiles ? { captions: { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } } : undefined);
+  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
+  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined });
   if (type === "PREVIEW") {
     // -vf cannot be combined with a -filter_complex output, so the downscale is appended to the graph.
     const graphIndex = plan.args.indexOf("-filter_complex") + 1;
@@ -105,7 +129,7 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   const ffmpegProcess = spawn("ffmpeg", plan.args, { stdio: ["pipe", "pipe", "pipe"] }); runningProcesses.set(job.id, ffmpegProcess); let stdoutBuffer = ""; let stderr = "";
   ffmpegProcess.stdout.on("data", chunk => { stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; for (const line of lines) { const [key, value] = line.trim().split("="); if (key === "out_time_ms" && value && Number.isFinite(Number(value))) { const currentMs = Number(value) / 1000; const progress = Math.max(0, Math.min(99, Math.round((currentMs / totalMs) * 100))); void updateProgress(job.id, { phase, message: `Rendering ${type.toLowerCase()}`, progress, currentMs: BigInt(Math.round(currentMs)), totalMs: BigInt(totalMs) }); } if (key === "speed" && value) void updateProgress(job.id, { speed: value }); } });
   ffmpegProcess.stderr.on("data", chunk => { stderr += chunk.toString(); });
-  await new Promise<void>((resolve, reject) => { ffmpegProcess.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); ffmpegProcess.on("error", reject); }); runningProcesses.delete(job.id);
+  await new Promise<void>((resolve, reject) => { ffmpegProcess.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); ffmpegProcess.on("error", reject); }).finally(() => { if (prepared?.burn) void rm(prepared.burn.assPath, { force: true }).catch(() => undefined); }); runningProcesses.delete(job.id);
   await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW", captionFiles?.language);
   if (captionFiles) { await createOutput(project.id, job.id, "CAPTIONS_SRT", captionFiles.srtPath, CAPTION_MIME.srt, type === "PREVIEW", captionFiles.language); await createOutput(project.id, job.id, "CAPTIONS_VTT", captionFiles.vttPath, CAPTION_MIME.vtt, type === "PREVIEW", captionFiles.language); }
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: `${type === "PREVIEW" ? "Preview" : "Video"} ready`, completedAt: new Date() }, true);

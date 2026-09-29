@@ -383,3 +383,36 @@ describe("soft caption track", () => {
     expect(withOptions).not.toContain("mov_text");
   });
 });
+
+describe("burned-in captions", () => {
+  const definition = { ...base, composition: { ...baseComposition, items: [
+    { type: "source-clip" as const, sourceId: "a", startSeconds: 0, endSeconds: 5 },
+    { type: "overlay" as const, template: "rich", kind: "text" as const, startSeconds: 1, endSeconds: 2, opacity: 1, data: { text: "Overlay" } },
+  ] } };
+  const sources = new Map([["a", "/tmp/a.mp4"]]);
+  const graph = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
+  const maps = (args: string[]) => args.flatMap((arg, i) => (arg === "-map" ? [args[i + 1]] : []));
+
+  it("applies the ass filter after the overlays and maps its output as the video", () => {
+    const { args } = buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4", undefined, { burnedCaptions: { assPath: "/tmp/c.ass" } });
+    const filters = graph(args).split(";");
+    const last = filters[filters.length - 1];
+    expect(last).toMatch(/^\[ol0\]ass=filename='\/tmp\/c\.ass'\[burned\]$/);
+    expect(filters.findIndex((f) => f.includes("drawtext"))).toBeLessThan(filters.length - 1);
+    expect(maps(args)[0]).toBe("[burned]");
+    expect(args).not.toContain("mov_text");
+  });
+
+  it("passes the template font directory to libass and escapes the path", () => {
+    const { args } = buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4", undefined, { burnedCaptions: { assPath: "/tmp/it's:here/c.ass", fontsDir: "/usr/share/fonts/x" } });
+    expect(graph(args)).toContain("ass=filename='/tmp/it\\'s\\:here/c.ass':fontsdir='/usr/share/fonts/x'[burned]");
+  });
+
+  it("combines with a soft track and leaves the plan alone without the option", () => {
+    const both = buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4", undefined, { captions: { path: "/tmp/c.srt", language: "fin" }, burnedCaptions: { assPath: "/tmp/c.ass" } }).args;
+    expect(maps(both)).toHaveLength(3);
+    expect(both).toContain("mov_text");
+    expect(graph(both)).toContain("[burned]");
+    expect(graph(buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4").args)).not.toContain("ass=");
+  });
+});

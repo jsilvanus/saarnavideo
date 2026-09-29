@@ -5,7 +5,7 @@ describe("captionOptionsSchema", () => {
   it("defaults to no captions", () => expect(captionOptionsSchema.parse({})).toEqual({ mode: "none" }));
   it("accepts soft captions with a language", () => expect(captionOptionsSchema.parse({ mode: "soft", language: "fi-FI" })).toEqual({ mode: "soft", language: "fi-FI" }));
   it("rejects unknown modes and bad languages", () => {
-    expect(captionOptionsSchema.safeParse({ mode: "burn" }).success).toBe(false);
+    expect(captionOptionsSchema.safeParse({ mode: "hard" }).success).toBe(false);
     expect(captionOptionsSchema.safeParse({ mode: "soft", language: "finnish please" }).success).toBe(false);
   });
 });

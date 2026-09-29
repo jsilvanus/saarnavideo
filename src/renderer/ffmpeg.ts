@@ -1,7 +1,9 @@
 import type { GraphicCarrierItem, ProjectDefinition, TimelineItem, Transition } from "@/domain/project";
 
 export type CaptionTrackInput = { path: string; language: string };
-export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput };
+/** Burned-in captions: an ASS file rendered onto the picture with libass after overlays/slates (and before any preview downscale). */
+export type BurnedCaptionInput = { assPath: string; /** Directory libass searches for font files (the template font's directory). */ fontsDir?: string };
+export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput };
 export type FfmpegPlan = { sourcePaths: Map<string, string>; assetPaths?: Map<string, string>; outputPath: string; args: string[] };
 
 type SourceClipItem = Extract<TimelineItem, { type: "source-clip" }>;
@@ -250,6 +252,12 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
       filters.push(`[${current}]null[${next}]`);
     }
     outputVideo = next;
+  }
+
+  if (options.burnedCaptions) {
+    const fontsDir = options.burnedCaptions.fontsDir ? `:fontsdir='${escapeFilterText(options.burnedCaptions.fontsDir)}'` : "";
+    filters.push(`[${outputVideo}]ass=filename='${escapeFilterText(options.burnedCaptions.assPath)}'${fontsDir}[burned]`);
+    outputVideo = "burned";
   }
 
   args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS);
