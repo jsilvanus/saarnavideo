@@ -1,0 +1,76 @@
+# Server deployment behind the host's nginx (scripts/server-deploy.sh).
+# Web app + worker + bundled PostgreSQL; the web app is published on 127.0.0.1 only. Settings and
+# secrets come from .env.server (created by the script, never committed):
+#   docker compose -p saarnavideo -f docker-compose.server.yml --env-file .env.server ...
+#
+# Speech-to-text: the worker reaches liturgos-auditor (deployed with its own server script) as
+# http://liturgos-auditor:8090 on the shared Docker network `deploy-shared` (the script creates it).
+
+x-app-env: &app-env
+  NODE_ENV: production
+  # The password is hex (openssl rand -hex), so it needs no URL encoding.
+  DATABASE_URL: postgresql://saarnavideo:${POSTGRES_PASSWORD}@db:5432/saarnavideo
+  MEDIA_ROOT: /data/media
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: saarnavideo
+      POSTGRES_DB: saarnavideo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.server}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saarnavideo -d saarnavideo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      args:
+        PRISMA_SCHEMA: prisma/schema.postgresql.prisma
+    image: saarnavideo-server-app:latest
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:${HOST_PORT:-4103}:3000"
+    volumes:
+      - media:/data/media
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: saarnavideo-server-worker:latest
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    environment:
+      <<: *app-env
+    volumes:
+      - media:/data/media
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - shared
+
+volumes:
+  db_data:
+  media:
+
+networks:
+  shared:
+    name: deploy-shared
+    external: true
