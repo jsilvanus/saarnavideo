@@ -365,9 +365,48 @@ box, two lines) is used. Long cues are word-wrapped to the box and split into pa
 lines. Returns `400` when the graphic does not exist in the project or has no caption layer. Requires
 ffmpeg with libass. See `docs/GRAPHIC_PACKAGE.md` for the caption layer.
 
+### Plain-text transcript (no timings)
+
+```
+GET /sources/{sourceId}/transcript.txt?start=&end=&runId=&title=&gap=
+GET /sources/{sourceId}/transcript.html?start=&end=&runId=&title=&gap=&lang=
+```
+
+The spoken text of a source without timestamps, for accessibility. `text/plain; charset=utf-8`
+(attachment `<name>-transcript.txt`) or a minimal HTML document (`text/html; charset=utf-8`, `lang`
+attribute from the run language or `lang`, `<h1>` when `title` is given, one `<p>` per paragraph).
+
+- **Range:** `start`/`end` are seconds. A segment is included when its *start* lies in `[start, end)`; a segment
+  that began before `start` is left out, one that starts inside and runs past `end` is kept whole, so adjacent
+  ranges do not repeat text. Both optional; `end <= start` or non-numeric/negative values return `400`.
+- **Source of segments:** the active track, or one transcription run (applied or pending) with `runId`
+  (`404` when it does not belong to the source).
+- **Paragraphs:** a pause longer than `gap` seconds (default 2) starts a new paragraph; a paragraph that already has
+  600 characters is closed at the next sentence end. Whitespace is normalised; nothing else is changed (no
+  punctuation added, no speaker labels).
+- An empty range returns `200` with an empty body.
+
 ### Publications
 
-#### Create YouTube Publication
+#### Publish a rendered video (YouTube or Facebook)
+
+```
+POST /projects/{projectId}/publish
+Content-Type: application/json
+
+{ "platform": "FACEBOOK", "privacy": "PUBLIC" }
+
+Response: 202 Accepted   (the Publication row, status QUEUED)
+```
+
+`platform` is `YOUTUBE` (default) or `FACEBOOK`; the `Publication.provider` column holds it. The latest non-preview
+`VIDEO` output is uploaded by the worker. Facebook maps `PUBLIC` to a published Page video and `PRIVATE` to an
+unpublished one (Page admins only); `UNLISTED` returns `400`. `409` when the platform is not set up (no YouTube
+connection, or `FACEBOOK_PAGE_ID`/`FACEBOOK_PAGE_ACCESS_TOKEN` missing), `404` when there is no rendered video.
+`GET /projects/{projectId}` lists `publications` with `status` (`QUEUED`, `UPLOADING`, `COMPLETED`, `FAILED`),
+`externalId` (YouTube video id or Facebook video id) and a readable `error` on failure. See `docs/FACEBOOK_SETUP.md`.
+
+#### Create YouTube Publication (legacy description)
 
 ```
 POST /projects/{projectId}/publications
@@ -411,6 +450,19 @@ Response: 200 OK
   "completedAt": "2024-08-20T12:15:00Z"
 }
 ```
+
+### Facebook Integration
+
+```
+GET /integrations/facebook/status
+
+Response: 200 OK
+{ "configured": true, "pageId": "1234567890", "pageName": "My Church", "graphVersion": "v24.0" }
+```
+
+`configured: false` when the environment has no Page. If the token or Page is unusable, `pageName` is `null` and
+`error` holds a readable message. The token is never returned. There is no connect/disconnect route: the single Page
+comes from `FACEBOOK_PAGE_ID` / `FACEBOOK_PAGE_ACCESS_TOKEN`.
 
 ### YouTube Integration
 
