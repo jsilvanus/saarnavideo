@@ -47,3 +47,4 @@ lerna-debug.log*
 
 # Prisma
 prisma/dev.db
+.next-e2e-*/

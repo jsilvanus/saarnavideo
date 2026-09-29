@@ -54,3 +54,32 @@ jobs:
       - run: npm install
       - run: npx prisma generate
       - run: npm run test:e2e
+
+  e2e-transcription:
+    runs-on: ubuntu-latest
+    env:
+      AUDITOR_STT_URL: http://127.0.0.1:8090
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core espeak-ng
+      - name: Start liturgos-auditor-stt (tiny model, CPU)
+        run: |
+          docker run -d --name auditor-stt -p 8090:8090 \
+            -e AUDITOR_STT_MODEL=tiny -e AUDITOR_STT_DEVICE=cpu -e AUDITOR_STT_COMPUTE_TYPE=int8 \
+            ghcr.io/jsilvanus/liturgos-auditor-stt:latest
+          for i in $(seq 1 90); do
+            curl -fsS "$AUDITOR_STT_URL/health" && exit 0
+            sleep 2
+          done
+          docker logs auditor-stt
+          exit 1
+      - run: npm install
+      - run: npx prisma generate
+      - run: npm run test:e2e:transcription
+      - name: STT service logs
+        if: failure()
+        run: docker logs auditor-stt

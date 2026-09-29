@@ -10,6 +10,8 @@ declare module "vitest" {
     baseUrl: string;
     mediaRoot: string;
     fixturesDir: string;
+    /** Base URL of a running liturgos-auditor-stt service (AUDITOR_STT_URL), or "" when none is configured. */
+    auditorSttUrl: string;
   }
 }
 
@@ -88,13 +90,19 @@ export default async function setup(project: TestProject) {
   makeFixtures(fixturesDir);
 
   const port = await freePort();
-  const env = {
+  const distDir = `.next-e2e-${port}`;
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     DATABASE_URL: `file:${path.join(workDir, "e2e.db")}`,
     MEDIA_ROOT: mediaRoot,
     WORKER_POLL_MS: "500",
     NEXT_TELEMETRY_DISABLED: "1",
+    // Own build directory: another `next dev` in the same checkout would otherwise share .next and break both.
+    NEXT_DIST_DIR: distDir,
   };
+  // The worker's TRANSCRIBE jobs talk to the STT service named here; without it the transcription e2e skips itself.
+  const auditorSttUrl = process.env.AUDITOR_STT_URL?.trim() ?? "";
+  if (auditorSttUrl) env.AUDITOR_STT_URL = auditorSttUrl;
   execFileSync(path.join(BIN, "prisma"), ["db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], { cwd: ROOT, env, stdio: "ignore" });
 
   const server = start(path.join(BIN, "next"), ["dev", "--port", String(port)], env, "next");
@@ -111,10 +119,12 @@ export default async function setup(project: TestProject) {
   project.provide("baseUrl", baseUrl);
   project.provide("mediaRoot", mediaRoot);
   project.provide("fixturesDir", fixturesDir);
+  project.provide("auditorSttUrl", auditorSttUrl);
 
   return async () => {
     stop(server);
     stop(worker);
     if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true });
+    await rm(path.join(ROOT, distDir), { recursive: true, force: true });
   };
 }
