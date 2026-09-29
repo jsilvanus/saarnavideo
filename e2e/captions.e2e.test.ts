@@ -154,7 +154,8 @@ describe("soft captions", () => {
 
   it("rejects invalid caption options", async () => {
     const project = await createProject("Bad captions");
-    await api(`/api/projects/${project.id}/generate`, { method: "POST", json: { captions: { mode: "burn" } } }, 400);
+    await api(`/api/projects/${project.id}/generate`, { method: "POST", json: { captions: { mode: "hard" } } }, 400);
+    await api(`/api/projects/${project.id}/generate`, { method: "POST", json: { captions: { mode: "burn", styleGraphicId: "" } } }, 400);
     await api(`/api/projects/${project.id}/generate`, { method: "POST", json: { captions: { mode: "soft", language: "not a language" } } }, 400);
   });
 });

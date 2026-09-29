@@ -84,7 +84,7 @@ export async function render(projectId: string, type: "VIDEO" | "PREVIEW" = "VID
 
 export async function download(outputId: string, filePath: string) {
   const response = await fetch(`${baseUrl}/api/outputs/${outputId}`);
-  if (!response.ok) throw new Error(`Download ${outputId} -> ${response.status}`);
+  if (!response.ok) throw new Error(`Download ${outputId} -> ${response.status}: ${await response.text()}`);
   await writeFile(filePath, Buffer.from(await response.arrayBuffer()));
 }
 
