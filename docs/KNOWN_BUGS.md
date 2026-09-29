@@ -13,6 +13,14 @@
   the page is mounted.
 - **"Render fast preview" queued a full render.** The UI sends `{ preview: true }`
   but the generate route only read `type`. Covered by `e2e/render.e2e.test.ts`.
+- **Renderer and worker bugs found by the e2e suite** (`e2e/render.e2e.test.ts`):
+  - Multi-clip renders failed: `concat` inputs were ordered video, video, audio,
+    audio instead of interleaved per segment (`src/renderer/ffmpeg.ts`).
+  - The worker crashed on every render: FFmpeg's first progress line is
+    `out_time_ms=N/A`, and `BigInt(NaN)` threw inside a stream handler.
+  - Overlays saved without `opacity` rendered `aa=undefined`; defaults are now applied.
+  - Image overlays and slate background images never terminated (looped input);
+    rich-graphic image layers passed unsupported `w`/`h` options to `overlay`.
 
 ## Open
 

@@ -99,7 +99,9 @@ export async function probe(filePath: string) {
 /** Raw RGB pixels of one frame at `seconds`, optionally cropped to a region of the (unscaled) frame. */
 export async function frameRgb(filePath: string, seconds: number, crop?: { x: number; y: number; w: number; h: number }) {
   const filters = crop ? ["-vf", `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}`] : [];
-  const { stdout } = await execFileAsync("ffmpeg", ["-v", "error", "-ss", String(seconds), "-i", filePath, "-frames:v", "1", ...filters, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+  // `-ss 0` yields no frame for a single image (thumbnail), so only seek when needed.
+  const seek = seconds > 0 ? ["-ss", String(seconds)] : [];
+  const { stdout } = await execFileAsync("ffmpeg", ["-v", "error", ...seek, "-i", filePath, "-frames:v", "1", ...filters, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
   return stdout as Buffer;
 }
 

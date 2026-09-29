@@ -69,8 +69,9 @@ function richLayerFilters(input: string, output: string, layers: RichLayer[], ct
       filters.push(`[${current}]${fillBox(x, y, w, h, `${s.boxColor ?? "black"}@${s.opacity}`)}${enableExpr}[${next}]`);
     } else if (layer.type === "image" && layer.src && ctx.imageIndexByAsset.has(layer.src)) {
       const idx = ctx.imageIndexByAsset.get(layer.src)!;
-      filters.push(`[${idx}:v]format=rgba,colorchannelmixer=aa=${s.opacity}[${next}img]`);
-      filters.push(`[${current}][${next}img]overlay=x=${formatSeconds(x)}:y=${formatSeconds(y)}:w=${formatSeconds(w)}:h=${formatSeconds(h)}${enableExpr}[${next}]`);
+      // overlay has no w/h options, so scale the image first; shortest=1 stops the looped image input from running forever.
+      filters.push(`[${idx}:v]format=rgba,colorchannelmixer=aa=${s.opacity},scale=w=${formatSeconds(w)}:h=${formatSeconds(h)}[${next}img]`);
+      filters.push(`[${current}][${next}img]overlay=x=${formatSeconds(x)}:y=${formatSeconds(y)}:shortest=1${enableExpr}[${next}]`);
     } else if (layer.type === "text" && layer.text) {
       const alignX = s.textAlign === "center" ? `(w-text_w)/2` : s.textAlign === "right" ? `w-text_w-${formatSeconds(ctx.width - x - w)}` : formatSeconds(x);
       const box = s.boxColor ? `:box=1:boxcolor=${s.boxColor}@${s.opacity}:boxborderw=10` : "";
@@ -90,7 +91,8 @@ function slateFilters(inputIndex: number, item: SlateItem, label: string, ctx: R
   const text = item.data.title ?? item.data.text;
   const subtitle = item.data.subtitle;
   const baseLabel = layers.length || text || subtitle ? `${label}base` : label;
-  const filters = [`[${inputIndex}:v]scale=w=${ctx.width}:h=${ctx.height},setsar=1,setpts=PTS-STARTPTS[${baseLabel}]`];
+  // trim bounds a looped background image, which is otherwise an endless stream.
+  const filters = [`[${inputIndex}:v]trim=duration=${formatSeconds(item.durationSeconds)},scale=w=${ctx.width}:h=${ctx.height},setsar=1,setpts=PTS-STARTPTS[${baseLabel}]`];
   if (layers.length) return [...filters, ...richLayerFilters(baseLabel, label, layers, ctx)];
   const font = fontOption(ctx.fontFile);
   let current = baseLabel;
@@ -122,7 +124,8 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
   const items = definition.composition.items;
 
   const baseItems = items.filter((item): item is SourceClipItem | SlateItem => item.type === "source-clip" || (item.type === "slate" && item.mode !== "overlay"));
-  const overlays = items.filter((item): item is OverlayItem => item.type === "overlay");
+  // Definitions are stored as saved by the editor, without schema defaults applied.
+  const overlays = items.filter((item): item is OverlayItem => item.type === "overlay").map((item) => ({ ...item, opacity: item.opacity ?? 1, data: item.data ?? {} }));
   const overlaySlates = items.filter((item): item is SlateItem => item.type === "slate" && item.mode === "overlay");
   if (!baseItems.length) throw new Error("Composition must contain at least one source clip or standalone slate");
 
@@ -187,10 +190,10 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
       filters.push(`[${inVideo}]fade=t=in:st=0:d=${formatSeconds(d)}[${inV}]`);
       filters.push(`[${currentAudio}]afade=t=out:st=${outStart}:d=${formatSeconds(d)}[${outA}]`);
       filters.push(`[${inAudio}]afade=t=in:st=0:d=${formatSeconds(d)}[${inA}]`);
-      filters.push(`[${outV}][${inV}][${outA}][${inA}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
+      filters.push(`[${outV}][${outA}][${inV}][${inA}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
       currentDuration += duration;
     } else {
-      filters.push(`[${currentVideo}][${inVideo}][${currentAudio}][${inAudio}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
+      filters.push(`[${currentVideo}][${currentAudio}][${inVideo}][${inAudio}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
       currentDuration += duration;
     }
     currentVideo = nextVideo;
@@ -212,7 +215,7 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
       const input = imageIndexByAsset.get(item.imageAsset)!;
       const img = `img${overlayCounter}`;
       filters.push(`[${input}:v]format=rgba,colorchannelmixer=aa=${item.opacity}[${img}]`);
-      filters.push(`[${outputVideo}][${img}]overlay=x=${formatSeconds(item.x ?? 0)}:y=${formatSeconds(item.y ?? 0)}${enableBetween(range)}[${next}]`);
+      filters.push(`[${outputVideo}][${img}]overlay=x=${formatSeconds(item.x ?? 0)}:y=${formatSeconds(item.y ?? 0)}:shortest=1${enableBetween(range)}[${next}]`);
     } else {
       const text = item.data.text ?? item.data.title;
       if (!text) continue;
