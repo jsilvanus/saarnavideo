@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { api, createProject, isBlack, isGreen, isRed, probe, regionColor, render, setComposition, uploadSource, whiteShare, frameRgb } from "./helpers";
+import { api, createProject, type Item, isBlack, isGreen, isRed, probe, regionColor, render, setComposition, uploadSource, whiteShare, frameRgb } from "./helpers";
 
 // split.mp4 is 640x360: left half red, right half green. Output 1080x1920: the frame's left half is x 0..539, right half 540..1079.
 const VERTICAL = { width: 1080, height: 1920 };
@@ -7,7 +7,7 @@ const LEFT = { x: 60, y: 300, w: 400, h: 1300 };
 const RIGHT = { x: 620, y: 300, w: 400, h: 1300 };
 const TOP_BAR = { x: 0, y: 20, w: 1080, h: 200 };
 
-const clip = (sourceId: string, extra: Record<string, unknown> = {}) => ({ type: "source-clip", sourceId, startSeconds: 0, endSeconds: 5, ...extra });
+const clip = (sourceId: string, extra: Record<string, unknown> = {}): Item => ({ type: "source-clip", sourceId, startSeconds: 0, endSeconds: 5, ...extra });
 
 async function vertical(items: (sourceId: string) => Array<Record<string, unknown>>, extra: { template?: Record<string, unknown>; sections?: unknown[] } = {}, seconds = 5) {
   const project = await createProject("Reframe");
