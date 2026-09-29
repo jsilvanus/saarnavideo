@@ -101,7 +101,7 @@ describe("rendering through the real API and worker", () => {
   it("composites an uploaded image asset as an overlay", async () => {
     const project = await createProject("Image overlay");
     const green = await uploadSource(project.id, "green.mp4");
-    await uploadAsset(project.id, "blue.png", "logo");
+    await uploadAsset(project.id, "logo.png", "logo");
     await setComposition(project.id, [
       { type: "source-clip", sourceId: green.id, startSeconds: 0, endSeconds: 5 },
       { type: "overlay", kind: "image", imageAsset: "logo", x: 100, y: 100, startSeconds: 0, endSeconds: 5 },

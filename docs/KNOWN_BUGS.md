@@ -37,4 +37,13 @@
 
 ## Open
 
-None known.
+### Asset keys are shared between projects
+
+Uploading identical image bytes reuses the existing library asset, including its
+`assetKey`. If project B uploads the same file as "logo" but project A first
+uploaded it as "blue", B's overlays that refer to `imageAsset: "logo"` do not
+resolve and are silently skipped at render time (graphics that store the
+project asset URL are unaffected). Decide whether keys should be per project
+(a link-level alias) or the upload should report the existing key, and make an
+unresolved key a visible warning. Found via test-order dependence in
+`e2e/render.e2e.test.ts`.

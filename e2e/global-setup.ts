@@ -41,6 +41,8 @@ function makeFixtures(dir: string) {
     ffmpeg(["-f", "lavfi", "-i", `color=c=${color}:s=640x360:r=30:d=5`, "-f", "lavfi", "-i", `sine=frequency=${frequency}:sample_rate=48000:duration=5`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path.join(dir, `${name}.mp4`)]);
   }
   ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=200x200", "-frames:v", "1", path.join(dir, "blue.png")]);
+  // Own bytes for the render test: identical uploads share one library asset (and its key), which made it order-dependent.
+  ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=201x201", "-frames:v", "1", path.join(dir, "logo.png")]);
 }
 
 async function waitForServer(url: string, server: ChildProcess, timeoutMs = 120_000) {
