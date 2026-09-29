@@ -21,21 +21,20 @@
   - Overlays saved without `opacity` rendered `aa=undefined`; defaults are now applied.
   - Image overlays and slate background images never terminated (looped input);
     rich-graphic image layers passed unsupported `w`/`h` options to `overlay`.
+- **Asset library was not reachable from inside a project.** New `AssetPicker`
+  (`src/components/AssetPicker.tsx`) browses the library (folders, search, image/audio
+  filter, thumbnails and audio players, "In this project" badges) and links with one click.
+  Used as "Add from library" in the Graphics tab, "Choose from library" in the graphics
+  editor's image layer picker and "Add from library" in the Voiceover tab. The library page
+  can now rename (validated, 409 on a duplicate name) and delete assets (409 while linked).
+- **Removing an asset from a project could delete it from the library.**
+  `DELETE /api/projects/[id]/assets/[assetId]` now only unlinks. It answers 409 with a
+  `usage` list while the project's definition still refers to the asset (`?force=1` to
+  unlink anyway); the Graphics tab has a "Remove from project" action with that warning.
+- **Graphics editor styles missing** (`GraphicsEditor.tsx`): the scoped `<style jsx>` no
+  longer reached the extracted sub-components (canvas and property panel rendered
+  unstyled); it is now `<style jsx global>`.
 
 ## Open
 
-### Asset library is not reachable from inside a project
-
-The graphics editor's image picker only lists assets linked to the project.
-`POST /api/projects/[id]/assets/[assetId]` links an existing library asset,
-but no UI calls it. The only workaround is to upload the same file again in the
-project's Graphics tab, which deduplicates by content hash and links it. The
-library UI also has no way to delete or rename an asset, although
-`PATCH /api/assets/[id]` supports renaming.
-
-### Removing an asset from a project can delete it from the library
-
-`DELETE /api/projects/[id]/assets/[assetId]` deletes the asset row and file
-when this was the last linked project. An asset uploaded straight into the
-library and then used by a single project disappears from the library. Nothing
-in the UI calls this endpoint yet.
+None known.

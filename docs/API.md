@@ -210,13 +210,34 @@ Response: 200 OK
 }
 ```
 
-#### Delete Asset
+#### Remove Asset from Project (unlink)
 
 ```
-DELETE /projects/{projectId}/assets/{assetId}
+DELETE /projects/{projectId}/assets/{assetId}[?force=1]
 
 Response: 204 No Content
 ```
+
+Only unlinks; the library asset and its file are never deleted here. Answers `409`
+`{ error, usage: string[] }` while the project's definition (graphic layers, composition
+items, podcast intro/outro) still refers to the asset, unless `?force=1`.
+
+#### Link Library Asset
+
+```
+POST /projects/{projectId}/assets/{assetId}
+
+Response: { ok: true, assetId, projectId }
+```
+
+#### Library management (`/assets/{id}`)
+
+```
+PATCH  /assets/{id}   { assetKey?, folderId? }   rename (400 invalid key, 409 name taken) / move
+DELETE /assets/{id}[?force=1]                     204; 409 { error, projectCount } while linked
+```
+
+Deleting removes the row and the content-addressed file (the file only when no other row shares its `storagePath`).
 
 **Usage in Compositions:**
 ```typescript

@@ -183,9 +183,9 @@ Project
 Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB; audio is described under "Voiceover and podcast") live in one global, deduplicated library shared by all projects. The UI is at `/assets` ("Graphics library" link in the root layout, `src/app/assets/page.tsx`).
 
 - **Storage:** content-addressed files at `MEDIA_ROOT/assets/library/<sha256>.<ext>`. `Asset.contentHash` deduplicates: uploading identical bytes again reuses the existing row (the new `assetKey` is ignored) instead of creating a copy.
-- **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. They are removed only through `DELETE /api/projects/[id]/assets/[assetId]` when the last linked project unlinks them.
+- **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. Project removal (`DELETE /api/projects/[id]/assets/[assetId]`) only unlinks (409 with `usage` while the project's definition still uses the asset, `?force=1` overrides). They are removed only explicitly through `DELETE /api/assets/[id]` (409 while linked to projects, `?force=1` overrides; the file is deleted only when no other row shares its `storagePath`). Renaming is `PATCH /api/assets/[id]` (validated with `validateAssetKey`, 409 if another asset has the name). The `/assets` page has Rename/Delete with confirmation and shows "used in N projects".
 - **Folders:** `AssetFolder` is a tree (`parentId`) used only for organisation. The library page supports drag-and-drop moves between folders and breadcrumbs.
-- **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. The graphics editor's image picker lists only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
+- **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. `AssetPicker` (`src/components/AssetPicker.tsx`) browses the whole library and links on pick (`POST /api/projects/[id]/assets/[assetId]`); it is used by "Add from library" (Graphics and Voiceover tabs) and by "Choose from library" in the graphics editor's image layer. The editor's quick list shows only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
 - **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is silently skipped.
 - **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images and audio only. `AUDIO` is set automatically for audio files.
 
@@ -306,7 +306,8 @@ Projects reference templates by key (e.g., "sermon"). Templates define:
 - `GET /api/assets` - List all library assets (with `projectCount`) and folders
 - `POST /api/assets` - Upload an image into the library (multipart: `file`, `assetKey`, optional `type`, `folderId`)
 - `GET /api/assets/[id]` - Serve the image file
-- `PATCH /api/assets/[id]` - Move to a folder (`folderId`) or rename (`assetKey`)
+- `PATCH /api/assets/[id]` - Move to a folder (`folderId`) or rename (`assetKey`, validated; 400 invalid, 409 duplicate)
+- `DELETE /api/assets/[id]` - Delete from the library; 409 while linked to projects unless `?force=1`
 - `GET/POST /api/assets/folders` - List / create folders (`name`, `parentId`)
 - `PATCH /api/assets/folders/[id]` - Rename or move a folder (cycle-checked)
 - `DELETE /api/assets/folders/[id]` - Delete a folder; its assets and subfolders move to the parent
@@ -316,7 +317,7 @@ Projects reference templates by key (e.g., "sermon"). Templates define:
 - `POST /api/projects/[id]/assets` - Upload an image and link it to the project (deduplicated into the library)
 - `GET /api/projects/[id]/assets/[assetId]` - Serve a linked asset (this URL is what graphics store as image `src`)
 - `POST /api/projects/[id]/assets/[assetId]` - Link an existing library asset to the project
-- `DELETE /api/projects/[id]/assets/[assetId]` - Unlink; deletes the asset and file when no other project uses it
+- `DELETE /api/projects/[id]/assets/[assetId]` - Unlink only (never deletes the library asset); 409 with `usage` if still referenced, `?force=1` overrides
 
 ### Jobs
 - `GET /api/projects/[id]/jobs/[jobId]` - Get job status (the 10 latest jobs come with `GET /api/projects/[id]`)
