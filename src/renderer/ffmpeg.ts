@@ -1,5 +1,7 @@
 import type { GraphicCarrierItem, ProjectDefinition, TimelineItem, Transition } from "@/domain/project";
 
+export type CaptionTrackInput = { path: string; language: string };
+export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput };
 export type FfmpegPlan = { sourcePaths: Map<string, string>; assetPaths?: Map<string, string>; outputPath: string; args: string[] };
 
 type SourceClipItem = Extract<TimelineItem, { type: "source-clip" }>;
@@ -24,7 +26,7 @@ function centeredText(input: string, output: string, text: string, color: string
   return `[${input}]drawtext=text='${escapeFilterText(text)}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=${y}${extra}[${output}]`;
 }
 
-function transitionDuration(transition: Transition | undefined, duration: number): number {
+export function transitionDuration(transition: Transition | undefined, duration: number): number {
   if (!transition || transition.type === "cut" || transition.durationSeconds <= 0) return 0;
   return Math.min(transition.durationSeconds, duration / 2);
 }
@@ -114,7 +116,7 @@ function overlayTextFilter(input: string, output: string, text: string, item: Ov
   return `[${input}]drawtext=text='${escapeFilterText(text)}':fontcolor=${color}:fontsize=${fontSize}:x=${x}:y=${y}${box}${enableBetween({ start: item.startSeconds, end: item.endSeconds })}${fontOption(fontFile)}[${output}]`;
 }
 
-export function buildCompositionRenderPlan(definition: ProjectDefinition, sourcePaths: Map<string, string>, outputPath: string, assetPaths?: Map<string, string>): FfmpegPlan {
+export function buildCompositionRenderPlan(definition: ProjectDefinition, sourcePaths: Map<string, string>, outputPath: string, assetPaths?: Map<string, string>, options: RenderPlanOptions = {}): FfmpegPlan {
   const template = definition.template;
   const width = template?.width ?? 1920;
   const height = template?.height ?? 1080;
@@ -250,20 +252,26 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     outputVideo = next;
   }
 
-  args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS, outputPath);
+  args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS);
+  if (options.captions) {
+    // Added after the video/audio maps so callers that patch the first -map (previews) keep working.
+    args.splice(args.indexOf("-filter_complex"), 0, "-i", options.captions.path);
+    args.push("-map", `${nextInput}:0`, "-c:s", "mov_text", "-metadata:s:s:0", `language=${options.captions.language}`);
+  }
+  args.push(outputPath);
   return { sourcePaths, assetPaths, outputPath, args };
 }
 
-export function buildSourceRenderPlan(definition: ProjectDefinition, inputPathOrSourcePaths: string | Map<string, string>, outputPath: string, assetPaths?: Map<string, string>): FfmpegPlan {
+export function buildSourceRenderPlan(definition: ProjectDefinition, inputPathOrSourcePaths: string | Map<string, string>, outputPath: string, assetPaths?: Map<string, string>, options: RenderPlanOptions = {}): FfmpegPlan {
   const hasItems = definition.composition.items.length > 0;
   if (inputPathOrSourcePaths instanceof Map) {
-    if (hasItems) return buildCompositionRenderPlan(definition, inputPathOrSourcePaths, outputPath, assetPaths);
+    if (hasItems) return buildCompositionRenderPlan(definition, inputPathOrSourcePaths, outputPath, assetPaths, options);
     const legacyPath = inputPathOrSourcePaths.get("legacy-source") ?? inputPathOrSourcePaths.values().next().value;
     if (!legacyPath) throw new Error("No source path available for legacy render");
-    return buildSourceRenderPlan(definition, legacyPath, outputPath, assetPaths);
+    return buildSourceRenderPlan(definition, legacyPath, outputPath, assetPaths, options);
   }
   const sourcePaths = new Map([["legacy-source", inputPathOrSourcePaths]]);
-  if (hasItems) return buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths);
+  if (hasItems) return buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, options);
   const start = definition.composition.sourceStartSeconds ?? 0;
   const end = definition.composition.sourceEndSeconds ?? 0;
   return {

@@ -1,4 +1,4 @@
-import { buildSourceRenderPlan, type FfmpegPlan } from "@/renderer/ffmpeg";
+import { buildSourceRenderPlan, type FfmpegPlan, type RenderPlanOptions } from "@/renderer/ffmpeg";
 import type { Graphic, GraphicCarrierItem, ProjectDefinition } from "@/domain/project";
 
 function withGraphicLayers(item: GraphicCarrierItem, graphic: Graphic): GraphicCarrierItem {
@@ -24,6 +24,7 @@ export function buildCompositionRenderPlan(
   sourcePaths: Map<string, string>,
   outputPath: string,
   assetPaths?: Map<string, string>,
+  options?: RenderPlanOptions,
 ): FfmpegPlan {
-  return buildSourceRenderPlan(materializeGraphics(definition), sourcePaths, outputPath, assetPaths);
+  return buildSourceRenderPlan(materializeGraphics(definition), sourcePaths, outputPath, assetPaths, options);
 }

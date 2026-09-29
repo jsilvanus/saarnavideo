@@ -357,3 +357,29 @@ describe("buildSourceRenderPlan (legacy backward compatibility)", () => {
     expect(plan.args).toContain("-filter_complex");
   });
 });
+
+describe("soft caption track", () => {
+  const definition = { ...base, composition: { ...baseComposition, items: [
+    { type: "source-clip" as const, sourceId: "a", startSeconds: 0, endSeconds: 5 },
+    { type: "slate" as const, template: "rich", mode: "standalone" as const, durationSeconds: 2, data: { title: "Hi" } },
+  ] } };
+  const sources = new Map([["a", "/tmp/a.mp4"]]);
+
+  it("adds the subtitle file as the last input and muxes it as mov_text after the video/audio maps", () => {
+    const { args } = buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4", undefined, { captions: { path: "/tmp/c.srt", language: "fin" } });
+    const inputs = args.flatMap((arg, i) => (arg === "-i" ? [args[i + 1]] : []));
+    const captionInput = inputs.indexOf("/tmp/c.srt");
+    expect(captionInput).toBe(inputs.length - 1);
+    expect(args.indexOf("/tmp/c.srt")).toBeLessThan(args.indexOf("-filter_complex"));
+    const maps = args.flatMap((arg, i) => (arg === "-map" ? [args[i + 1]] : []));
+    expect(maps).toHaveLength(3);
+    expect(maps[2]).toBe(`${captionInput}:0`);
+    expect(args.slice(args.indexOf("-c:s"))).toEqual(["-c:s", "mov_text", "-metadata:s:s:0", "language=fin", "/tmp/out.mp4"]);
+  });
+
+  it("changes nothing without caption options", () => {
+    const withOptions = buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4", undefined, {}).args;
+    expect(withOptions).toEqual(buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4").args);
+    expect(withOptions).not.toContain("mov_text");
+  });
+});
