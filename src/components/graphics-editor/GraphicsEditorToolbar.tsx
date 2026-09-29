@@ -12,6 +12,7 @@ export const GraphicsEditorToolbar: FC<{
     <button onClick={() => onAdd("rect")}>＋ Rectangle</button>
     <button onClick={() => onAdd("ellipse")}>＋ Ellipse</button>
     <button onClick={() => onAdd("image")}>＋ Image</button>
+    <button onClick={() => onAdd("caption")} title="Placeholder for burned-in captions: position, size, font, colours and box are used when captions are burned into a video">＋ Caption</button>
     <span className="ge-spacer" />
     <button onClick={onDuplicate}>Duplicate</button>
     <button onClick={onDelete}>Delete</button>

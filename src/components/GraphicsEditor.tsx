@@ -7,6 +7,7 @@ import { GraphicsEditorCanvas } from "./graphics-editor/GraphicsEditorCanvas";
 import { GraphicsEditorProperties } from "./graphics-editor/GraphicsEditorProperties";
 import { resizeLayer, snap } from "./graphics-editor/geometry";
 import type { Asset, Item, Layer } from "./graphics-editor/types";
+import { createCaptionLayer } from "@/domain/caption-style";
 
 /** Parses a serialised layer list; undefined when missing or not a valid array (old/simple graphic). */
 export function parseLayers<T = Layer>(raw: string | undefined): T[] | undefined {
@@ -48,7 +49,7 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
 
   function updateLayer(id: string, patch: Partial<Layer>) { const next = layers.map(l => l.id === id ? { ...l, ...patch } : l); commit(next); }
   function updateStyle(id: string, key: string, value: string | number) { const l = layers.find(x => x.id === id); if (!l) return; const style = { ...(l.style ?? {}) }; if (value === "") delete style[key]; else style[key] = value; updateLayer(id, { style }); }
-  function addLayer(type: Layer["type"]) { const id = `${type}-${Date.now()}`; const base: Layer = type === "text" ? { id, type, x: 220, y: 360, width: 1480, height: 160, text: "Text", style: { "font-size": "72px", color: "#ffffff", "font-weight": "700", "text-align": "center" } } : type === "image" ? { id, type, x: 460, y: 300, width: 1000, height: 560 } : { id, type, x: 460, y: 320, width: 1000, height: 440, style: { background: type === "ellipse" ? "#ffffff" : "#000000" } }; commit([...layers, base]); selectOnly(id); }
+  function addLayer(type: Layer["type"]) { const id = `${type}-${Date.now()}`; const base: Layer = type === "caption" ? createCaptionLayer(id) as Layer : type === "text" ? { id, type, x: 220, y: 360, width: 1480, height: 160, text: "Text", style: { "font-size": "72px", color: "#ffffff", "font-weight": "700", "text-align": "center" } } : type === "image" ? { id, type, x: 460, y: 300, width: 1000, height: 560 } : { id, type, x: 460, y: 320, width: 1000, height: 440, style: { background: type === "ellipse" ? "#ffffff" : "#000000" } }; commit([...layers, base]); selectOnly(id); }
   function removeSelected() { if (!selectedIds.size) return; const next = layers.filter(l => !selectedIds.has(l.id)); commit(next); selectOnly(next[0]?.id); }
   function duplicateSelected() { const selected = layers.filter(l => selectedIds.has(l.id)); if (!selected.length) return; const copies = selected.map(l => ({ ...l, id: `${l.type}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, x: l.x + 30, y: l.y + 30 })); commit([...layers, ...copies]); setSelectedIds(new Set(copies.map(l => l.id))); setPrimaryId(copies[0].id); }
 
