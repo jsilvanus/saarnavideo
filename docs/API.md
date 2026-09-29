@@ -251,7 +251,7 @@ Content-Type: application/json
 {
   "allowClamping": false,
   "preview": false,
-  "captions": { "mode": "none" | "soft", "language": "fi" }   // optional; default { "mode": "none" }
+  "captions": { "mode": "none" | "soft" | "burn" | "both", "language": "fi", "styleGraphicId": "graphic-id" }   // optional; default { "mode": "none" }
 }
 
 Response: 202 Accepted
@@ -354,6 +354,16 @@ language of the source's applied transcription run. If there are no active segme
 composition the render succeeds without a track and a `WARN` job log is written. Invalid options
 return `400`. When such a video is published to YouTube, the SRT sidecar is uploaded as a caption
 track afterwards (failures are logged and do not fail the publication).
+
+`captions.mode = "burn"` draws the same output-timeline cues into the picture (after overlays and slates,
+before the preview downscale, so previews show proportionally scaled captions) and creates no caption
+outputs or track. `"both"` burns them in and also produces the soft track and the SRT/VTT outputs.
+`styleGraphicId` (only with `burn`/`both`) names a graphic of the project that contains a layer of type
+`caption`; its box position/size, font, colours, alignment, background box, outline/shadow and `max-lines`
+control the look. Without it the built-in default (bottom centre, white bold text on a semi-transparent
+box, two lines) is used. Long cues are word-wrapped to the box and split into pages of at most `max-lines`
+lines. Returns `400` when the graphic does not exist in the project or has no caption layer. Requires
+ffmpeg with libass. See `docs/GRAPHIC_PACKAGE.md` for the caption layer.
 
 ### Publications
 
