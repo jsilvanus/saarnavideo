@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
 import { captionOptionsSchema, wantsBurnedCaptions } from "@/domain/captions";
 import { podcastSettingsSchema } from "@/domain/project";
+import { validateRenderSettings } from "@/domain/render-settings";
+import { computeDurationReport } from "@/lib/duration-report";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
 
 function findDurationViolations(definition: unknown, sources: Array<{ id: string; durationMs: number | null }>) {
@@ -21,6 +23,11 @@ function clampDefinition(definition: unknown, sources: Array<{ id: string; durat
   return cloned;
 }
 
+/** Length warnings for the response; never blocks the render, and a malformed definition just yields none. */
+function durationWarnings(definition: Parameters<typeof computeDurationReport>[0]) {
+  try { return computeDurationReport(definition).warnings; } catch { return []; }
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
@@ -33,6 +40,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!["VIDEO", "PREVIEW", "THUMBNAIL", "PODCAST"].includes(type)) return jsonError("Unknown generation type", 400);
     const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, storagePath: true, youtubeVideoId: true, youtubeUrl: true, durationMs: true, referenceDurationMs: true } } } });
     if (!project) return jsonError("Project not found", 404);
+    const settingsIssues = validateRenderSettings(project.definition);
+    if (settingsIssues.length) return NextResponse.json({ error: settingsIssues.join(" "), issues: settingsIssues }, { status: 400 });
     const pending = project.sources.filter(source => source.status === "PENDING");
     if (pending.length) return NextResponse.json({ error: "Upload pending local sources before generating.", pendingSources: pending.map(source => ({ id: source.id, originalName: source.originalName })) }, { status: 409 });
     if (captions.data.styleGraphicId && wantsBurnedCaptions(captions.data)) {
@@ -64,6 +73,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const firstSourceId = [...referencedIds][0];
     const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, captions: type === "THUMBNAIL" || type === "PODCAST" ? undefined : captions.data, podcast: type === "PODCAST" ? podcast.data : undefined, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
     if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id, parameters: { renderDefinition } }, select: { id: true } });
-    return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0 });
+    return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0, durationWarnings: durationWarnings((renderDefinition ?? {}) as Parameters<typeof computeDurationReport>[0]) });
   } catch (error) { console.error("Media job queue error:", error); return jsonError(error instanceof Error ? error.message : "Could not queue media job", 500); }
 }

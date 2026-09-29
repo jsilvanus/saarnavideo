@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { validateRenderSettings } from "@/domain/render-settings";
 import { jsonError, jsonSafe } from "@/app/api/_lib/http";
 
 const patchSchema = z.object({
@@ -27,6 +28,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   try {
     const input = patchSchema.parse(await request.json());
+    const settingsIssues = validateRenderSettings(input.definition);
+    if (settingsIssues.length) return jsonError(settingsIssues.join(" "), 400);
     const data = Object.fromEntries(Object.entries(input).filter(([_, value]) => value !== undefined)) as Partial<typeof input>;
     const project = await prisma.project.update({ where: { id }, data, select: { id: true, title: true, preacher: true, gospelRef: true, gospelText: true, templateKey: true, definition: true, updatedAt: true } });
     return NextResponse.json(jsonSafe(project));

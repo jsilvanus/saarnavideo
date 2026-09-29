@@ -458,3 +458,70 @@ describe("audio clips", () => {
     expect(() => build([clipItem, { ...voice, mode: "mix" }], new Map())).toThrow(/Missing audio asset/);
   });
 });
+
+describe("output size and reframing", () => {
+  const graph = (definition: Record<string, unknown>) => {
+    const plan = buildCompositionRenderPlan(
+      { ...base, ...definition } as never,
+      new Map([["a", "/tmp/a.mp4"]]),
+      "/tmp/out.mp4",
+    );
+    return plan.args[plan.args.indexOf("-filter_complex") + 1];
+  };
+  const clipDef = (template: Record<string, unknown> | undefined, extra: Record<string, unknown> = {}) => ({
+    template: template && { key: "t", fps: 30, backgroundColor: "navy", textColor: "white", ...template },
+    composition: { ...baseComposition, items: [{ type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 5, ...extra }] },
+  });
+
+  it("uses the template size instead of 1920x1080 for source clips", () => {
+    const filters = graph(clipDef({ width: 1080, height: 1920 }));
+    expect(filters).toContain("scale=w=1080:h=1920:force_original_aspect_ratio=increase,crop=1080:1920");
+    expect(filters).not.toContain("1920:h=1080");
+  });
+
+  it("crops the chosen rectangle before covering the frame", () => {
+    const filters = graph(clipDef({ width: 1080, height: 1920 }, { reframe: { mode: "custom", fitBackground: "blur", crop: { x: 0.1, y: 0, w: 0.3164, h: 1 } } }));
+    expect(filters).toContain("crop=w=trunc(iw*0.316/2)*2:h=trunc(ih*1/2)*2:x=trunc(iw*0.1/2)*2:y=trunc(ih*0/2)*2,scale=w=1080:h=1920");
+  });
+
+  it("letterboxes with the template colour or a blurred copy", () => {
+    const color = graph(clipDef({ width: 1080, height: 1920 }, { reframe: { mode: "fit", fitBackground: "color" } }));
+    expect(color).toContain("force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=navy");
+    const blur = graph(clipDef({ width: 1080, height: 1920 }, { reframe: { mode: "fit", fitBackground: "blur" } }));
+    expect(blur).toContain("split=2[v0bgs][v0fgs]");
+    expect(blur).toContain("gblur");
+    expect(blur).toContain("overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2,setsar=1[v0]");
+  });
+
+  it("takes the reframe of the section a clip was made from, and lets the clip override it", () => {
+    const sections = [{ id: "s", label: "S", scope: "SOURCE", origin: "MANUAL", sourceId: "a", startSeconds: 0, endSeconds: 10, reframe: { mode: "fit", fitBackground: "color" } }];
+    expect(graph({ ...clipDef({ width: 1080, height: 1080 }), sections })).toContain("pad=1080:1080");
+    expect(graph({ ...clipDef({ width: 1080, height: 1080 }, { reframe: { mode: "fill", fitBackground: "blur" } }), sections })).not.toContain("pad=");
+  });
+
+  it("scales rich graphic layers and legacy overlays from the 1920x1080 canvas to the output", () => {
+    const layers = JSON.stringify([{ type: "rect", x: 192, y: 108, width: 960, height: 540, style: { background: "red" } }, { type: "text", text: "Hi", x: 0, y: 540, style: { "font-size": 100 } }]);
+    const filters = graph({
+      ...clipDef({ width: 960, height: 540 }),
+      composition: { ...baseComposition, items: [
+        { type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 5 },
+        { type: "overlay", kind: "text", startSeconds: 0, endSeconds: 5, x: 200, y: 100, data: { text: "T", fontSize: "60" } },
+        { type: "overlay", template: "rich", kind: "text", startSeconds: 0, endSeconds: 5, data: { layers } },
+      ] },
+    });
+    expect(filters).toContain("drawtext=text='T':fontcolor=white@1:fontsize=30:x=100:y=50");
+    expect(filters).toContain("drawbox=x=96:y=54:w=480:h=270");
+    expect(filters).toContain("fontsize=50:x=0:y=270");
+  });
+
+  it("does not scale anything at 1920x1080", () => {
+    const filters = graph({
+      ...clipDef({ width: 1920, height: 1080 }),
+      composition: { ...baseComposition, items: [
+        { type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 5 },
+        { type: "overlay", kind: "text", startSeconds: 0, endSeconds: 5, x: 200, y: 100, data: { text: "T", fontSize: "60" } },
+      ] },
+    });
+    expect(filters).toContain("fontsize=60:x=200:y=100");
+  });
+});

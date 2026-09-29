@@ -1,3 +1,5 @@
+import { DESIGN_CANVAS } from "@/domain/output-presets";
+import { resolveReframe, type Reframe } from "@/domain/reframe";
 import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem, type Transition } from "@/domain/project";
 
 export type CaptionTrackInput = { path: string; language: string };
@@ -32,7 +34,33 @@ export function transitionDuration(transition: Transition | undefined, duration:
   if (!transition || transition.type === "cut" || transition.durationSeconds <= 0) return 0;
   return Math.min(transition.durationSeconds, duration / 2);
 }
-function sourceVideoFilter(inputIndex: number, start: number, duration: number, label: string): string { return `[${inputIndex}:v]trim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)},scale=w=1920:h=1080,setsar=1,setpts=PTS-STARTPTS[${label}]`; }
+const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+
+/**
+ * Filter chain(s) that trim a source and fit its picture into the `width` x `height` frame per `reframe`:
+ * fill (cover + centre crop), custom (crop the chosen rectangle, then cover) or fit (contain, bars filled with `bars`
+ * or a blurred enlarged copy). The output frame size is exact in every mode; the source size is never needed up front.
+ */
+export function sourceVideoFilters(inputIndex: number, start: number, duration: number, label: string, frame: { width: number; height: number; bars?: string }, reframe: Reframe): string[] {
+  const { width: W, height: H } = frame;
+  const trimmed = `[${inputIndex}:v]trim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)},setpts=PTS-STARTPTS`;
+  const cover = `scale=w=${W}:h=${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;
+  if (reframe.mode === "fit") {
+    const contain = `scale=w=${W}:h=${H}:force_original_aspect_ratio=decrease:force_divisible_by=2`;
+    if (reframe.fitBackground === "color") return [`${trimmed},${contain},pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${frame.bars ?? "black"},setsar=1[${label}]`];
+    const bw = even(W / 4), bh = even(H / 4);
+    return [
+      `${trimmed},split=2[${label}bgs][${label}fgs]`,
+      `[${label}bgs]scale=w=${bw}:h=${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=6,scale=${W}:${H}[${label}bgb]`,
+      `[${label}fgs]${contain}[${label}fgf]`,
+      `[${label}bgb][${label}fgf]overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2,setsar=1[${label}]`,
+    ];
+  }
+  const crop = reframe.mode === "custom" && reframe.crop
+    ? `crop=w=trunc(iw*${formatSeconds(reframe.crop.w)}/2)*2:h=trunc(ih*${formatSeconds(reframe.crop.h)}/2)*2:x=trunc(iw*${formatSeconds(reframe.crop.x)}/2)*2:y=trunc(ih*${formatSeconds(reframe.crop.y)}/2)*2,`
+    : "";
+  return [`${trimmed},${crop}${cover},setsar=1[${label}]`];
+}
 /** Audio of an audio-clip, trimmed to its window and padded/cut to exactly `duration` so concat stays in sync with the picture. */
 export function audioClipFilter(inputIndex: number, item: AudioClipItem, label: string, duration = item.endSeconds - item.startSeconds): string {
   const volume = item.volume !== undefined && item.volume !== 1 ? `volume=${formatSeconds(item.volume)},` : "";
@@ -71,10 +99,10 @@ function richLayers(item: GraphicCarrierItem): RichLayer[] {
   }
 }
 
-function layerStyle(layer: RichLayer) {
+function layerStyle(layer: RichLayer, sizeFactor = 1) {
   const style = layer.style ?? {};
   return {
-    fontSize: Number.parseFloat(String(style["font-size"] ?? 48)),
+    fontSize: Math.round(Number.parseFloat(String(style["font-size"] ?? 48)) * sizeFactor * 100) / 100,
     color: String(style.color ?? "white"),
     textAlign: String(style["text-align"] ?? "left"),
     opacity: Number(style.opacity ?? 1),
@@ -82,7 +110,7 @@ function layerStyle(layer: RichLayer) {
   };
 }
 
-type RichContext = { width: number; height: number; textColor: string; imageIndexByAsset: Map<string, number>; counter: { value: number }; fontFile?: string };
+type RichContext = { width: number; height: number; /** Output size relative to the 1920x1080 canvas graphics are authored on: positions scale per axis, sizes by the smaller factor. */ sx: number; sy: number; sf: number; textColor: string; imageIndexByAsset: Map<string, number>; counter: { value: number }; fontFile?: string };
 
 function richLayerFilters(input: string, output: string, layers: RichLayer[], ctx: RichContext, enable?: TimeRange): string[] {
   const filters: string[] = [];
@@ -90,11 +118,11 @@ function richLayerFilters(input: string, output: string, layers: RichLayer[], ct
   let current = input;
   for (const layer of layers) {
     const next = `${output}_${ctx.counter.value++}`;
-    const x = Number(layer.x ?? 0);
-    const y = Number(layer.y ?? 0);
-    const w = Number(layer.width ?? ctx.width);
-    const h = Number(layer.height ?? ctx.height);
-    const s = layerStyle(layer);
+    const x = Number(layer.x ?? 0) * ctx.sx;
+    const y = Number(layer.y ?? 0) * ctx.sy;
+    const w = layer.width === undefined ? ctx.width : Number(layer.width) * ctx.sx;
+    const h = layer.height === undefined ? ctx.height : Number(layer.height) * ctx.sy;
+    const s = layerStyle(layer, ctx.sf);
     if (layer.type === "rect" || layer.type === "ellipse") {
       filters.push(`[${current}]${fillBox(x, y, w, h, `${s.boxColor ?? "black"}@${s.opacity}`)}${enableExpr}[${next}]`);
     } else if (layer.type === "image" && layer.src && ctx.imageIndexByAsset.has(layer.src)) {
@@ -104,7 +132,7 @@ function richLayerFilters(input: string, output: string, layers: RichLayer[], ct
       filters.push(`[${current}][${next}img]overlay=x=${formatSeconds(x)}:y=${formatSeconds(y)}:shortest=1${enableExpr}[${next}]`);
     } else if (layer.type === "text" && layer.text) {
       const alignX = s.textAlign === "center" ? `(w-text_w)/2` : s.textAlign === "right" ? `w-text_w-${formatSeconds(ctx.width - x - w)}` : formatSeconds(x);
-      const box = s.boxColor ? `:box=1:boxcolor=${s.boxColor}@${s.opacity}:boxborderw=10` : "";
+      const box = s.boxColor ? `:box=1:boxcolor=${s.boxColor}@${s.opacity}:boxborderw=${formatSeconds(10 * ctx.sf)}` : "";
       const color = s.color || ctx.textColor;
       filters.push(`[${current}]drawtext=text='${escapeFilterText(layer.text)}':fontcolor=${color}:fontsize=${s.fontSize}:x=${alignX}:y=${formatSeconds(y)}:fontcolor_expr='${color}'${box}${fontOption(ctx.fontFile)}${enableExpr}[${next}]`);
     } else {
@@ -135,12 +163,13 @@ function slateFilters(inputIndex: number, item: SlateItem, label: string, ctx: R
   return filters;
 }
 
-function overlayTextFilter(input: string, output: string, text: string, item: OverlayItem, textColor: string, fontFile?: string): string {
-  const fontSize = Number(item.data.fontSize ?? 48);
+function overlayTextFilter(input: string, output: string, text: string, item: OverlayItem, textColor: string, ctx: RichContext): string {
+  const fontFile = ctx.fontFile;
+  const fontSize = Math.round(Number(item.data.fontSize ?? 48) * ctx.sf);
   const color = item.data.color ?? `${textColor}@${item.opacity}`;
-  const x = item.x === undefined ? "(w-text_w)/2" : formatSeconds(item.x);
-  const y = item.y === undefined ? "(h-text_h)/2" : formatSeconds(item.y);
-  const box = item.data.boxColor ? `:box=1:boxcolor=${item.data.boxColor}:boxborderw=${item.data.boxBorderWidth ?? 20}` : "";
+  const x = item.x === undefined ? "(w-text_w)/2" : formatSeconds(item.x * ctx.sx);
+  const y = item.y === undefined ? "(h-text_h)/2" : formatSeconds(item.y * ctx.sy);
+  const box = item.data.boxColor ? `:box=1:boxcolor=${item.data.boxColor}:boxborderw=${formatSeconds(Number(item.data.boxBorderWidth ?? 20) * ctx.sf)}` : "";
   return `[${input}]drawtext=text='${escapeFilterText(text)}':fontcolor=${color}:fontsize=${fontSize}:x=${x}:y=${y}${box}${enableBetween({ start: item.startSeconds, end: item.endSeconds })}${fontOption(fontFile)}[${output}]`;
 }
 
@@ -183,7 +212,8 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     args.push("-loop", "1", "-i", assetPaths.get(key)!);
   }
 
-  const ctx: RichContext = { width, height, textColor, imageIndexByAsset, counter: { value: 0 }, fontFile: template?.fontFile };
+  const sx = width / DESIGN_CANVAS.width, sy = height / DESIGN_CANVAS.height;
+  const ctx: RichContext = { width, height, sx, sy, sf: Math.min(sx, sy), textColor, imageIndexByAsset, counter: { value: 0 }, fontFile: template?.fontFile };
   const filters: string[] = [];
   const durations = baseItems.map(baseItemDuration);
   const audioAssetPath = (item: AudioClipItem) => {
@@ -196,7 +226,7 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     const v = `v${index}`, a = `a${index}`;
     if (item.type === "source-clip") {
       const input = sourceIndexMap.get(item.sourceId)!;
-      filters.push(sourceVideoFilter(input, item.startSeconds, duration, v), sourceAudioFilter(input, item.startSeconds, duration, a));
+      filters.push(...sourceVideoFilters(input, item.startSeconds, duration, v, { width, height, bars: backgroundColor }, resolveReframe(item, definition.sections, template?.reframe)), sourceAudioFilter(input, item.startSeconds, duration, a));
       return;
     }
     const video = nextInput++;
@@ -257,16 +287,17 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
       filters.push(...richLayerFilters(outputVideo, next, layers, ctx, range));
     } else if (item.kind === "rectangle") {
       const color = item.color ?? item.data.color ?? "black";
-      filters.push(`[${outputVideo}]${fillBox(item.x ?? 0, item.y ?? 0, item.width ?? width, item.height ?? height, `${color}@${item.opacity}`)}${enableBetween(range)}[${next}]`);
+      filters.push(`[${outputVideo}]${fillBox((item.x ?? 0) * sx, (item.y ?? 0) * sy, item.width === undefined ? width : item.width * sx, item.height === undefined ? height : item.height * sy, `${color}@${item.opacity}`)}${enableBetween(range)}[${next}]`);
     } else if (item.kind === "image" && item.imageAsset && imageIndexByAsset.has(item.imageAsset)) {
       const input = imageIndexByAsset.get(item.imageAsset)!;
       const img = `img${overlayCounter}`;
-      filters.push(`[${input}:v]format=rgba,colorchannelmixer=aa=${item.opacity}[${img}]`);
-      filters.push(`[${outputVideo}][${img}]overlay=x=${formatSeconds(item.x ?? 0)}:y=${formatSeconds(item.y ?? 0)}:shortest=1${enableBetween(range)}[${next}]`);
+      const imageScale = ctx.sf === 1 ? "" : `,scale=w=iw*${formatSeconds(ctx.sf)}:h=ih*${formatSeconds(ctx.sf)}`;
+      filters.push(`[${input}:v]format=rgba,colorchannelmixer=aa=${item.opacity}${imageScale}[${img}]`);
+      filters.push(`[${outputVideo}][${img}]overlay=x=${formatSeconds((item.x ?? 0) * sx)}:y=${formatSeconds((item.y ?? 0) * sy)}:shortest=1${enableBetween(range)}[${next}]`);
     } else {
       const text = item.data.text ?? item.data.title;
       if (!text) continue;
-      filters.push(overlayTextFilter(outputVideo, next, text, item, textColor, ctx.fontFile));
+      filters.push(overlayTextFilter(outputVideo, next, text, item, textColor, ctx));
     }
     outputVideo = next;
   }

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { graphicSchema, type Graphic } from "@/domain/graphics";
 import { sectionSchema, type Section } from "@/domain/sections";
+import { reframeSchema } from "@/domain/reframe";
+import { evenDimension } from "@/domain/output-presets";
 
 export const transitionSchema = z.object({
   type: z.enum(["cut", "fade", "crossfade"]),
@@ -15,7 +17,7 @@ const sourceClipFields = {
   transitionIn: transitionSchema.optional(),
 };
 
-export const sourceClipSchema = z.object({ type: z.literal("source-clip"), sourceId: z.string().min(1), ...sourceClipFields }).refine(...endAfterStart);
+export const sourceClipSchema = z.object({ type: z.literal("source-clip"), sourceId: z.string().min(1), reframe: reframeSchema.optional(), ...sourceClipFields }).refine(...endAfterStart);
 
 export const overlaySchema = z.object({
   type: z.literal("overlay"),
@@ -91,8 +93,15 @@ export const compositionSchema = z.object({
 
 export const templateSchema = z.object({
   key: z.string().min(1),
-  width: z.number().int().positive().default(1920),
-  height: z.number().int().positive().default(1080),
+  /** Output size in pixels (even numbers). Graphics and caption styles are authored at 1920x1080 and scaled to it. */
+  width: evenDimension.default(1920),
+  height: evenDimension.default(1080),
+  /** Key of the chosen output preset (see output-presets.ts); informational, width/height are what renders. */
+  presetKey: z.string().optional(),
+  /** Length the editor is aiming for; the duration notifier warns when the composition drifts away from it. */
+  targetSeconds: z.number().positive().optional(),
+  /** Project default for fitting source pictures into the frame; sections and clips can override it. */
+  reframe: reframeSchema.optional(),
   fps: z.number().positive().default(30),
   fontFile: z.string().optional(),
   backgroundColor: z.string().default("black"),
