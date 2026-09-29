@@ -24,11 +24,13 @@ export function snap(v: number) { return Math.round(v / GRID) * GRID; }
 export function layerStyle(l: Layer, selected: boolean): CSSProperties {
   const style = l.style ?? {};
   const css: CSSProperties = {};
-  for (const [key, value] of Object.entries(style)) (css as Record<string, unknown>)[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
+  // "max-lines" and "vertical-align" configure caption layers; they are not CSS for the preview box.
+  for (const [key, value] of Object.entries(style)) if (key !== "max-lines" && key !== "vertical-align") (css as Record<string, unknown>)[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
   return {
     position: "absolute", left: l.x, top: l.y, width: l.width, height: l.height,
     boxSizing: "border-box", userSelect: "none", cursor: "move", outline: selected ? "3px solid #38bdf8" : undefined,
     animation: l.animation || undefined, transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
+    ...(l.type === "caption" ? { border: "2px dashed rgba(255,255,255,.55)", lineHeight: 1.2 } : {}),
     ...css,
   };
 }
@@ -39,3 +41,14 @@ export function parsePx(value: unknown, fallback = 0) {
 }
 
 export function styleValue(l: Layer, key: string, fallback = "") { return String(l.style?.[key] ?? fallback); }
+
+/** Flex alignment of a caption layer's sample text inside its box, from text-align / vertical-align. */
+export function captionAlignment(l: Layer): { justifyContent: string; alignItems: string; textAlign: "left" | "center" | "right" } {
+  const align = String(l.style?.["text-align"] ?? "center");
+  const vertical = String(l.style?.["vertical-align"] ?? "bottom");
+  return {
+    justifyContent: align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center",
+    alignItems: vertical === "top" ? "flex-start" : vertical === "middle" ? "center" : "flex-end",
+    textAlign: align === "left" || align === "right" ? align : "center",
+  };
+}

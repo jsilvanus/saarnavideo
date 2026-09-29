@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const graphicLayerSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(["text", "rect", "ellipse", "image"]),
+  type: z.enum(["text", "rect", "ellipse", "image", "caption"]),
   x: z.number().default(0),
   y: z.number().default(0),
   width: z.number().positive().default(100),

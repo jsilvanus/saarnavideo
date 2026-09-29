@@ -4,7 +4,7 @@ export type Asset = { id: string; assetKey: string; type: string; mimeType?: str
 export type GraphicKind = "slate" | "overlay";
 export type Layer = {
   id: string;
-  type: "text" | "rect" | "ellipse" | "image";
+  type: "text" | "rect" | "ellipse" | "image" | "caption";
   x: number; y: number; width: number; height: number;
   rotation?: number; text?: string; src?: string; animation?: string;
   style?: Record<string, string | number>;

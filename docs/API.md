@@ -210,13 +210,34 @@ Response: 200 OK
 }
 ```
 
-#### Delete Asset
+#### Remove Asset from Project (unlink)
 
 ```
-DELETE /projects/{projectId}/assets/{assetId}
+DELETE /projects/{projectId}/assets/{assetId}[?force=1]
 
 Response: 204 No Content
 ```
+
+Only unlinks; the library asset and its file are never deleted here. Answers `409`
+`{ error, usage: string[] }` while the project's definition (graphic layers, composition
+items, podcast intro/outro) still refers to the asset, unless `?force=1`.
+
+#### Link Library Asset
+
+```
+POST /projects/{projectId}/assets/{assetId}
+
+Response: { ok: true, assetId, projectId }
+```
+
+#### Library management (`/assets/{id}`)
+
+```
+PATCH  /assets/{id}   { assetKey?, folderId? }   rename (400 invalid key, 409 name taken) / move
+DELETE /assets/{id}[?force=1]                     204; 409 { error, projectCount } while linked
+```
+
+Deleting removes the row and the content-addressed file (the file only when no other row shares its `storagePath`).
 
 **Usage in Compositions:**
 ```typescript
@@ -246,6 +267,13 @@ Response: 204 No Content
 
 ```
 POST /projects/{projectId}/generate
+Content-Type: application/json
+
+{
+  "allowClamping": false,
+  "preview": false,
+  "captions": { "mode": "none" | "soft" | "burn" | "both", "language": "fi", "styleGraphicId": "graphic-id" }   // optional; default { "mode": "none" }
+}
 
 Response: 202 Accepted
 {
@@ -330,12 +358,111 @@ Content-Length: 1234567890
 ```
 
 **Output Types:**
-- `VIDEO` - Rendered MP4 video
-- `THUMBNAIL` - Generated JPG thumbnail
+- `VIDEO` - Rendered MP4 video (`.mp4`)
+- `THUMBNAIL` - Generated JPG thumbnail (`.jpg`)
+- `CAPTIONS_SRT` - Sidecar SubRip captions on the output timeline (`.srt`, `application/x-subrip; charset=utf-8`)
+- `CAPTIONS_VTT` - Sidecar WebVTT captions on the output timeline (`.vtt`, `text/vtt; charset=utf-8`)
+- `AUDIO` - Podcast audio file (`.mp3`, `audio/mpeg`, or `.m4a`, `audio/mp4`); downloaded as `saarnavideo-podcast.<ext>`
+
+Caption outputs carry a `language` (BCP 47 tag) and are named `saarnavideo-captions-<language>.<ext>`.
+They exist only for renders queued with `captions.mode = "soft"`, and share the video's `jobId`.
+
+#### Audio assets (voiceovers, podcast intro/outro)
+
+`POST /assets` and `POST /projects/{projectId}/assets` also accept audio: MP3, M4A, WAV, OGG or WebM
+(the type is taken from the MIME type, codec parameters such as `audio/webm;codecs=opus` are ignored, a
+missing/generic type falls back to the file extension). The asset is stored with `type: "AUDIO"` whatever
+`type` the form sends, the duration is probed with ffprobe (`durationMs` in every asset response) and files
+that ffprobe cannot read as audio return `400`. The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
+200 MB, `413` above it). Identical bytes are deduplicated like images. `GET /assets/{id}` and
+`GET /projects/{projectId}/assets/{assetId}` serve audio with `Range` support.
+
+#### Voiceover timeline item and podcast export
+
+A composition item `{"type":"audio-clip","assetId":...}` places an audio asset on the timeline.
+`startSeconds`/`endSeconds` trim the audio file (so the clip length is known without probing), `volume`
+defaults to 1.
+- `mode: "standalone"` (default): a section in sequence with the others. Video: the template background
+  colour, `backgroundImage` or `graphicId` graphic is shown while the recording plays. Podcast: voice only.
+- `mode: "mix"`: layered over the finished timeline from `atSeconds` (video-timeline seconds) for its length;
+  `duckSourceVolume` (0-1, default 1 = untouched) multiplies the source audio while it plays.
+
+Audio assets are looked up by id in the whole library. `POST /projects/{projectId}/generate` returns `400`
+when an `audio-clip` or podcast intro/outro asset does not exist as an `AUDIO` asset.
+
+`POST /projects/{projectId}/generate` with `{"type":"PODCAST","podcast":{...}}` queues an audio-only job
+(no THUMBNAIL job follows). `podcast` is merged over `definition.podcast` (the settings saved with the
+project) and may contain `introAssetId`, `outroAssetId`, `format` (`mp3` default | `m4a`), `channels`
+(`mono` default | `stereo`), `crossfadeSeconds` (0-5, default 0.5) and the tags `title`, `artist`, `album`,
+`date`, `comment`; invalid values return `400`. The result is `[intro] + composition audio + [outro]`,
+crossfaded, loudness-normalised in two passes to -16 LUFS (-1.5 dBTP), 44.1 kHz, 96 kbit/s mono or
+128 kbit/s stereo, and stored as an `AUDIO` output. Standalone slates are silent and skipped; mixed
+voiceovers keep their position relative to the audio around them. Tags default to the project title
+(title), preacher (artist), Gospel reference (comment) and today (date); the latest thumbnail, if any,
+is embedded as cover art. Intro and outro are used for the podcast only, never in the video.
+
+#### Caption options
+
+`captions.mode = "soft"` maps the active transcript segments of every source used by the composition
+onto the rendered timeline, muxes them into the MP4 as a `mov_text` subtitle track (language tagged
+with the ISO 639-2 code, e.g. `fin`) and stores the SRT/VTT sidecar outputs. `language` defaults to the
+language of the source's applied transcription run. If there are no active segments inside the
+composition the render succeeds without a track and a `WARN` job log is written. Invalid options
+return `400`. When such a video is published to YouTube, the SRT sidecar is uploaded as a caption
+track afterwards (failures are logged and do not fail the publication).
+
+`captions.mode = "burn"` draws the same output-timeline cues into the picture (after overlays and slates,
+before the preview downscale, so previews show proportionally scaled captions) and creates no caption
+outputs or track. `"both"` burns them in and also produces the soft track and the SRT/VTT outputs.
+`styleGraphicId` (only with `burn`/`both`) names a graphic of the project that contains a layer of type
+`caption`; its box position/size, font, colours, alignment, background box, outline/shadow and `max-lines`
+control the look. Without it the built-in default (bottom centre, white bold text on a semi-transparent
+box, two lines) is used. Long cues are word-wrapped to the box and split into pages of at most `max-lines`
+lines. Returns `400` when the graphic does not exist in the project or has no caption layer. Requires
+ffmpeg with libass. See `docs/GRAPHIC_PACKAGE.md` for the caption layer.
+
+### Plain-text transcript (no timings)
+
+```
+GET /sources/{sourceId}/transcript.txt?start=&end=&runId=&title=&gap=
+GET /sources/{sourceId}/transcript.html?start=&end=&runId=&title=&gap=&lang=
+```
+
+The spoken text of a source without timestamps, for accessibility. `text/plain; charset=utf-8`
+(attachment `<name>-transcript.txt`) or a minimal HTML document (`text/html; charset=utf-8`, `lang`
+attribute from the run language or `lang`, `<h1>` when `title` is given, one `<p>` per paragraph).
+
+- **Range:** `start`/`end` are seconds. A segment is included when its *start* lies in `[start, end)`; a segment
+  that began before `start` is left out, one that starts inside and runs past `end` is kept whole, so adjacent
+  ranges do not repeat text. Both optional; `end <= start` or non-numeric/negative values return `400`.
+- **Source of segments:** the active track, or one transcription run (applied or pending) with `runId`
+  (`404` when it does not belong to the source).
+- **Paragraphs:** a pause longer than `gap` seconds (default 2) starts a new paragraph; a paragraph that already has
+  600 characters is closed at the next sentence end. Whitespace is normalised; nothing else is changed (no
+  punctuation added, no speaker labels).
+- An empty range returns `200` with an empty body.
 
 ### Publications
 
-#### Create YouTube Publication
+#### Publish a rendered video (YouTube or Facebook)
+
+```
+POST /projects/{projectId}/publish
+Content-Type: application/json
+
+{ "platform": "FACEBOOK", "privacy": "PUBLIC" }
+
+Response: 202 Accepted   (the Publication row, status QUEUED)
+```
+
+`platform` is `YOUTUBE` (default) or `FACEBOOK`; the `Publication.provider` column holds it. The latest non-preview
+`VIDEO` output is uploaded by the worker. Facebook maps `PUBLIC` to a published Page video and `PRIVATE` to an
+unpublished one (Page admins only); `UNLISTED` returns `400`. `409` when the platform is not set up (no YouTube
+connection, or `FACEBOOK_PAGE_ID`/`FACEBOOK_PAGE_ACCESS_TOKEN` missing), `404` when there is no rendered video.
+`GET /projects/{projectId}` lists `publications` with `status` (`QUEUED`, `UPLOADING`, `COMPLETED`, `FAILED`),
+`externalId` (YouTube video id or Facebook video id) and a readable `error` on failure. See `docs/FACEBOOK_SETUP.md`.
+
+#### Create YouTube Publication (legacy description)
 
 ```
 POST /projects/{projectId}/publications
@@ -379,6 +506,19 @@ Response: 200 OK
   "completedAt": "2024-08-20T12:15:00Z"
 }
 ```
+
+### Facebook Integration
+
+```
+GET /integrations/facebook/status
+
+Response: 200 OK
+{ "configured": true, "pageId": "1234567890", "pageName": "My Church", "graphVersion": "v24.0" }
+```
+
+`configured: false` when the environment has no Page. If the token or Page is unusable, `pageName` is `null` and
+`error` holds a readable message. The token is never returned. There is no connect/disconnect route: the single Page
+comes from `FACEBOOK_PAGE_ID` / `FACEBOOK_PAGE_ACCESS_TOKEN`.
 
 ### YouTube Integration
 

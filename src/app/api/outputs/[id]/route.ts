@@ -4,6 +4,13 @@ import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
+import { outputExtension } from "@/domain/captions";
+
+function downloadName(output: { type: string; mimeType: string; language: string | null }): string {
+  const base = output.type.startsWith("CAPTIONS_") ? `saarnavideo-captions${output.language && output.language !== "und" ? `-${output.language}` : ""}` : `saarnavideo-${output.type.toLowerCase()}`;
+  const name = output.type === "AUDIO" ? "saarnavideo-podcast" : base;
+  return `${name}.${outputExtension(output.type, output.mimeType)}`;
+}
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -20,7 +27,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       headers: {
         "Content-Type": output.mimeType,
         "Content-Length": String(info.size),
-        "Content-Disposition": `attachment; filename="saarnavideo-${output.type.toLowerCase()}.${output.type === "VIDEO" ? "mp4" : "jpg"}"`,
+        "Content-Disposition": `attachment; filename="${downloadName(output)}"`,
       },
     });
   } catch {

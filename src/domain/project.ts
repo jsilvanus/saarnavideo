@@ -49,7 +49,31 @@ export const slateSchema = z.object({
   transitionOut: transitionSchema.optional(),
 }).refine((v) => v.mode !== "overlay" || (v.startSeconds !== undefined && v.endSeconds !== undefined && v.endSeconds > v.startSeconds), "Overlay slates require valid startSeconds/endSeconds");
 
-export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema, overlaySchema, slateSchema]);
+/**
+ * An audio asset (voiceover, jingle) on the timeline. `startSeconds`/`endSeconds` trim the audio file itself, so the
+ * clip's length (endSeconds - startSeconds) is known without probing.
+ * - "standalone": a section in sequence with the other base items. In the video it shows a background (the graphic,
+ *   `backgroundImage` or the template background colour) and plays the clip instead of source audio; in the podcast it is
+ *   a voice-only section.
+ * - "mix": layered over the finished timeline from `atSeconds` (output-timeline seconds of the video) for its own length.
+ *   The source audio underneath is multiplied by `duckSourceVolume` (1 = not lowered) while the clip plays.
+ */
+export const audioClipSchema = z.object({
+  type: z.literal("audio-clip"),
+  assetId: z.string().min(1),
+  mode: z.enum(["standalone", "mix"]).default("standalone"),
+  startSeconds: z.number().nonnegative().default(0),
+  endSeconds: z.number().positive(),
+  volume: z.number().min(0).max(4).default(1),
+  atSeconds: z.number().nonnegative().default(0),
+  duckSourceVolume: z.number().min(0).max(1).default(1),
+  graphicId: z.string().min(1).optional(),
+  backgroundImage: z.string().optional(),
+  data: z.record(z.string(), z.string()).default({}),
+  transitionIn: transitionSchema.optional(),
+}).refine(...endAfterStart);
+
+export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema, overlaySchema, slateSchema, audioClipSchema]);
 
 export const semanticSegmentSchema = z.object({
   id: z.string().min(1),
@@ -75,6 +99,22 @@ export const templateSchema = z.object({
   textColor: z.string().default("white"),
 });
 
+/** Podcast (audio-only) export settings. Intro/outro are audio assets and are used for the podcast only, never for the video. */
+export const podcastSettingsSchema = z.object({
+  introAssetId: z.string().min(1).optional(),
+  outroAssetId: z.string().min(1).optional(),
+  format: z.enum(["mp3", "m4a"]).default("mp3"),
+  channels: z.enum(["mono", "stereo"]).default("mono"),
+  /** Crossfade between intro/body/outro in seconds; 0 = plain concatenation. */
+  crossfadeSeconds: z.number().min(0).max(5).default(0.5),
+  /** ID3/MP4 tags; empty values fall back to the project (title, preacher, gospel reference). */
+  title: z.string().trim().max(200).optional(),
+  artist: z.string().trim().max(200).optional(),
+  album: z.string().trim().max(200).optional(),
+  date: z.string().trim().max(32).optional(),
+  comment: z.string().trim().max(1000).optional(),
+});
+
 export const projectDefinitionSchema = z.object({
   version: z.literal(1),
   semanticSegments: z.array(semanticSegmentSchema),
@@ -82,12 +122,23 @@ export const projectDefinitionSchema = z.object({
   graphics: z.array(graphicSchema).default([]),
   template: templateSchema.optional(),
   composition: compositionSchema,
+  podcast: podcastSettingsSchema.optional(),
 });
 
 export type Transition = z.infer<typeof transitionSchema>;
 export type TimelineItem = z.infer<typeof timelineItemSchema>;
-/** The two TimelineItem variants that carry graphic-editor state (`data`, `graphicId`) — everything but source-clip. */
+/** The two TimelineItem variants that carry graphic-editor state (`data`, `graphicId`) and are drawn by the graphics pipeline. */
 export type GraphicCarrierItem = Extract<TimelineItem, { type: "overlay" }> | Extract<TimelineItem, { type: "slate" }>;
+export type AudioClipItem = Extract<TimelineItem, { type: "audio-clip" }>;
+export type PodcastSettings = z.infer<typeof podcastSettingsSchema>;
+/** Timeline items that occupy time in sequence: source clips, standalone slates and standalone audio clips. */
+export type BaseItem = Extract<TimelineItem, { type: "source-clip" }> | Extract<TimelineItem, { type: "slate" }> | AudioClipItem;
+export function isBaseItem(item: TimelineItem): item is BaseItem {
+  return item.type === "source-clip" || (item.type === "slate" && item.mode !== "overlay") || (item.type === "audio-clip" && item.mode !== "mix");
+}
+export function baseItemDuration(item: BaseItem): number {
+  return item.type === "slate" ? item.durationSeconds : item.endSeconds - item.startSeconds;
+}
 export type SemanticSegment = z.infer<typeof semanticSegmentSchema>;
 export type { Section };
 export type TemplateDefinition = z.infer<typeof templateSchema>;
@@ -137,6 +188,6 @@ export function validateCompositionSources(definition: ProjectDefinition, source
   const missingSourceIds = definition.composition.items.filter(isSourceClip).map((item) => item.sourceId).filter((sourceId) => !sourceIdSet.has(sourceId));
   if (missingSourceIds.length > 0) throw new Error(`Composition references missing sources: ${Array.from(new Set(missingSourceIds)).join(", ")}`);
   const graphicIds = new Set(definition.graphics.map((graphic) => graphic.id));
-  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem => item.type !== "source-clip" && !!item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
+  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem | AudioClipItem => item.type !== "source-clip" && !!item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
   if (missingGraphics.length > 0) throw new Error(`Composition references missing graphics: ${Array.from(new Set(missingGraphics)).join(", ")}`);
 }

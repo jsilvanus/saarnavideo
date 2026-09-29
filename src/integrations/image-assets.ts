@@ -288,7 +288,7 @@ export function validateAssetKey(key: string): { valid: boolean; reason?: string
 /**
  * Validate asset type.
  */
-const VALID_ASSET_TYPES: readonly AssetType[] = ["OVERLAY", "BACKGROUND", "LOGO", "FONT"];
+const VALID_ASSET_TYPES: readonly AssetType[] = ["OVERLAY", "BACKGROUND", "LOGO", "FONT", "AUDIO"];
 
 export function validateAssetType(type: string): { valid: boolean; reason?: string } {
   if (!VALID_ASSET_TYPES.includes(type as AssetType)) {

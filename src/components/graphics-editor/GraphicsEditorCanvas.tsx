@@ -1,6 +1,6 @@
 import type { FC, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { HANDLE_LIST } from "./constants";
-import { anchor, layerStyle } from "./geometry";
+import { anchor, captionAlignment, layerStyle } from "./geometry";
 import type { Layer, PointerHandler } from "./types";
 
 export const GraphicsEditorCanvas: FC<{
@@ -16,6 +16,7 @@ export const GraphicsEditorCanvas: FC<{
         {grid && <div className="ge-grid" />}
         {layers.map(l => <div key={l.id} style={layerStyle(l, selectedIds.has(l.id))} onPointerDown={e => onLayerPointerDown(e, l.id, "move")}>
           {l.type === "text" && <div style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden" }}>{l.text}</div>}
+          {l.type === "caption" && <div style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden", display: "flex", ...captionAlignment(l) }}><span style={{ maxWidth: "100%" }}>{l.text}</span></div>}
           {l.type === "ellipse" && <div style={{ width: "100%", height: "100%", borderRadius: "50%", pointerEvents: "none" }} />}
           {l.type === "image" && <img src={l.src || ""} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none" }} />}
           {selectedIds.has(l.id) && <>

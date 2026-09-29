@@ -18,12 +18,16 @@ enum SourceStatus {
 enum OutputType {
   VIDEO
   THUMBNAIL
+  CAPTIONS_SRT
+  CAPTIONS_VTT
+  AUDIO
 }
 enum MediaJobType {
   DOWNLOAD
   THUMBNAIL
   PREVIEW
   VIDEO
+  PODCAST
   TRANSCRIBE
 }
 enum MediaJobStatus {
@@ -51,6 +55,7 @@ enum JobLogLevel {
 }
 enum PublicationProvider {
   YOUTUBE
+  FACEBOOK
 }
 enum PublicationStatus {
   QUEUED
@@ -68,6 +73,7 @@ enum AssetType {
   BACKGROUND
   LOGO
   FONT
+  AUDIO
 }
 
 model Project {
@@ -151,6 +157,7 @@ model Output {
   preview Boolean @default(false)
   storagePath String
   mimeType String
+  language String?
   sizeBytes BigInt?
   createdAt DateTime @default(now())
   expiresAt DateTime?
@@ -219,6 +226,7 @@ model Asset {
   height Int?
   sizeBytes BigInt
   hasAlpha Boolean @default(false)
+  durationMs Int?
   contentHash String?
   folderId String?
   folder AssetFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)

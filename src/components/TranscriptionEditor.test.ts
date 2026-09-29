@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatTime } from "./format";
-import { isWithinSegment } from "./TranscriptionEditor";
+import { isWithinSegment, transcriptTextUrl } from "./TranscriptionEditor";
 
 describe("TranscriptionEditor helpers", () => {
   describe("formatTime", () => {
@@ -39,6 +39,16 @@ describe("TranscriptionEditor helpers", () => {
     it("is false outside the range", () => {
       expect(isWithinSegment(5, segment)).toBe(false);
       expect(isWithinSegment(25, segment)).toBe(false);
+    });
+  });
+
+  describe("transcriptTextUrl", () => {
+    it("omits empty and zero-start parameters", () => {
+      expect(transcriptTextUrl("s1", "txt")).toBe("/api/sources/s1/transcript.txt");
+      expect(transcriptTextUrl("s1", "html", { start: 0, end: "" })).toBe("/api/sources/s1/transcript.html");
+    });
+    it("passes range and title", () => {
+      expect(transcriptTextUrl("s1", "txt", { start: 12.5, end: 60, title: " Saarna " })).toBe("/api/sources/s1/transcript.txt?start=12.5&end=60&title=Saarna");
     });
   });
 });
