@@ -120,9 +120,10 @@ export function primaryFontFamily(value: unknown): string {
  * graphic.width, so previews (which downscale after burning) stay consistent.
  */
 export function captionStyleFromGraphic(graphic: Pick<Graphic, "layers" | "width" | "height"> | undefined | null, videoWidth: number, videoHeight: number): CaptionStyle {
-  const layer = findCaptionLayer(graphic) ?? DEFAULT_CAPTION_LAYER;
-  const gw = graphic && findCaptionLayer(graphic) ? graphic.width : 1920;
-  const gh = graphic && findCaptionLayer(graphic) ? graphic.height : 1080;
+  const own = findCaptionLayer(graphic);
+  const layer = own ?? DEFAULT_CAPTION_LAYER;
+  const gw = own ? graphic!.width : 1920;
+  const gh = own ? graphic!.height : 1080;
   const sx = videoWidth / gw;
   const sy = videoHeight / gh;
   const s = sx; // uniform scale for sizes; positions use sx/sy so the box tracks the frame

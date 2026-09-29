@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { errorMessage, requestJson } from "@/components/api";
 import { formatTime } from "@/components/format";
 import AssetPicker from "@/components/AssetPicker";
+import { sanitizeAssetKey } from "@/integrations/image-assets";
 
 export type AudioAsset = { id: string; assetKey: string; type: string; mimeType?: string | null; durationMs?: number | null };
 type Item = { type: string; assetId?: string; mode?: string; startSeconds?: number; endSeconds?: number; [key: string]: unknown };
@@ -17,7 +18,6 @@ export function defaultVoiceoverName(now = new Date()) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `Voiceover_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}`;
 }
-export function assetKeyFromName(name: string) { return name.trim().replace(/[^a-z0-9_-]/gi, "_").slice(0, 64); }
 function extensionFor(mimeType: string) { return mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "webm"; }
 
 /** Trim window of a new timeline clip for a whole asset; assets without a known duration get 10 s. */
@@ -80,7 +80,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
     try {
       const form = new FormData();
       form.set("file", source, uploadName);
-      form.set("assetKey", assetKeyFromName(key) || defaultVoiceoverName());
+      form.set("assetKey", sanitizeAssetKey(key.trim()) || defaultVoiceoverName());
       form.set("type", "AUDIO");
       const asset = await requestJson<AudioAsset>(`/api/projects/${projectId}/assets`, { method: "POST", body: form }, "Upload failed");
       setMessage(`Saved “${asset.assetKey}” to the library and this project.`);
@@ -91,7 +91,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
   async function saveRecording() {
     if (!blob) return;
     const type = blob.type.split(";")[0] || "audio/webm";
-    if (await upload(new File([blob], `${assetKeyFromName(name) || "voiceover"}.${extensionFor(type)}`, { type }), name, `voiceover.${extensionFor(type)}`)) { discard(); setName(defaultVoiceoverName()); }
+    if (await upload(new File([blob], `${sanitizeAssetKey(name.trim()) || "voiceover"}.${extensionFor(type)}`, { type }), name, `voiceover.${extensionFor(type)}`)) { discard(); setName(defaultVoiceoverName()); }
   }
   async function saveFile() {
     if (!file) return;

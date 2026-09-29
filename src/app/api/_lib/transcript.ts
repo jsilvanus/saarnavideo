@@ -2,16 +2,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildTranscriptHtml, buildTranscriptText, selectSegmentsInRange } from "@/lib/transcript-text";
 import { jsonError } from "./http";
+import { sourceFileBase } from "./captions";
 
 const FORMATS = {
   txt: { contentType: "text/plain; charset=utf-8" },
   html: { contentType: "text/html; charset=utf-8" },
 } as const;
 
-function filenameBase(source: { originalName: string | null; youtubeVideoId: string | null; id: string }): string {
-  const base = source.originalName?.replace(/\.[^.]+$/, "") || source.youtubeVideoId || source.id;
-  return base.replace(/[^a-zA-Z0-9._-]/g, "_") || "transcript";
-}
 
 function numberParam(params: URLSearchParams, name: string): number | undefined | "invalid" {
   const raw = params.get(name);
@@ -50,6 +47,6 @@ export async function transcriptDownload(request: Request, sourceId: string, ext
   const body = extension === "html" ? buildTranscriptHtml(selected, { ...options, language }) : buildTranscriptText(selected, options);
   return new NextResponse(body, {
     status: 200,
-    headers: { "Content-Type": FORMATS[extension].contentType, "Content-Disposition": `attachment; filename="${filenameBase(source)}-transcript.${extension}"`, "Cache-Control": "no-store" },
+    headers: { "Content-Type": FORMATS[extension].contentType, "Content-Disposition": `attachment; filename="${sourceFileBase(source, "transcript")}-transcript.${extension}"`, "Cache-Control": "no-store" },
   });
 }

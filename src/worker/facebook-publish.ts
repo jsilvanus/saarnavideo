@@ -36,13 +36,16 @@ export async function publishVideoToFacebook(input: FacebookPublishInput, deps: 
       return false;
     }
   };
-  const thumbnail = input.thumbnailPath ? await soft("thumbnail upload", () => uploadFacebookThumbnail(config, upload.videoId, input.thumbnailPath!, client)) : false;
-  let captions = false;
-  if (input.sidecar) {
-    const locale = toFacebookLocale(input.sidecar.language);
-    if (!locale) await deps.log("WARN", "Skipped Facebook caption upload: caption language is unknown", { videoId: upload.videoId });
-    else captions = await soft("caption upload", () => uploadFacebookCaption(config, { videoId: upload.videoId, filePath: input.sidecar!.storagePath, locale }, client));
-  }
+  const uploadCaptions = async (sidecar: SidecarCaption): Promise<boolean> => {
+    const locale = toFacebookLocale(sidecar.language);
+    if (locale) return soft("caption upload", () => uploadFacebookCaption(config, { videoId: upload.videoId, filePath: sidecar.storagePath, locale }, client));
+    await deps.log("WARN", "Skipped Facebook caption upload: caption language is unknown", { videoId: upload.videoId });
+    return false;
+  };
+  const [thumbnail, captions] = await Promise.all([
+    input.thumbnailPath ? soft("thumbnail upload", () => uploadFacebookThumbnail(config, upload.videoId, input.thumbnailPath!, client)) : false,
+    input.sidecar ? uploadCaptions(input.sidecar) : false,
+  ]);
   await deps.log("INFO", "Facebook publication finished", { videoId: upload.videoId, thumbnail, captions });
   return { videoId: upload.videoId, chunks: upload.chunks, bytes: upload.bytes, thumbnail, captions };
 }

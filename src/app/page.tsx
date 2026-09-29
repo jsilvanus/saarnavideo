@@ -10,7 +10,7 @@ import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
 import VoiceoverPanel from "@/components/VoiceoverPanel";
 import PodcastPanel from "@/components/PodcastPanel";
-import type { PodcastSettings } from "@/domain/project";
+import { baseItemDuration, isBaseItem, type PodcastSettings, type TimelineItem } from "@/domain/project";
 import SectionManager from "@/components/SectionManager";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
 import PublishPanel, { type Publication } from "@/components/PublishPanel";
@@ -59,7 +59,7 @@ export default function HomePage(){
  async function addSegment(sourceId:string,label:string,start:number,end:number){if(!selected||!(end>start)){setError("End must be greater than start.");return}const def=currentDefinition();const segment={id:crypto.randomUUID(),label:label||"Section",startSeconds:start,endSeconds:end,sourceId};const section={...segment,scope:"SOURCE" as const,origin:"MANUAL" as const};await saveDefinition({...def,semanticSegments:[...def.semanticSegments,segment],sections:[...(def.sections??[]),section],composition:{...def.composition,sourceStartSeconds:Math.min(def.composition.sourceStartSeconds,start),sourceEndSeconds:Math.max(def.composition.sourceEndSeconds,end),items:[...def.composition.items,{type:"source-clip",sourceId,startSeconds:start,endSeconds:end}]}});setMessage("Section saved.")}
  async function removeSegment(id:string){const def=currentDefinition(),s=def.semanticSegments.find(x=>x.id===id);if(!s)return;await saveDefinition({...def,semanticSegments:def.semanticSegments.filter(x=>x.id!==id),sections:(def.sections??[]).filter(x=>x.id!==id&&x.parentId!==id),composition:{...def.composition,items:def.composition.items.filter(i=>!(i.type==="source-clip"&&i.sourceId===s.sourceId&&i.startSeconds===s.startSeconds&&i.endSeconds===s.endSeconds)&&!(i.type==="overlay"&&i.sectionId===id))}})}
  async function saveSections(sections:SemanticSection[]){const def=currentDefinition();await saveDefinition({...def,sections})}
- function compositionDurationSeconds(){return currentDefinition().composition.items.reduce((total,item)=>{if(item.type==="source-clip")return total+Math.max(0,(item.endSeconds??0)-(item.startSeconds??0));if(item.type==="slate"&&item.mode!=="overlay")return total+(item.durationSeconds??0);if(item.type==="audio-clip"&&item.mode!=="mix")return total+Math.max(0,(item.endSeconds??0)-(item.startSeconds??0));return total},0)}
+ function compositionDurationSeconds(){return (currentDefinition().composition.items as TimelineItem[]).filter(isBaseItem).reduce((total,item)=>total+Math.max(0,baseItemDuration(item)),0)}
  async function refreshAssets(){if(!selected)return;const r=await fetch(`/api/projects/${selected.id}`,{cache:"no-store"});if(!r.ok)return;const p=await r.json() as Project;setSelected(cur=>cur&&cur.id===p.id?{...cur,assets:p.assets}:cur)}
  function askRemoveAsset(asset:Asset){setRemoveAsset({asset,usage:selected?findAssetUsage(currentDefinition(),asset):[]})}
  async function confirmRemoveAsset(){if(!selected||!removeAsset)return;const {asset}=removeAsset;setRemoveAsset(null);await withBusy("Could not remove the asset from the project",async()=>{await requestJson(`/api/projects/${selected.id}/assets/${asset.id}?force=1`,{method:"DELETE"},"Could not remove the asset from the project");await refreshAssets();setMessage(`“${asset.assetKey}” removed from this project. It is still in the library.`)})}

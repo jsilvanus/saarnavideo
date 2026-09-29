@@ -1,6 +1,6 @@
 import { baseItemDuration, isBaseItem, type AudioClipItem, type PodcastSettings, type ProjectDefinition } from "@/domain/project";
 import { layoutTimeline } from "@/renderer/caption-timeline";
-import { AUDIO_NORMALIZE, audioClipFilter, audioMixFilters, formatSeconds, sourceAudioFilter, transitionDuration, type FfmpegPlan } from "@/renderer/ffmpeg";
+import { AUDIO_NORMALIZE, audioAssetPath, audioClipFilter, audioMixFilters, formatSeconds, sourceAudioFilter, transitionDuration, type FfmpegPlan } from "@/renderer/ffmpeg";
 
 /** Integrated loudness target for spoken word, in LUFS. */
 export const PODCAST_TARGET_LUFS = -16;
@@ -22,7 +22,6 @@ export type PodcastPlanOptions = {
 };
 export type PodcastPlan = FfmpegPlan & { /** Expected length of the audio file. */ durationSeconds: number };
 
-export function podcastExtension(format: "mp3" | "m4a"): string { return format; }
 export function podcastMimeType(format: "mp3" | "m4a"): string { return format === "m4a" ? "audio/mp4" : "audio/mpeg"; }
 
 /**
@@ -83,11 +82,6 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
   let nextInput = 0;
   const addInput = (filePath: string) => { args.push("-i", filePath); return nextInput++; };
   const sourceInputs = new Map<string, number>();
-  const assetPath = (assetId: string) => {
-    const found = assetPaths.get(assetId);
-    if (!found) throw new Error(`Missing audio asset for assetId: ${assetId}`);
-    return found;
-  };
 
   const filters: string[] = [];
   const startsBySlot = new Map<number, number>();
@@ -105,7 +99,7 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
       }
       filters.push(sourceAudioFilter(sourceInputs.get(item.sourceId)!, item.startSeconds, duration, label));
     } else {
-      filters.push(audioClipFilter(addInput(assetPath(item.assetId)), item, label));
+      filters.push(audioClipFilter(addInput(audioAssetPath(assetPaths, item.assetId)), item, label));
     }
     if (!current) {
       current = label;
@@ -145,7 +139,7 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
     return bodyDuration;
   };
   mixes.forEach((item, index) => {
-    const mixed = audioMixFilters(current, addInput(assetPath(item.assetId)), item, podcastTime(item.atSeconds ?? 0), index);
+    const mixed = audioMixFilters(current, addInput(audioAssetPath(assetPaths, item.assetId)), item, podcastTime(item.atSeconds ?? 0), index);
     filters.push(...mixed.filters);
     current = mixed.output;
   });
@@ -154,24 +148,18 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
   const crossfade = options.settings.crossfadeSeconds;
   let joined = current;
   let total = bodyDuration;
-  if (options.intro) {
-    const label = "intro";
-    filters.push(`[${addInput(options.intro.path)}:a]${AUDIO_NORMALIZE}[${label}]`);
-    const introSeconds = options.intro.durationSeconds ?? Infinity;
-    const d = Math.min(crossfade, introSeconds / 2, total / 2);
-    filters.push(d > 0 ? `[${label}][${joined}]acrossfade=d=${formatSeconds(d)}:curve1=tri:curve2=tri[withintro]` : `[${label}][${joined}]concat=n=2:v=0:a=1[withintro]`);
-    total += (Number.isFinite(introSeconds) ? introSeconds : 0) - d;
-    joined = "withintro";
-  }
-  if (options.outro) {
-    const label = "outro";
-    filters.push(`[${addInput(options.outro.path)}:a]${AUDIO_NORMALIZE}[${label}]`);
-    const outroSeconds = options.outro.durationSeconds ?? Infinity;
-    const d = Math.min(crossfade, outroSeconds / 2, total / 2);
-    filters.push(d > 0 ? `[${joined}][${label}]acrossfade=d=${formatSeconds(d)}:curve1=tri:curve2=tri[withoutro]` : `[${joined}][${label}]concat=n=2:v=0:a=1[withoutro]`);
-    total += (Number.isFinite(outroSeconds) ? outroSeconds : 0) - d;
-    joined = "withoutro";
-  }
+  const join = (name: "intro" | "outro", track: { path: string; durationSeconds?: number }) => {
+    filters.push(`[${addInput(track.path)}:a]${AUDIO_NORMALIZE}[${name}]`);
+    const seconds = track.durationSeconds ?? Infinity;
+    const d = Math.min(crossfade, seconds / 2, total / 2);
+    const [first, second] = name === "intro" ? [name, joined] : [joined, name];
+    const out = `with${name}`;
+    filters.push(d > 0 ? `[${first}][${second}]acrossfade=d=${formatSeconds(d)}:curve1=tri:curve2=tri[${out}]` : `[${first}][${second}]concat=n=2:v=0:a=1[${out}]`);
+    total += (Number.isFinite(seconds) ? seconds : 0) - d;
+    joined = out;
+  };
+  if (options.intro) join("intro", options.intro);
+  if (options.outro) join("outro", options.outro);
 
   const layout = options.settings.channels === "stereo" ? "stereo" : "mono";
   filters.push(`[${joined}]aformat=channel_layouts=${layout},${loudnormFilter(options.loudness)},aresample=44100[podcast]`);

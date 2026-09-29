@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getExtensionFromMimeType } from "@/integrations/image-assets";
-import { checkAssetKeyAndType, isAudioUpload, readAudioUpload, readImageUpload, storeAudioAsset, storeLibraryFile } from "@/app/api/_lib/assets";
+import { checkAssetKeyAndType, findOrCreateAudioAsset, isAudioUpload, readAudioUpload, readImageUpload, storeLibraryFile } from "@/app/api/_lib/assets";
 import { jsonError } from "@/app/api/_lib/http";
 
 const metadataSchema = z.object({ assetKey: z.string().trim().min(1).max(64), type: z.enum(["OVERLAY", "BACKGROUND", "LOGO", "FONT", "AUDIO"]).default("OVERLAY"), folderId: z.string().nullable().optional() });
@@ -32,12 +32,9 @@ export async function POST(request: Request) {
     if (audioFile) {
       const upload = await readAudioUpload(file);
       if (upload instanceof Response) return upload;
-      const existing = await prisma.asset.findFirst({ where: { contentHash: upload.contentHash, mimeType: upload.mimeType } });
-      if (existing) { const updated = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: metadata.data.folderId ?? existing.folderId, expiresAt: null } }); return NextResponse.json(serialize(updated)); }
-      const stored = await storeAudioAsset(upload);
-      if (stored instanceof Response) return stored;
-      const asset = await prisma.asset.create({ data: { assetKey: metadata.data.assetKey, type: "AUDIO", storagePath: stored.storagePath, mimeType: upload.mimeType, durationMs: stored.durationMs, sizeBytes: BigInt(upload.buffer.length), contentHash: upload.contentHash, folderId: metadata.data.folderId ?? null, expiresAt: null } });
-      return NextResponse.json(serialize(asset), { status: 201 });
+      const result = await findOrCreateAudioAsset(upload, { assetKey: metadata.data.assetKey, folderId: metadata.data.folderId });
+      if (result instanceof Response) return result;
+      return NextResponse.json(serialize(result.asset), { status: result.created ? 201 : 200 });
     }
     const upload = await readImageUpload(file);
     if (upload instanceof Response) return upload;

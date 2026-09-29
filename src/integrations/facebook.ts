@@ -1,4 +1,5 @@
-import { open, readFile, stat } from "node:fs/promises";
+import { openAsBlob } from "node:fs";
+import { toYouTubeLanguage } from "@/domain/captions";
 
 /**
  * Facebook Page video publishing through the Graph API (single Page, configured through environment variables).
@@ -11,6 +12,11 @@ export type FacebookConfig = { pageId: string; accessToken: string; version: str
 export const DEFAULT_GRAPH_VERSION = "v24.0";
 const DEFAULT_GRAPH_BASE_URL = "https://graph.facebook.com";
 const DEFAULT_GRAPH_VIDEO_BASE_URL = "https://graph-video.facebook.com";
+
+/** True when a valid Page configuration is present (an invalid one counts as not configured). */
+export function isFacebookConfigured(env: Record<string, string | undefined> = process.env): boolean {
+  try { return readFacebookConfig(env) !== null; } catch { return false; }
+}
 
 /** The configured Page, or null when FACEBOOK_PAGE_ID / FACEBOOK_PAGE_ACCESS_TOKEN are not both set. */
 export function readFacebookConfig(env: Record<string, string | undefined> = process.env): FacebookConfig | null {
@@ -135,7 +141,8 @@ const toNumber = (value: unknown, name: string): number => {
  * response names the next [start_offset, end_offset) and the client sends exactly that slice.
  */
 export async function uploadVideoToFacebook(config: FacebookConfig, input: FacebookUpload, options: FacebookClientOptions = {}): Promise<FacebookUploadResult> {
-  const size = (await stat(input.filePath)).size;
+  const file = await openAsBlob(input.filePath);
+  const size = file.size;
   if (size === 0) throw new Error("The video file is empty");
   const path = `${config.pageId}/videos`;
   const start = await graph(config, "POST", path, { upload_phase: "start", file_size: String(size) }, { ...options, video: true });
@@ -145,21 +152,17 @@ export async function uploadVideoToFacebook(config: FacebookConfig, input: Faceb
   let startOffset = toNumber(start.start_offset, "start_offset");
   let endOffset = toNumber(start.end_offset, "end_offset");
   let chunks = 0;
-  const handle = await open(input.filePath, "r");
-  try {
-    while (startOffset < endOffset) {
-      if (endOffset > size) throw new FacebookApiError("Facebook asked for bytes beyond the end of the file", 200);
-      const buffer = Buffer.alloc(endOffset - startOffset);
-      await handle.read(buffer, 0, buffer.length, startOffset);
-      const next = await withRetry(() => graph(config, "POST", path, { upload_phase: "transfer", upload_session_id: sessionId, start_offset: String(startOffset), video_file_chunk: { blob: new Blob([buffer]), filename: "chunk.mp4" } }, { ...options, video: true }), options);
-      chunks++;
-      const nextStart = toNumber(next.start_offset, "start_offset");
-      const nextEnd = toNumber(next.end_offset, "end_offset");
-      if (nextStart <= startOffset && nextStart < size) throw new FacebookApiError("Facebook did not accept the uploaded chunk", 200);
-      startOffset = nextStart; endOffset = nextEnd;
-      input.onProgress?.(startOffset, size);
-    }
-  } finally { await handle.close(); }
+  while (startOffset < endOffset) {
+    if (endOffset > size) throw new FacebookApiError("Facebook asked for bytes beyond the end of the file", 200);
+    const chunk = file.slice(startOffset, endOffset);
+    const next = await withRetry(() => graph(config, "POST", path, { upload_phase: "transfer", upload_session_id: sessionId, start_offset: String(startOffset), video_file_chunk: { blob: chunk, filename: "chunk.mp4" } }, { ...options, video: true }), options);
+    chunks++;
+    const nextStart = toNumber(next.start_offset, "start_offset");
+    const nextEnd = toNumber(next.end_offset, "end_offset");
+    if (nextStart <= startOffset && nextStart < size) throw new FacebookApiError("Facebook did not accept the uploaded chunk", 200);
+    startOffset = nextStart; endOffset = nextEnd;
+    input.onProgress?.(startOffset, size);
+  }
   const finish = await graph(config, "POST", path, {
     upload_phase: "finish", upload_session_id: sessionId, title: input.title, description: input.description ?? "", published: input.published ? "true" : "false",
   }, { ...options, video: true });
@@ -191,15 +194,16 @@ export async function waitForFacebookVideo(config: FacebookConfig, videoId: stri
 
 /** Sets the video's preferred thumbnail (JPEG/PNG). */
 export async function uploadFacebookThumbnail(config: FacebookConfig, videoId: string, filePath: string, options: FacebookClientOptions = {}): Promise<void> {
-  const bytes = await readFile(filePath);
-  await graph(config, "POST", `${videoId}/thumbnails`, { source: { blob: new Blob([bytes], { type: "image/jpeg" }), filename: "thumbnail.jpg" }, is_preferred: "true" }, options);
+  await graph(config, "POST", `${videoId}/thumbnails`, { source: { blob: await openAsBlob(filePath, { type: "image/jpeg" }), filename: "thumbnail.jpg" }, is_preferred: "true" }, options);
 }
 
 /** Locale in Facebook's language_COUNTRY form ("fi" -> "fi_FI"); undefined when unknown. */
 export function toFacebookLocale(tag: string | null | undefined): string | undefined {
   if (!tag) return undefined;
   const [language, region] = tag.replace("_", "-").split("-");
-  const primary = language.toLowerCase();
+  // ISO 639-2 codes ("fin") are accepted by the caption options; map them to the two-letter form first.
+  const primary = toYouTubeLanguage(language);
+  if (!primary) return undefined;
   if (region && /^[A-Za-z]{2}$/.test(region)) return `${primary}_${region.toUpperCase()}`;
   const defaults: Record<string, string> = { fi: "fi_FI", sv: "sv_SE", en: "en_US", et: "et_EE", de: "de_DE", ru: "ru_RU", no: "nb_NO", nb: "nb_NO", da: "da_DK", fr: "fr_FR", es: "es_LA", it: "it_IT", pt: "pt_PT", pl: "pl_PL", uk: "uk_UA", ar: "ar_AR", nl: "nl_NL", hu: "hu_HU", cs: "cs_CZ", lv: "lv_LV", lt: "lt_LT", is: "is_IS", sk: "sk_SK", se: "se_NO" };
   return defaults[primary];
@@ -210,9 +214,8 @@ export function toFacebookLocale(tag: string | null | undefined): string | undef
  * name is built from `locale`; `default_locale` is sent as well.
  */
 export async function uploadFacebookCaption(config: FacebookConfig, input: { videoId: string; filePath: string; locale: string }, options: FacebookClientOptions = {}): Promise<void> {
-  const bytes = await readFile(input.filePath);
   await graph(config, "POST", `${input.videoId}/captions`, {
-    captions_file: { blob: new Blob([bytes], { type: "application/x-subrip" }), filename: `video.${input.locale}.srt` },
+    captions_file: { blob: await openAsBlob(input.filePath, { type: "application/x-subrip" }), filename: `video.${input.locale}.srt` },
     default_locale: input.locale,
   }, options);
 }

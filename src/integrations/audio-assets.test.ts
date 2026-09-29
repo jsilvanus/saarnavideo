@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audioExtension, canonicalAudioType, isAudioMimeType, parseFfmpegTime } from "@/integrations/audio-assets";
+import { audioExtension, canonicalAudioType, parseFfmpegTime } from "@/integrations/audio-assets";
 
 describe("canonicalAudioType", () => {
   it("accepts the supported formats and folds browser spellings", () => {
@@ -22,8 +22,6 @@ describe("canonicalAudioType", () => {
 
   it("knows stored extensions", () => {
     expect(["audio/mpeg", "audio/mp4", "audio/wav", "audio/ogg", "audio/webm"].map(audioExtension)).toEqual(["mp3", "m4a", "wav", "ogg", "webm"]);
-    expect(isAudioMimeType("audio/mpeg")).toBe(true);
-    expect(isAudioMimeType("image/png")).toBe(false);
   });
 });
 

@@ -27,7 +27,6 @@ const DEFAULT_POLL_MS = 750;
 const POLL_MS = Math.min(Math.max(Number(process.env.WORKER_POLL_MS ?? DEFAULT_POLL_MS), MIN_POLL_MS), MAX_POLL_MS);
 const PROGRESS_WRITE_MS = 750;
 const MEDIA_ROOT = process.env.MEDIA_ROOT ?? "/data/media";
-const RETENTION_MS = Number(process.env.MEDIA_RETENTION_DAYS ?? 7) * 24 * 60 * 60 * 1000;
 const RESOURCE_LIMITS: ResourceLimits = { maxSourceFileSizeBytes: Number(process.env.MAX_SOURCE_SIZE_BYTES ?? 50 * 1024 * 1024 * 1024), maxOutputFileSizeBytes: Number(process.env.MAX_OUTPUT_SIZE_BYTES ?? 100 * 1024 * 1024 * 1024), maxDurationSeconds: Number(process.env.MAX_DURATION_SECONDS ?? 12 * 60 * 60), maxConcurrentJobs: Number(process.env.MAX_CONCURRENT_JOBS ?? 2), requestTimeoutSeconds: Number(process.env.REQUEST_TIMEOUT_SECONDS ?? 60 * 60) };
 const runningProcesses = new Map<string, ChildProcessWithoutNullStreams>();
 const progressTimers = new Map<string, NodeJS.Timeout>();
@@ -50,7 +49,7 @@ async function createOutput(projectId: string, jobId: string, type: "VIDEO" | "T
   const sizeBytes = await stat(storagePath).then(s => s.size, () => undefined);
   const maxSize = type === "VIDEO" || type === "AUDIO" ? RESOURCE_LIMITS.maxOutputFileSizeBytes : 50 * 1024 * 1024;
   if (sizeBytes !== undefined && sizeBytes > maxSize) throw new Error(`${type} file size ${formatBytes(sizeBytes)} exceeds limit ${formatBytes(maxSize)}`);
-  return prisma.output.create({ data: { projectId, jobId, type, preview, storagePath, mimeType, language, sizeBytes, expiresAt: new Date(Date.now() + RETENTION_MS) } }); }
+  return prisma.output.create({ data: { projectId, jobId, type, preview, storagePath, mimeType, language, sizeBytes } }); }
 
 async function processDownload(job: Awaited<ReturnType<typeof claimJob>>) {
   if (!job?.sourceId) throw new Error("DOWNLOAD job has no source");
@@ -61,16 +60,19 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>) {
   await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: 0 }, true);
   await downloadYouTubeSource({ videoId: source.youtubeVideoId, url: source.youtubeUrl }, storagePath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); });
   const s = await stat(storagePath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(storagePath, { force: true }); throw new Error(validation.reason); }
-  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), expiresAt: new Date(Date.now() + RETENTION_MS) } });
+  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
 
-/** Family name of a font file for libass (which looks fonts up by name), read with fontconfig's fc-scan; undefined when unavailable. */
-async function fontFamilyOfFile(fontFile: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execFileAsync("fc-scan", ["--format", "%{family}\\n", fontFile]);
-    return stdout.split("\n")[0]?.split(",")[0]?.trim() || undefined;
-  } catch { return undefined; }
+const fontFamilies = new Map<string, Promise<string | undefined>>();
+/** Family name of a font file for libass (which looks fonts up by name), read with fontconfig's fc-scan; undefined when unavailable. Memoized per path. */
+function fontFamilyOfFile(fontFile: string): Promise<string | undefined> {
+  let family = fontFamilies.get(fontFile);
+  if (!family) {
+    family = execFileAsync("fc-scan", ["--format", "%{family}\\n", fontFile]).then(({ stdout }) => stdout.split("\n")[0]?.split(",")[0]?.trim() || undefined, () => undefined);
+    fontFamilies.set(fontFile, family);
+  }
+  return family;
 }
 
 /**
@@ -81,7 +83,7 @@ async function prepareCaptions(jobId: string, definition: ProjectDefinition, out
   const sourceIds = clipSourceIds(definition);
   const segments = await prisma.transcriptSegment.findMany({ where: { sourceId: { in: sourceIds }, isActive: true }, orderBy: { startSeconds: "asc" } });
   const bySource = new Map<string, typeof segments>();
-  for (const segment of segments) bySource.set(segment.sourceId, [...(bySource.get(segment.sourceId) ?? []), segment]);
+  for (const segment of segments) { const list = bySource.get(segment.sourceId); if (list) list.push(segment); else bySource.set(segment.sourceId, [segment]); }
   const files = buildCaptionFiles(definition, bySource);
   if (!files.cues.length) { await logJobEvent(jobId, "WARN", `Captions (${options.mode}) requested but no active transcript segments fall inside the composition; rendering without captions`); return null; }
   const base = outputPath.replace(/\.mp4$/, "");
@@ -108,10 +110,16 @@ async function prepareCaptions(jobId: string, definition: ProjectDefinition, out
   return { soft, burn };
 }
 
+/** The definition snapshot a job was queued with (`parameters.renderDefinition`), else the project's current one. */
+function jobDefinition(job: { parameters: unknown }, project: { definition: unknown }): ProjectDefinition {
+  const parameters = job.parameters && typeof job.parameters === "object" ? (job.parameters as Record<string, unknown>) : {};
+  return ("renderDefinition" in parameters ? parameters.renderDefinition : project.definition) as ProjectDefinition;
+}
+
 async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VIDEO" | "PREVIEW" | "THUMBNAIL") {
   if (!job) throw new Error("Missing job");
   const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true, assets: true } }); if (!project) throw new Error("Project not found");
-  const definition = (job.parameters && typeof job.parameters === "object" && "renderDefinition" in (job.parameters as Record<string, unknown>) ? (job.parameters as { renderDefinition: ProjectDefinition }).renderDefinition : project.definition) as unknown as ProjectDefinition;
+  const definition = jobDefinition(job, project);
   await mkdir(MEDIA_ROOT, { recursive: true });
   if (type === "THUMBNAIL") {
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
@@ -130,24 +138,24 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     plan.args[videoMapIndex] = "[preview]";
     plan.args.splice(plan.args.length - 1, 0, "-preset", "ultrafast", "-crf", "30");
   }
-  const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const totalMs = Math.max(1, Math.round((definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds) * 1000)); plan.args.splice(plan.args.length - 1, 0, "-progress", "pipe:1", "-nostats");
-  await updateProgress(job.id, { phase, message: type === "PREVIEW" ? "Rendering preview" : "Rendering video", progress: 0, totalMs: BigInt(totalMs) }, true);
-  const ffmpegProcess = spawn("ffmpeg", plan.args, { stdio: ["pipe", "pipe", "pipe"] }); runningProcesses.set(job.id, ffmpegProcess); let stdoutBuffer = ""; let stderr = "";
-  ffmpegProcess.stdout.on("data", chunk => { stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; for (const line of lines) { const [key, value] = line.trim().split("="); if (key === "out_time_ms" && value && Number.isFinite(Number(value))) { const currentMs = Number(value) / 1000; const progress = Math.max(0, Math.min(99, Math.round((currentMs / totalMs) * 100))); void updateProgress(job.id, { phase, message: `Rendering ${type.toLowerCase()}`, progress, currentMs: BigInt(Math.round(currentMs)), totalMs: BigInt(totalMs) }); } if (key === "speed" && value) void updateProgress(job.id, { speed: value }); } });
-  ffmpegProcess.stderr.on("data", chunk => { stderr += chunk.toString(); });
-  await new Promise<void>((resolve, reject) => { ffmpegProcess.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); ffmpegProcess.on("error", reject); }).finally(() => { if (prepared?.burn) void rm(prepared.burn.assPath, { force: true }).catch(() => undefined); }); runningProcesses.delete(job.id);
+  const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const totalMs = Math.max(1, Math.round((definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds) * 1000));
+  await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
+  try { await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase, message, from: 0, to: 99, reportSpeed: true }); }
+  finally { if (prepared?.burn) void rm(prepared.burn.assPath, { force: true }).catch(() => undefined); }
   await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW", captionFiles?.language);
   if (captionFiles) { await createOutput(project.id, job.id, "CAPTIONS_SRT", captionFiles.srtPath, CAPTION_MIME.srt, type === "PREVIEW", captionFiles.language); await createOutput(project.id, job.id, "CAPTIONS_VTT", captionFiles.vttPath, CAPTION_MIME.vtt, type === "PREVIEW", captionFiles.language); }
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: `${type === "PREVIEW" ? "Preview" : "Video"} ready`, completedAt: new Date() }, true);
 }
 
+type ProgressRange = { phase: string; message: string; from: number; to: number; reportSpeed?: boolean };
+
 /** Runs ffmpeg with -progress output; resolves with stderr (loudnorm prints its measurement there). Progress covers [from, to] percent. */
-async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: number, message: string, from: number, to: number): Promise<string> {
+async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: number, { phase, message, from, to, reportSpeed }: ProgressRange): Promise<string> {
   const withProgress = [...args.slice(0, 2), "-progress", "pipe:1", "-nostats", ...args.slice(2)];
   const child = spawn("ffmpeg", withProgress, { stdio: ["pipe", "pipe", "pipe"] });
   runningProcesses.set(jobId, child);
   let stdoutBuffer = ""; let stderr = "";
-  child.stdout.on("data", chunk => { stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; for (const line of lines) { const [key, value] = line.trim().split("="); if (key === "out_time_ms" && value && Number.isFinite(Number(value))) { const currentMs = Number(value) / 1000; const progress = Math.round(from + Math.max(0, Math.min(1, currentMs / totalMs)) * (to - from)); void updateProgress(jobId, { phase: "ENCODING", message, progress: Math.min(99, progress) }); } } });
+  child.stdout.on("data", chunk => { stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; for (const line of lines) { const [key, value] = line.trim().split("="); if (key === "out_time_ms" && value && Number.isFinite(Number(value))) { const currentMs = Number(value) / 1000; const progress = Math.round(from + Math.max(0, Math.min(1, currentMs / totalMs)) * (to - from)); void updateProgress(jobId, { phase, message, progress: Math.min(99, progress), currentMs: BigInt(Math.round(currentMs)), totalMs: BigInt(totalMs) }); } if (reportSpeed && key === "speed" && value) void updateProgress(jobId, { speed: value }); } });
   child.stderr.on("data", chunk => { stderr += chunk.toString(); });
   try { await new Promise<void>((resolve, reject) => { child.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); child.on("error", reject); }); } finally { runningProcesses.delete(jobId); }
   return stderr;
@@ -157,7 +165,7 @@ async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: num
 async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
   if (!job) throw new Error("Missing job");
   const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true } }); if (!project) throw new Error("Project not found");
-  const definition = (job.parameters && typeof job.parameters === "object" && "renderDefinition" in (job.parameters as Record<string, unknown>) ? (job.parameters as { renderDefinition: ProjectDefinition }).renderDefinition : project.definition) as unknown as ProjectDefinition;
+  const definition = jobDefinition(job, project);
   const settings = readPodcastSettings(definition, job.parameters);
   await mkdir(MEDIA_ROOT, { recursive: true });
   const sourcePaths = resolveSourcePaths(definition, project.sources);
@@ -175,14 +183,14 @@ async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
   const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: "measure" });
   const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
   await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 0, totalMs: BigInt(totalMs) }, true);
-  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, "Measuring loudness", 0, 40);
+  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 0, to: 40 });
   const measurement = parseLoudnormMeasurement(measureLog);
   // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
   if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
   else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
   const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: measurement ?? undefined });
   await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 40 }, true);
-  await runFfmpegWithProgress(job.id, plan.args, totalMs, "Encoding podcast", 40, 100);
+  await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 40, to: 100 });
   await createOutput(project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Podcast ready", completedAt: new Date() }, true);
 }
@@ -342,28 +350,45 @@ async function resumeInterruptedTranscriptions() {
 async function processJob() { const job = await claimJob(); if (!job) return false; try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else if (job.type === "PODCAST") await runPodcastJob(job); else await runFfmpegJob(job, job.type); } catch (error) { await failJob(job.id, error, "Media job failed", { type: job.type }); } return true; }
 
 const captionPublishDeps: CaptionPublishDeps = {
-  findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),
+  findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),
   getAccessToken: getYouTubeAccessToken,
   upload: uploadCaptionToYouTube,
   log: async (jobId, level, message, data) => { console.warn(`[captions] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); },
 };
 
-type PublicationRow = { id: string; projectId: string; privacy: string; project: { title: string; preacher: string | null }; output: { storagePath: string; jobId: string | null } | null };
+type PublicationRow = { id: string; projectId: string; privacy: string; project: { title: string; preacher: string | null }; output: { storagePath: string; jobId: string | null } };
+type PublicationInputs = { thumbnailPath?: string; title: string; description?: string };
 
 /** Facebook Page upload: the token comes from the environment (never the database) and stays out of logs and errors. */
-async function runFacebookPublication(publication: PublicationRow) {
+async function runFacebookPublication(publication: PublicationRow, inputs: PublicationInputs) {
   const config = readFacebookConfig();
   if (!config) throw new Error("Facebook is not configured: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_ACCESS_TOKEN on the worker (see docs/FACEBOOK_SETUP.md)");
-  if (!publication.output) throw new Error("The publication has no video output");
   const jobId = publication.output.jobId;
-  const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } });
   const sidecar = jobId ? await captionPublishDeps.findSidecar(jobId) : null;
   const log = async (level: "INFO" | "WARN", message: string, data?: Record<string, unknown>) => { console.log(`[facebook] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); };
-  const result = await publishVideoToFacebook({ filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, published: publication.privacy === "PUBLIC", sidecar }, { config, log, client: { pollIntervalMs: Number(process.env.FACEBOOK_STATUS_POLL_MS ?? 5000), timeoutMs: Number(process.env.FACEBOOK_PROCESSING_TIMEOUT_MS ?? 30 * 60_000), retryDelayMs: Number(process.env.FACEBOOK_RETRY_DELAY_MS ?? 1000) } });
-  await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date(), error: null } });
+  const result = await publishVideoToFacebook({ filePath: publication.output.storagePath, ...inputs, published: publication.privacy === "PUBLIC", sidecar }, { config, log, client: { pollIntervalMs: Number(process.env.FACEBOOK_STATUS_POLL_MS ?? 5000), timeoutMs: Number(process.env.FACEBOOK_PROCESSING_TIMEOUT_MS ?? 30 * 60_000), retryDelayMs: Number(process.env.FACEBOOK_RETRY_DELAY_MS ?? 1000) } });
+  return result.videoId;
 }
 
-async function processPublication() { const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false; const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false; try { if (publication.provider === "FACEBOOK") { await runFacebookPublication(publication); return true; } const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } }); const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" }); await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date() } }); await uploadCaptionsAfterVideo({ videoId: result.videoId, videoOutput: publication.output }, captionPublishDeps); } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } return true; }
+async function runYouTubePublication(publication: PublicationRow, inputs: PublicationInputs) {
+  const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, ...inputs, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" });
+  return result.videoId;
+}
+
+async function processPublication() {
+  const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false;
+  const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false;
+  const row = { ...publication, output: publication.output };
+  try {
+    const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false }, orderBy: { createdAt: "desc" } });
+    const inputs: PublicationInputs = { thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined };
+    const externalId = await (publication.provider === "FACEBOOK" ? runFacebookPublication : runYouTubePublication)(row, inputs);
+    await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId, completedAt: new Date(), error: null } });
+    // Facebook uploads its captions as part of publishVideoToFacebook; YouTube captions go up after the video.
+    if (publication.provider === "YOUTUBE") await uploadCaptionsAfterVideo({ videoId: externalId, videoOutput: publication.output }, captionPublishDeps);
+  } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); }
+  return true;
+}
 
 // No expiry cleanup: project media is persistent (src/lib/prisma.ts clears expiresAt on write and drops expiresAt filters on
 // findMany). The former cleanupExpiredMedia() relied on that filter, so it selected *every* source and output and deleted
