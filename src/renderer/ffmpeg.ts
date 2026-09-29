@@ -158,7 +158,7 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
   // Definitions are stored as saved by the editor, without schema defaults applied.
   const overlays = items.filter((item): item is OverlayItem => item.type === "overlay").map((item) => ({ ...item, opacity: item.opacity ?? 1, data: item.data ?? {} }));
   const overlaySlates = items.filter((item): item is SlateItem => item.type === "slate" && item.mode === "overlay");
-  if (!baseItems.length) throw new Error("Composition must contain at least one source clip, standalone slate or standalone voiceover");
+  if (!baseItems.length) throw new Error("Composition must contain at least one source clip or standalone slate (or standalone voiceover)");
 
   const sourceIds = Array.from(new Set(baseItems.filter((i): i is SourceClipItem => i.type === "source-clip").map((i) => i.sourceId)));
   const sourceIndexMap = new Map(sourceIds.map((id, index) => [id, index]));

@@ -416,3 +416,45 @@ describe("burned-in captions", () => {
     expect(graph(buildCompositionRenderPlan(definition, sources, "/tmp/out.mp4").args)).not.toContain("ass=");
   });
 });
+
+describe("audio clips", () => {
+  const voice = { type: "audio-clip" as const, assetId: "vo", mode: "standalone" as const, startSeconds: 1, endSeconds: 4, volume: 1, atSeconds: 0, duckSourceVolume: 1, data: {} };
+  const clipItem = { type: "source-clip" as const, sourceId: "a", startSeconds: 0, endSeconds: 5 };
+  const build = (items: object[], assets = new Map([["vo", "/lib/voice.m4a"]])) =>
+    buildCompositionRenderPlan({ ...base, composition: { ...baseComposition, items: items as never } }, new Map([["a", "/tmp/a.mp4"]]), "/tmp/out.mp4", assets);
+  const graph = (plan: { args: string[] }) => plan.args[plan.args.indexOf("-filter_complex") + 1];
+
+  it("renders a standalone voiceover as a background section with the recording as audio", () => {
+    const plan = build([clipItem, voice]);
+    expect(plan.args).toContain("/lib/voice.m4a");
+    expect(plan.args.join(" ")).toContain("color=c=black:s=1920x1080:r=30:d=3");
+    const g = graph(plan);
+    expect(g).toMatch(/\[\d:a\]atrim=start=1:duration=3,.*apad=whole_dur=3,atrim=duration=3.*\[a1\]/);
+    expect(g).toContain("[v0][a0][v1][a1]concat=n=2:v=1:a=1");
+  });
+
+  it("supports a voiceover-only composition and a background image", () => {
+    const plan = build([{ ...voice, backgroundImage: "bg" }], new Map([["vo", "/lib/voice.m4a"], ["bg", "/lib/bg.png"]]));
+    expect(plan.args).toContain("/lib/bg.png");
+    expect(graph(plan)).toContain("[0:v]trim=duration=3");
+  });
+
+  it("layers a mix over the finished audio and ducks the source only for the mix window", () => {
+    const g = graph(build([clipItem, { ...voice, mode: "mix", atSeconds: 2, volume: 1.5, duckSourceVolume: 0.25 }]));
+    expect(g).toContain("volume=1.5,");
+    expect(g).toContain("adelay=delays=2000:all=1[mixin0]");
+    expect(g).toContain("volume=volume='if(between(t,2,5),0.25,1)':eval=frame[duck0]");
+    expect(g).toContain("[duck0][mixin0]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix0]");
+  });
+
+  it("leaves the source audio alone when not ducking, and maps the mix as the audio output", () => {
+    const plan = build([clipItem, { ...voice, mode: "mix", atSeconds: 0 }]);
+    expect(graph(plan)).not.toContain("eval=frame");
+    expect(plan.args[plan.args.indexOf("-map", plan.args.indexOf("-filter_complex")) + 3]).toBe("[mix0]");
+  });
+
+  it("fails clearly when the audio asset is missing", () => {
+    expect(() => build([clipItem, voice], new Map())).toThrow(/Missing audio asset for assetId: vo/);
+    expect(() => build([clipItem, { ...voice, mode: "mix" }], new Map())).toThrow(/Missing audio asset/);
+  });
+});

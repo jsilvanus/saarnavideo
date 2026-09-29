@@ -67,3 +67,27 @@ describe("mapCaptionsToTimeline", () => {
     expect(mapCaptionsToTimeline([clip("a", 0, 5)], new Map())).toEqual([]);
   });
 });
+
+describe("standalone audio clips", () => {
+  const voice = (startSeconds: number, endSeconds: number, extra: Record<string, unknown> = {}) => ({ type: "audio-clip", assetId: "vo", mode: "standalone", startSeconds, endSeconds, volume: 1, atSeconds: 0, duckSourceVolume: 1, data: {}, ...extra }) as TimelineItem;
+
+  it("takes time on the timeline (trimmed length) and shifts later captions, without carrying cues", () => {
+    const items = [clip("a", 0, 5), voice(2, 5), clip("b", 0, 5)];
+    const cues = mapCaptionsToTimeline(items, new Map([["a", [seg(1, 2, "a")]], ["b", [seg(1, 2, "b")]]]));
+    expect(cues).toEqual([seg(1, 2, "a"), seg(9, 10, "b")]);
+    expect(layoutTimeline(items).map((slot) => [slot.outputStart, slot.duration])).toEqual([[0, 5], [5, 3], [8, 5]]);
+    expect(timelineDuration(items)).toBe(13);
+  });
+
+  it("does not let mixed voiceovers take time or move captions", () => {
+    const items = [clip("a", 0, 5), voice(0, 4, { mode: "mix", atSeconds: 1 }), clip("b", 0, 5)];
+    const cues = mapCaptionsToTimeline(items, new Map([["b", [seg(1, 2, "b")]]]));
+    expect(cues).toEqual([seg(6, 7, "b")]);
+    expect(timelineDuration(items)).toBe(10);
+  });
+
+  it("pulls a crossfaded item back over a voiceover like any other base item", () => {
+    const items = [voice(0, 4), clip("a", 0, 5, { type: "crossfade", durationSeconds: 1 })];
+    expect(layoutTimeline(items).map((slot) => slot.outputStart)).toEqual([0, 3]);
+  });
+});
