@@ -15,6 +15,8 @@ import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
 import { buildBurnedCaptionAss, buildCaptionFiles, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
+import { readFacebookConfig } from "@/integrations/facebook";
+import { publishVideoToFacebook } from "@/worker/facebook-publish";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -296,7 +298,22 @@ const captionPublishDeps: CaptionPublishDeps = {
   log: async (jobId, level, message, data) => { console.warn(`[captions] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); },
 };
 
-async function processPublication() { const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false; const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false; try { const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } }); const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" }); await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date() } }); await uploadCaptionsAfterVideo({ videoId: result.videoId, videoOutput: publication.output }, captionPublishDeps); } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } return true; }
+type PublicationRow = { id: string; projectId: string; privacy: string; project: { title: string; preacher: string | null }; output: { storagePath: string; jobId: string | null } | null };
+
+/** Facebook Page upload: the token comes from the environment (never the database) and stays out of logs and errors. */
+async function runFacebookPublication(publication: PublicationRow) {
+  const config = readFacebookConfig();
+  if (!config) throw new Error("Facebook is not configured: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_ACCESS_TOKEN on the worker (see docs/FACEBOOK_SETUP.md)");
+  if (!publication.output) throw new Error("The publication has no video output");
+  const jobId = publication.output.jobId;
+  const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } });
+  const sidecar = jobId ? await captionPublishDeps.findSidecar(jobId) : null;
+  const log = async (level: "INFO" | "WARN", message: string, data?: Record<string, unknown>) => { console.log(`[facebook] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); };
+  const result = await publishVideoToFacebook({ filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, published: publication.privacy === "PUBLIC", sidecar }, { config, log, client: { pollIntervalMs: Number(process.env.FACEBOOK_STATUS_POLL_MS ?? 5000), timeoutMs: Number(process.env.FACEBOOK_PROCESSING_TIMEOUT_MS ?? 30 * 60_000), retryDelayMs: Number(process.env.FACEBOOK_RETRY_DELAY_MS ?? 1000) } });
+  await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date(), error: null } });
+}
+
+async function processPublication() { const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false; const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false; try { if (publication.provider === "FACEBOOK") { await runFacebookPublication(publication); return true; } const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } }); const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" }); await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date() } }); await uploadCaptionsAfterVideo({ videoId: result.videoId, videoOutput: publication.output }, captionPublishDeps); } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } return true; }
 
 // No expiry cleanup: project media is persistent (src/lib/prisma.ts clears expiresAt on write and drops expiresAt filters on
 // findMany). The former cleanupExpiredMedia() relied on that filter, so it selected *every* source and output and deleted

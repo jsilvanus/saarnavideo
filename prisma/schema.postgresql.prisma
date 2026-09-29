@@ -53,6 +53,7 @@ enum JobLogLevel {
 }
 enum PublicationProvider {
   YOUTUBE
+  FACEBOOK
 }
 enum PublicationStatus {
   QUEUED
