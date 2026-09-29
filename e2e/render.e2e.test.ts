@@ -109,8 +109,10 @@ describe("rendering through the real API and worker", () => {
 
     const { filePath } = await render(project.id);
 
-    expect(isBlue(averageColor(await frameRgb(filePath, 2, { x: 150, y: 150, w: 100, h: 100 })))).toBe(true);
-    expect(isGreen(averageColor(await frameRgb(filePath, 2, { x: 600, y: 600, w: 300, h: 300 })))).toBe(true);
+    const overlayColor = averageColor(await frameRgb(filePath, 2, { x: 150, y: 150, w: 100, h: 100 }));
+    expect(isBlue(overlayColor), `overlay region colour ${JSON.stringify(overlayColor)}`).toBe(true);
+    const backgroundColor = averageColor(await frameRgb(filePath, 2, { x: 600, y: 600, w: 300, h: 300 }));
+    expect(isGreen(backgroundColor), `background region colour ${JSON.stringify(backgroundColor)}`).toBe(true);
   });
 
   it("renders a small preview", async () => {
