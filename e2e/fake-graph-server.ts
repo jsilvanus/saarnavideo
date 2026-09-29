@@ -87,7 +87,7 @@ export async function startFakeGraphServer(overrides: Partial<FakeGraphConfig> =
       let files = new Map<string, { filename: string; bytes: Buffer }>();
       const contentType = request.headers["content-type"] ?? "";
       if (request.method === "POST" && contentType.startsWith("multipart/form-data")) {
-        const form = await new Response(body, { headers: { "content-type": contentType } }).formData();
+        const form = await new Response(new Uint8Array(body), { headers: { "content-type": contentType } }).formData();
         for (const [key, value] of form.entries()) {
           if (typeof value === "string") fields.set(key, value);
           else files.set(key, { filename: value.name, bytes: Buffer.from(await value.arrayBuffer()) });

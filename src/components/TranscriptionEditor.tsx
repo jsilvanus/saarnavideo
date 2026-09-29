@@ -226,6 +226,7 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
         .catch(() => { if (!controller.signal.aborted) setTextPreview(""); });
     }, 300);
     return () => { clearTimeout(timer); controller.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.id, textStart, textEnd, textRangeError, captions]);
   const textSections = sections.filter(x => x.sourceId === source?.id && x.startSeconds !== undefined && x.endSeconds !== undefined);
   function pickTextSection(id: string) {
