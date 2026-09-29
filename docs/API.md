@@ -341,9 +341,44 @@ Content-Length: 1234567890
 - `THUMBNAIL` - Generated JPG thumbnail (`.jpg`)
 - `CAPTIONS_SRT` - Sidecar SubRip captions on the output timeline (`.srt`, `application/x-subrip; charset=utf-8`)
 - `CAPTIONS_VTT` - Sidecar WebVTT captions on the output timeline (`.vtt`, `text/vtt; charset=utf-8`)
+- `AUDIO` - Podcast audio file (`.mp3`, `audio/mpeg`, or `.m4a`, `audio/mp4`); downloaded as `saarnavideo-podcast.<ext>`
 
 Caption outputs carry a `language` (BCP 47 tag) and are named `saarnavideo-captions-<language>.<ext>`.
 They exist only for renders queued with `captions.mode = "soft"`, and share the video's `jobId`.
+
+#### Audio assets (voiceovers, podcast intro/outro)
+
+`POST /assets` and `POST /projects/{projectId}/assets` also accept audio: MP3, M4A, WAV, OGG or WebM
+(the type is taken from the MIME type, codec parameters such as `audio/webm;codecs=opus` are ignored, a
+missing/generic type falls back to the file extension). The asset is stored with `type: "AUDIO"` whatever
+`type` the form sends, the duration is probed with ffprobe (`durationMs` in every asset response) and files
+that ffprobe cannot read as audio return `400`. The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
+200 MB, `413` above it). Identical bytes are deduplicated like images. `GET /assets/{id}` and
+`GET /projects/{projectId}/assets/{assetId}` serve audio with `Range` support.
+
+#### Voiceover timeline item and podcast export
+
+A composition item `{"type":"audio-clip","assetId":...}` places an audio asset on the timeline.
+`startSeconds`/`endSeconds` trim the audio file (so the clip length is known without probing), `volume`
+defaults to 1.
+- `mode: "standalone"` (default): a section in sequence with the others. Video: the template background
+  colour, `backgroundImage` or `graphicId` graphic is shown while the recording plays. Podcast: voice only.
+- `mode: "mix"`: layered over the finished timeline from `atSeconds` (video-timeline seconds) for its length;
+  `duckSourceVolume` (0-1, default 1 = untouched) multiplies the source audio while it plays.
+
+Audio assets are looked up by id in the whole library. `POST /projects/{projectId}/generate` returns `400`
+when an `audio-clip` or podcast intro/outro asset does not exist as an `AUDIO` asset.
+
+`POST /projects/{projectId}/generate` with `{"type":"PODCAST","podcast":{...}}` queues an audio-only job
+(no THUMBNAIL job follows). `podcast` is merged over `definition.podcast` (the settings saved with the
+project) and may contain `introAssetId`, `outroAssetId`, `format` (`mp3` default | `m4a`), `channels`
+(`mono` default | `stereo`), `crossfadeSeconds` (0-5, default 0.5) and the tags `title`, `artist`, `album`,
+`date`, `comment`; invalid values return `400`. The result is `[intro] + composition audio + [outro]`,
+crossfaded, loudness-normalised in two passes to -16 LUFS (-1.5 dBTP), 44.1 kHz, 96 kbit/s mono or
+128 kbit/s stereo, and stored as an `AUDIO` output. Standalone slates are silent and skipped; mixed
+voiceovers keep their position relative to the audio around them. Tags default to the project title
+(title), preacher (artist), Gospel reference (comment) and today (date); the latest thumbnail, if any,
+is embedded as cover art. Intro and outro are used for the podcast only, never in the video.
 
 #### Caption options
 

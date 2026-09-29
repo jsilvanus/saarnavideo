@@ -100,14 +100,14 @@ Models:
 - **GenerationJob** - Async video generation task
 - **Output** - Generated video or thumbnail artifact
 - **Publication** - YouTube upload record
-- **Asset** - User-uploaded image (overlay, background, logo, font)
+- **Asset** - Library image or audio file (overlay, background, logo, font; audio for voiceovers and podcast intro/outro, with `durationMs`)
 - **JobLog** - Generation process logs
 
 Enums:
 - SourceType (UPLOAD, YOUTUBE)
-- OutputType (VIDEO, THUMBNAIL)
+- OutputType (VIDEO, THUMBNAIL, CAPTIONS_SRT, CAPTIONS_VTT, AUDIO)
 - JobStatus (QUEUED → ACQUIRING_SOURCE → PROCESSING → RENDERING → COMPLETED/FAILED)
-- AssetType (OVERLAY, BACKGROUND, LOGO, FONT)
+- AssetType (OVERLAY, BACKGROUND, LOGO, FONT, AUDIO)
 - PublicationStatus (QUEUED → UPLOADING → COMPLETED/FAILED)
 
 ### Documentation (`/docs`)
@@ -180,14 +180,14 @@ Project
 6. **Output Storage** - Download or publish video
 
 ### Asset Library
-Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB) live in one global, deduplicated library shared by all projects. The UI is at `/assets` ("Graphics library" link in the root layout, `src/app/assets/page.tsx`).
+Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB; audio is described under "Voiceover and podcast") live in one global, deduplicated library shared by all projects. The UI is at `/assets` ("Graphics library" link in the root layout, `src/app/assets/page.tsx`).
 
 - **Storage:** content-addressed files at `MEDIA_ROOT/assets/library/<sha256>.<ext>`. `Asset.contentHash` deduplicates: uploading identical bytes again reuses the existing row (the new `assetKey` is ignored) instead of creating a copy.
 - **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. They are removed only through `DELETE /api/projects/[id]/assets/[assetId]` when the last linked project unlinks them.
 - **Folders:** `AssetFolder` is a tree (`parentId`) used only for organisation. The library page supports drag-and-drop moves between folders and breadcrumbs.
 - **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. The graphics editor's image picker lists only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
 - **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is silently skipped.
-- **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images only.
+- **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images and audio only. `AUDIO` is set automatically for audio files.
 
 ### Captions and export formats
 Captions come from the active `TranscriptSegment`s of each source (see `docs/transcription-editor-contract.md`). Source-level export is `GET /api/sources/[id]/captions.vtt|.srt`. Composition-level (soft) captions are a render option:
@@ -217,6 +217,15 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Upload:** `src/integrations/facebook.ts` (resumable start/transfer/finish with server-dictated chunk ranges, retries on 5xx/network, status polling, thumbnail, `video.<locale>.srt` captions, Graph error mapping such as code 190) and `src/worker/facebook-publish.ts` (orchestration: thumbnail and caption failures are WARN job logs, never fail the publication; upload/processing errors fail it with a readable `Publication.error`).
 - **Tests:** `e2e/fake-graph-server.ts` is a fake Graph API with chunk accounting and an admin API; `src/integrations/facebook.test.ts` (unit/integration) and `e2e/facebook.e2e.test.ts`. `e2e/global-setup.ts` starts the fake server and points the worker and Next server at it (`inject("facebookUrl")`). Never verified against the real Graph API; see `docs/FACEBOOK_SETUP.md`.
 - `src/lib/prisma.ts` now also strips `expiresAt` filters from `findFirst` (before, the publish route and the worker never found any output because expiry is cleared on write).
+
+### Voiceover and podcast
+Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `Asset.durationMs` is probed with ffprobe on upload, `src/integrations/audio-assets.ts`: mp3/m4a/wav/ogg/webm, `MAX_AUDIO_ASSET_SIZE_BYTES` default 200 MB). `POST /api/assets` and `POST /api/projects/[id]/assets` detect audio by MIME/extension and force type AUDIO (`readAudioUpload`/`storeAudioAsset` in `src/app/api/_lib/assets.ts`). Browser recordings (`audio/webm;codecs=opus`, no duration in the header) get their duration by decoding once. The `/assets` page shows audio tiles with a player.
+
+- **Timeline item `audio-clip`** (`audioClipSchema`, `src/domain/project.ts`): `assetId`, trim `startSeconds`/`endSeconds` (of the audio file, so length is known without probing), `volume`, `mode`. `standalone` = a base item taking time in sequence (like a slate: `isBaseItem`/`baseItemDuration`; `layoutTimeline` and therefore soft/burned caption alignment include it, it carries no cues). `mix` = layered from `atSeconds` (video-timeline seconds), takes no time, `duckSourceVolume` lowers the source audio during it. Optional `graphicId`/`backgroundImage`/`data` give a standalone clip's video picture (built as a slate; default = template background colour). Definitions are stored without schema defaults, so the renderer applies them itself.
+- **Video render** (`buildCompositionRenderPlan`): standalone clip = slate-like picture + `audioClipFilter` (trim, pad/cut to exact length); mixes = `audioMixFilters` (`adelay` + `amix normalize=0`, ducking via `volume` with `eval=frame`) after the concat. Audio assets are found in `assetPaths` by **asset id** and, unlike images, are loaded from the whole library by the worker (`referencedAudioAssetIds`), not only project-linked assets.
+- **Podcast**: `definition.podcast` (`podcastSettingsSchema`: `introAssetId`, `outroAssetId`, `format` mp3|m4a, `channels`, `crossfadeSeconds`, tags) is saved with the project (optional, old definitions unchanged). `POST /generate {type:"PODCAST", podcast?}` creates a `MediaJob` of type `PODCAST` (no thumbnail job); the worker (`runPodcastJob`, `src/worker/index.ts`) runs `buildPodcastRenderPlan` (`src/renderer/podcast.ts`) twice: a loudnorm measure pass and a linear second pass to -16 LUFS / -1.5 dBTP, output `Output.type = AUDIO` (`audio/mpeg` or `audio/mp4`, extension via `outputExtension(type, mimeType)`). Body = base items in order minus standalone slates (silent, skipped); mixes are moved earlier by the slate time removed before them. Intro/outro are podcast-only: `[intro] acrossfade [body] acrossfade [outro]` (0 = concat), downmixed to mono (default) or stereo, 44.1 kHz, libmp3lame 96k/128k or AAC. Tags via `-metadata` with `-map_metadata -1` (title = project title, artist = preacher, comment = gospelRef, date = today, album from settings), cover art = latest THUMBNAIL output as attached picture (skipped, with an INFO log, when none exists yet). No RSS feed.
+- **UI**: tabs `Voiceover` (`VoiceoverPanel.tsx`: MediaRecorder record/stop/preview/re-record/save, file upload, project audio list with "Add as section" / "Mix over video") and `Podcast` (`PodcastPanel.tsx`: intro/outro pickers from the library, format, channels, crossfade, tags, generate, player + download). `CompositionEditor` shows audio in the resource bin: drop between sections = standalone clip, drop into a section = mix at that section's start.
+- **Tests**: unit `src/domain/audio-clip.test.ts`, `src/renderer/podcast.test.ts`, `caption-timeline.test.ts`, `ffmpeg.test.ts`, `src/worker/podcast.test.ts`, `src/integrations/audio-assets.test.ts`; `e2e/voiceover-podcast.e2e.test.ts` (sine-tone fixtures, segment order by Goertzel, duration, ID3 tags, cover art, ebur128 loudness, caption alignment, ducking).
 
 ### Template System
 Projects reference templates by key (e.g., "sermon"). Templates define:
@@ -256,9 +265,9 @@ Projects reference templates by key (e.g., "sermon"). Templates define:
 - Source expiration and cleanup
 
 ✅ **Media Assets**
-- Custom image upload (overlays, backgrounds)
+- Custom image upload (overlays, backgrounds) and audio upload/recording (voiceovers, jingles)
 - Asset type classification
-- Per-project asset storage
+- Global asset library linked to projects (no longer per-project storage)
 
 ✅ **Generation & Publishing**
 - Async job queue with status tracking
@@ -284,7 +293,7 @@ Projects reference templates by key (e.g., "sermon"). Templates define:
 - `PUT /api/projects/[id]` - Update project
 - `DELETE /api/projects/[id]` - Delete project
 - `POST /api/projects/[id]/duplicate` - Clone project
-- `POST /api/projects/[id]/generate` - Queue generation job
+- `POST /api/projects/[id]/generate` - Queue generation job (`type`: VIDEO, PREVIEW, THUMBNAIL or PODCAST)
 - `POST /api/projects/[id]/publish` - Queue YouTube publication
 
 ### Sources
@@ -446,7 +455,7 @@ export type Composition = z.infer<typeof compositionSchema>;
 - Large media files are temporary by default (7-day retention)
 - Outputs stored in `MEDIA_OUTPUT_PATH` (usually `/tmp/saarnavideo-outputs`)
 - Sources cached during job processing, cleaned up after completion
-- Asset images stored permanently in database as files
+- Asset images and audio are stored permanently as content-addressed files in the library
 
 ---
 
