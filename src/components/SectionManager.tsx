@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { SECTION_TEMPLATES, instantiateSectionTemplate } from "@/domain/section-templates";
 import type { Section } from "@/domain/sections";
 import { formatTime, sourceLabel } from "./format";
@@ -12,9 +12,11 @@ type Props = {
   sources?: Source[];
   durationSeconds?: number;
   onChange: (sections: Section[]) => Promise<void>;
+  /** Extra per-section controls, e.g. the reframe button. */
+  renderActions?: (section: Section) => ReactNode;
 };
 
-export default function SectionManager({ scope, sections, sources = [], durationSeconds, onChange }: Props) {
+export default function SectionManager({ scope, sections, sources = [], durationSeconds, onChange, renderActions }: Props) {
   const [lines, setLines] = useState("");
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
   const [parentId, setParentId] = useState("");
@@ -86,7 +88,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
     <div className="list">
       {visible.map(section => <div className="row" key={section.id}>
         <span><strong>{section.label}</strong><small>{section.startSeconds !== undefined ? formatTime(section.startSeconds) + " → " + formatTime(section.endSeconds ?? section.startSeconds) : "No position yet"} · {section.origin.toLowerCase()}</small></span>
-        <span className="button-row"><button onClick={() => setParentId(section.id)}>Section inside…</button><button onClick={() => void removeSection(section.id)}>Remove</button></span>
+        <span className="button-row">{renderActions?.(section)}<button onClick={() => setParentId(section.id)}>Section inside…</button><button onClick={() => void removeSection(section.id)}>Remove</button></span>
       </div>)}
       {!visible.length && <p className="muted">{parentId ? "No subsections yet." : "No sections yet."}</p>}
     </div>
