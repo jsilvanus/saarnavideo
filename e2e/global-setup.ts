@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestProject } from "vitest/node";
+import { startFakeGraphServer } from "./fake-graph-server";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -12,6 +13,8 @@ declare module "vitest" {
     fixturesDir: string;
     /** Base URL of a running liturgos-auditor-stt service (AUDITOR_STT_URL), or "" when none is configured. */
     auditorSttUrl: string;
+    /** Base URL of the fake Facebook Graph API the worker and server are configured against (see e2e/fake-graph-server.ts). */
+    facebookUrl: string;
   }
 }
 
@@ -103,6 +106,9 @@ export default async function setup(project: TestProject) {
   // The worker's TRANSCRIBE jobs talk to the STT service named here; without it the transcription e2e skips itself.
   const auditorSttUrl = process.env.AUDITOR_STT_URL?.trim() ?? "";
   if (auditorSttUrl) env.AUDITOR_STT_URL = auditorSttUrl;
+  // A fake Graph API so the Facebook publishing path can run without credentials; the worker and server see it as their configured Page.
+  const fakeGraph = await startFakeGraphServer({ chunkSize: 32 * 1024 });
+  Object.assign(env, { FACEBOOK_PAGE_ID: fakeGraph.state.config.pageId, FACEBOOK_PAGE_ACCESS_TOKEN: fakeGraph.state.config.expectedToken, FACEBOOK_GRAPH_BASE_URL: fakeGraph.url, FACEBOOK_STATUS_POLL_MS: "200", FACEBOOK_RETRY_DELAY_MS: "50" });
   execFileSync(path.join(BIN, "prisma"), ["db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], { cwd: ROOT, env, stdio: "ignore" });
 
   const server = start(path.join(BIN, "next"), ["dev", "--port", String(port)], env, "next");
@@ -113,6 +119,7 @@ export default async function setup(project: TestProject) {
   } catch (error) {
     stop(server);
     stop(worker);
+    await fakeGraph.close();
     throw error;
   }
 
@@ -120,10 +127,12 @@ export default async function setup(project: TestProject) {
   project.provide("mediaRoot", mediaRoot);
   project.provide("fixturesDir", fixturesDir);
   project.provide("auditorSttUrl", auditorSttUrl);
+  project.provide("facebookUrl", fakeGraph.url);
 
   return async () => {
     stop(server);
     stop(worker);
+    await fakeGraph.close();
     if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true });
     await rm(path.join(ROOT, distDir), { recursive: true, force: true });
   };
