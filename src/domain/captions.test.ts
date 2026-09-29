@@ -25,6 +25,8 @@ describe("language helpers", () => {
     expect(toYouTubeLanguage("und")).toBeUndefined();
   });
   it("picks file extensions per output type", () => {
-    expect(["VIDEO", "THUMBNAIL", "CAPTIONS_SRT", "CAPTIONS_VTT"].map(outputExtension)).toEqual(["mp4", "jpg", "srt", "vtt"]);
+    expect(["VIDEO", "THUMBNAIL", "CAPTIONS_SRT", "CAPTIONS_VTT"].map((type) => outputExtension(type))).toEqual(["mp4", "jpg", "srt", "vtt"]);
+    expect(outputExtension("AUDIO", "audio/mpeg")).toBe("mp3");
+    expect(outputExtension("AUDIO", "audio/mp4")).toBe("m4a");
   });
 });

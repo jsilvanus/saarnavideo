@@ -4,11 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { assetFileResponse } from "@/app/api/_lib/assets";
 import { jsonError } from "@/app/api/_lib/http";
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string; assetId: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string; assetId: string }> }) {
   const { id, assetId } = await context.params;
   const asset = await prisma.asset.findFirst({ where: { id: assetId, projects: { some: { id } } } });
   if (!asset?.storagePath) return jsonError("Asset not found", 404);
-  return assetFileResponse(asset);
+  return assetFileResponse(asset, request);
 }
 
 export async function POST(_request: Request, context: { params: Promise<{ id: string; assetId: string }> }) {

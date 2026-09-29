@@ -53,10 +53,11 @@ export const CAPTION_MIME = {
   vtt: "text/vtt; charset=utf-8",
 } as const;
 
-/** File extension for a stored Output row. */
-export function outputExtension(type: string): string {
+/** File extension for a stored Output row; podcast audio is MP3 unless its MIME type says MP4/AAC (M4A). */
+export function outputExtension(type: string, mimeType?: string | null): string {
   switch (type) {
     case "VIDEO": return "mp4";
+    case "AUDIO": return mimeType && /mp4|aac|m4a/i.test(mimeType) ? "m4a" : "mp3";
     case "CAPTIONS_SRT": return "srt";
     case "CAPTIONS_VTT": return "vtt";
     default: return "jpg";

@@ -3,11 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { assetFileResponse } from "@/app/api/_lib/assets";
 import { jsonError } from "@/app/api/_lib/http";
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const asset = await prisma.asset.findUnique({ where: { id } });
   if (!asset) return jsonError("Asset not found", 404);
-  return assetFileResponse(asset);
+  return assetFileResponse(asset, request);
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {

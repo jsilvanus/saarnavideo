@@ -14,6 +14,8 @@ import { createTranscriptionRun } from "@/lib/transcriptionRuns";
 import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
 import { buildBurnedCaptionAss, buildCaptionFiles, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
+import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
+import { PODCAST_TARGET_LUFS, buildPodcastRenderPlan, parseLoudnormMeasurement, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
@@ -44,9 +46,9 @@ async function claimJob() {
   return null;
 }
 
-async function createOutput(projectId: string, jobId: string, type: "VIDEO" | "THUMBNAIL" | "CAPTIONS_SRT" | "CAPTIONS_VTT", storagePath: string, mimeType: string, preview = false, language?: string) {
+async function createOutput(projectId: string, jobId: string, type: "VIDEO" | "THUMBNAIL" | "CAPTIONS_SRT" | "CAPTIONS_VTT" | "AUDIO", storagePath: string, mimeType: string, preview = false, language?: string) {
   const sizeBytes = await stat(storagePath).then(s => s.size, () => undefined);
-  const maxSize = type === "VIDEO" ? RESOURCE_LIMITS.maxOutputFileSizeBytes : 50 * 1024 * 1024;
+  const maxSize = type === "VIDEO" || type === "AUDIO" ? RESOURCE_LIMITS.maxOutputFileSizeBytes : 50 * 1024 * 1024;
   if (sizeBytes !== undefined && sizeBytes > maxSize) throw new Error(`${type} file size ${formatBytes(sizeBytes)} exceeds limit ${formatBytes(maxSize)}`);
   return prisma.output.create({ data: { projectId, jobId, type, preview, storagePath, mimeType, language, sizeBytes, expiresAt: new Date(Date.now() + RETENTION_MS) } }); }
 
@@ -116,6 +118,8 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await execFileAsync("ffmpeg", ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath]); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
   const sourcePaths = resolveSourcePaths(definition, project.sources); const assetPaths = new Map<string, string>(); for (const asset of project.assets) { assetPaths.set(asset.assetKey, asset.storagePath); assetPaths.set(asset.id, asset.storagePath); assetPaths.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
+  // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
+  for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetPaths.set(asset.id, asset.storagePath);
   const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
   const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined });
   if (type === "PREVIEW") {
@@ -135,6 +139,52 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW", captionFiles?.language);
   if (captionFiles) { await createOutput(project.id, job.id, "CAPTIONS_SRT", captionFiles.srtPath, CAPTION_MIME.srt, type === "PREVIEW", captionFiles.language); await createOutput(project.id, job.id, "CAPTIONS_VTT", captionFiles.vttPath, CAPTION_MIME.vtt, type === "PREVIEW", captionFiles.language); }
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: `${type === "PREVIEW" ? "Preview" : "Video"} ready`, completedAt: new Date() }, true);
+}
+
+/** Runs ffmpeg with -progress output; resolves with stderr (loudnorm prints its measurement there). Progress covers [from, to] percent. */
+async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: number, message: string, from: number, to: number): Promise<string> {
+  const withProgress = [...args.slice(0, 2), "-progress", "pipe:1", "-nostats", ...args.slice(2)];
+  const child = spawn("ffmpeg", withProgress, { stdio: ["pipe", "pipe", "pipe"] });
+  runningProcesses.set(jobId, child);
+  let stdoutBuffer = ""; let stderr = "";
+  child.stdout.on("data", chunk => { stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; for (const line of lines) { const [key, value] = line.trim().split("="); if (key === "out_time_ms" && value && Number.isFinite(Number(value))) { const currentMs = Number(value) / 1000; const progress = Math.round(from + Math.max(0, Math.min(1, currentMs / totalMs)) * (to - from)); void updateProgress(jobId, { phase: "ENCODING", message, progress: Math.min(99, progress) }); } } });
+  child.stderr.on("data", chunk => { stderr += chunk.toString(); });
+  try { await new Promise<void>((resolve, reject) => { child.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); child.on("error", reject); }); } finally { runningProcesses.delete(jobId); }
+  return stderr;
+}
+
+/** PODCAST job: intro + composition audio + outro as one loudness-normalised MP3/M4A with tags and cover art (see buildPodcastRenderPlan). */
+async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
+  if (!job) throw new Error("Missing job");
+  const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true } }); if (!project) throw new Error("Project not found");
+  const definition = (job.parameters && typeof job.parameters === "object" && "renderDefinition" in (job.parameters as Record<string, unknown>) ? (job.parameters as { renderDefinition: ProjectDefinition }).renderDefinition : project.definition) as unknown as ProjectDefinition;
+  const settings = readPodcastSettings(definition, job.parameters);
+  await mkdir(MEDIA_ROOT, { recursive: true });
+  const sourcePaths = resolveSourcePaths(definition, project.sources);
+  const audioIds = referencedAudioAssetIds(definition, settings);
+  const audioAssets = new Map((await prisma.asset.findMany({ where: { id: { in: audioIds } } })).map(asset => [asset.id, asset]));
+  const missing = audioIds.filter(id => !audioAssets.has(id)); if (missing.length) throw new Error(`Audio assets not found in the library: ${missing.join(", ")}`);
+  const assetPaths = new Map([...audioAssets].map(([id, asset]) => [id, asset.storagePath]));
+  const pickTrack = (assetId?: string) => { const asset = assetId ? audioAssets.get(assetId) : undefined; return asset ? { path: asset.storagePath, durationSeconds: asset.durationMs != null ? asset.durationMs / 1000 : undefined } : undefined; };
+  const thumbnails = await prisma.output.findMany({ where: { projectId: project.id, type: "THUMBNAIL" }, orderBy: { createdAt: "desc" }, take: 5 });
+  let coverPath: string | undefined; for (const thumbnail of thumbnails) { if (await stat(thumbnail.storagePath).then(() => true, () => false)) { coverPath = thumbnail.storagePath; break; } }
+  if (!coverPath) await logJobEvent(job.id, "INFO", "No thumbnail available yet; the podcast gets no cover art");
+  const metadata = resolvePodcastMetadata(project, settings);
+  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.${settings.format}`);
+  const planOptions = { settings, intro: pickTrack(settings.introAssetId), outro: pickTrack(settings.outroAssetId), coverPath, metadata };
+  const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: "measure" });
+  const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
+  await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 0, totalMs: BigInt(totalMs) }, true);
+  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, "Measuring loudness", 0, 40);
+  const measurement = parseLoudnormMeasurement(measureLog);
+  // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
+  if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
+  else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
+  const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: measurement ?? undefined });
+  await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 40 }, true);
+  await runFfmpegWithProgress(job.id, plan.args, totalMs, "Encoding podcast", 40, 100);
+  await createOutput(project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
+  await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Podcast ready", completedAt: new Date() }, true);
 }
 
 type MediaJobRow = NonNullable<Awaited<ReturnType<typeof claimJob>>>;
@@ -289,7 +339,7 @@ async function resumeInterruptedTranscriptions() {
   }
 }
 
-async function processJob() { const job = await claimJob(); if (!job) return false; try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else await runFfmpegJob(job, job.type); } catch (error) { await failJob(job.id, error, "Media job failed", { type: job.type }); } return true; }
+async function processJob() { const job = await claimJob(); if (!job) return false; try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else if (job.type === "PODCAST") await runPodcastJob(job); else await runFfmpegJob(job, job.type); } catch (error) { await failJob(job.id, error, "Media job failed", { type: job.type }); } return true; }
 
 const captionPublishDeps: CaptionPublishDeps = {
   findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),

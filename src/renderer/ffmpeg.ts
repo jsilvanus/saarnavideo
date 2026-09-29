@@ -1,4 +1,4 @@
-import type { GraphicCarrierItem, ProjectDefinition, TimelineItem, Transition } from "@/domain/project";
+import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem, type Transition } from "@/domain/project";
 
 export type CaptionTrackInput = { path: string; language: string };
 /** Burned-in captions: an ASS file rendered onto the picture with libass after overlays/slates (and before any preview downscale). */
@@ -13,9 +13,9 @@ type RichLayer = { id?: string; type?: string; x?: number; y?: number; width?: n
 type TimeRange = { start: number; end: number };
 
 const ENCODE_ARGS = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart"];
-const AUDIO_NORMALIZE = "asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
+export const AUDIO_NORMALIZE = "asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
-function formatSeconds(value: number): string { return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, ""); }
+export function formatSeconds(value: number): string { return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, ""); }
 function escapeFilterText(value: string): string { return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/,/g, "\\,").replace(/\[/g, "\\[").replace(/\]/g, "\\]").replace(/\n/g, "\\n"); }
 function fontOption(fontFile?: string): string { return fontFile ? `:fontfile='${escapeFilterText(fontFile)}'` : ""; }
 function enableBetween(range: TimeRange): string { return `:enable='between(t,${formatSeconds(range.start)},${formatSeconds(range.end)})'`; }
@@ -33,7 +33,33 @@ export function transitionDuration(transition: Transition | undefined, duration:
   return Math.min(transition.durationSeconds, duration / 2);
 }
 function sourceVideoFilter(inputIndex: number, start: number, duration: number, label: string): string { return `[${inputIndex}:v]trim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)},scale=w=1920:h=1080,setsar=1,setpts=PTS-STARTPTS[${label}]`; }
-function sourceAudioFilter(inputIndex: number, start: number, duration: number, label: string): string { return `[${inputIndex}:a]atrim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${label}]`; }
+/** Audio of an audio-clip, trimmed to its window and padded/cut to exactly `duration` so concat stays in sync with the picture. */
+export function audioClipFilter(inputIndex: number, item: AudioClipItem, label: string, duration = item.endSeconds - item.startSeconds): string {
+  const volume = item.volume !== undefined && item.volume !== 1 ? `volume=${formatSeconds(item.volume)},` : "";
+  return `[${inputIndex}:a]atrim=start=${formatSeconds(item.startSeconds ?? 0)}:duration=${formatSeconds(duration)},${volume}${AUDIO_NORMALIZE},apad=whole_dur=${formatSeconds(duration)},atrim=duration=${formatSeconds(duration)},asetpts=PTS-STARTPTS[${label}]`;
+}
+/**
+ * Layers an audio-clip over `base` starting `at` seconds into it. The base is ducked to `duckSourceVolume` while the clip
+ * plays; amix runs with normalize=0 (plain sum) and `duration=first`, so the result never outlasts the base.
+ */
+export function audioMixFilters(base: string, inputIndex: number, item: AudioClipItem, at: number, index: number): { filters: string[]; output: string } {
+  const duration = item.endSeconds - item.startSeconds;
+  const volume = item.volume !== undefined && item.volume !== 1 ? `volume=${formatSeconds(item.volume)},` : "";
+  const filters = [`[${inputIndex}:a]atrim=start=${formatSeconds(item.startSeconds ?? 0)}:duration=${formatSeconds(duration)},${volume}${AUDIO_NORMALIZE},adelay=delays=${Math.round(at * 1000)}:all=1[mixin${index}]`];
+  let source = base;
+  const duck = item.duckSourceVolume ?? 1;
+  if (duck < 1) {
+    filters.push(`[${source}]volume=volume='if(between(t,${formatSeconds(at)},${formatSeconds(at + duration)}),${formatSeconds(duck)},1)':eval=frame[duck${index}]`);
+    source = `duck${index}`;
+  }
+  filters.push(`[${source}][mixin${index}]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix${index}]`);
+  return { filters, output: `mix${index}` };
+}
+/** Slate stand-in for the picture of a standalone audio clip: its graphic / background image / template background colour. */
+function audioClipAsSlate(item: AudioClipItem): SlateItem {
+  return { type: "slate", template: "rich", mode: "standalone", durationSeconds: item.endSeconds - item.startSeconds, graphicId: item.graphicId, backgroundImage: item.backgroundImage, data: item.data ?? {} };
+}
+export function sourceAudioFilter(inputIndex: number, start: number, duration: number, label: string): string { return `[${inputIndex}:a]atrim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${label}]`; }
 
 function richLayers(item: GraphicCarrierItem): RichLayer[] {
   try {
@@ -127,11 +153,12 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
   const textColor = template?.textColor ?? "white";
   const items = definition.composition.items;
 
-  const baseItems = items.filter((item): item is SourceClipItem | SlateItem => item.type === "source-clip" || (item.type === "slate" && item.mode !== "overlay"));
+  const baseItems = items.filter(isBaseItem);
+  const audioMixes = items.filter((item): item is AudioClipItem => item.type === "audio-clip" && item.mode === "mix");
   // Definitions are stored as saved by the editor, without schema defaults applied.
   const overlays = items.filter((item): item is OverlayItem => item.type === "overlay").map((item) => ({ ...item, opacity: item.opacity ?? 1, data: item.data ?? {} }));
   const overlaySlates = items.filter((item): item is SlateItem => item.type === "slate" && item.mode === "overlay");
-  if (!baseItems.length) throw new Error("Composition must contain at least one source clip or standalone slate");
+  if (!baseItems.length) throw new Error("Composition must contain at least one source clip, standalone slate or standalone voiceover");
 
   const sourceIds = Array.from(new Set(baseItems.filter((i): i is SourceClipItem => i.type === "source-clip").map((i) => i.sourceId)));
   const sourceIndexMap = new Map(sourceIds.map((id, index) => [id, index]));
@@ -158,7 +185,12 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
 
   const ctx: RichContext = { width, height, textColor, imageIndexByAsset, counter: { value: 0 }, fontFile: template?.fontFile };
   const filters: string[] = [];
-  const durations = baseItems.map((item) => (item.type === "slate" ? item.durationSeconds : item.endSeconds - item.startSeconds));
+  const durations = baseItems.map(baseItemDuration);
+  const audioAssetPath = (item: AudioClipItem) => {
+    const assetPath = assetPaths?.get(item.assetId);
+    if (!assetPath) throw new Error(`Missing audio asset for assetId: ${item.assetId}`);
+    return assetPath;
+  };
   baseItems.forEach((item, index) => {
     const duration = durations[index];
     const v = `v${index}`, a = `a${index}`;
@@ -169,11 +201,13 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     }
     const video = nextInput++;
     const audio = nextInput++;
-    if (item.backgroundImage && assetPaths?.has(item.backgroundImage)) args.push("-loop", "1", "-i", assetPaths.get(item.backgroundImage)!);
+    const slate = item.type === "audio-clip" ? audioClipAsSlate(item) : item;
+    if (slate.backgroundImage && assetPaths?.has(slate.backgroundImage)) args.push("-loop", "1", "-i", assetPaths.get(slate.backgroundImage)!);
     else args.push("-f", "lavfi", "-i", `color=c=${backgroundColor}:s=${width}x${height}:r=${fps}:d=${formatSeconds(duration)}`);
-    args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000");
-    filters.push(...slateFilters(video, item, v, ctx));
-    filters.push(`[${audio}:a]atrim=duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${a}]`);
+    if (item.type === "audio-clip") args.push("-i", audioAssetPath(item));
+    else args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000");
+    filters.push(...slateFilters(video, slate, v, ctx));
+    filters.push(item.type === "audio-clip" ? audioClipFilter(audio, item, a) : `[${audio}:a]atrim=duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${a}]`);
   });
 
   let currentVideo = "v0", currentAudio = "a0", currentDuration = durations[0];
@@ -203,6 +237,15 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     currentVideo = nextVideo;
     currentAudio = nextAudio;
   }
+
+  // Voiceovers layered over the finished timeline; the source audio underneath is ducked while they play.
+  audioMixes.forEach((item, index) => {
+    const input = nextInput++;
+    args.push("-i", audioAssetPath(item));
+    const mixed = audioMixFilters(currentAudio, input, item, item.atSeconds ?? 0, index);
+    filters.push(...mixed.filters);
+    currentAudio = mixed.output;
+  });
 
   let outputVideo = currentVideo;
   let overlayCounter = 0;

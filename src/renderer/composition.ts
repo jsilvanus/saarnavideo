@@ -14,6 +14,8 @@ export function materializeGraphics(definition: ProjectDefinition): ProjectDefin
     if (item.type === "source-clip" || !item.graphicId) return item;
     const graphic = graphics.get(item.graphicId);
     if (!graphic) throw new Error(`Missing graphic definition: ${item.graphicId}`);
+    // A voiceover's picture is built like a slate's (audioClipAsSlate reads data.layers), so it only needs the layers.
+    if (item.type === "audio-clip") return { ...item, data: { ...item.data, layers: JSON.stringify(graphic.layers), backgroundColor: graphic.backgroundColor } };
     return withGraphicLayers(item, graphic);
   });
   return { ...definition, composition: { ...definition.composition, items } };
