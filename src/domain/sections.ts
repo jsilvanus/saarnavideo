@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reframeSchema } from "@/domain/reframe";
 
 export const sectionScopeSchema = z.enum(["SOURCE", "COMPOSITION"]);
 export const sectionOriginSchema = z.enum(["MANUAL", "TEMPLATE", "AI"]);
@@ -13,6 +14,8 @@ export const sectionSchema = z.object({
   startSeconds: z.number().nonnegative().optional(),
   endSeconds: z.number().positive().optional(),
   origin: sectionOriginSchema.default("MANUAL"),
+  /** Crop / fit used for the clips made from this section (a clip can override it). */
+  reframe: reframeSchema.optional(),
 }).superRefine((section, ctx) => {
   if (section.scope === "SOURCE" && !section.sourceId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sourceId"], message: "Source sections require a sourceId" });
