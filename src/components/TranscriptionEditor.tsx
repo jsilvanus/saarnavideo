@@ -18,11 +18,23 @@ type Props = {
   pendingFiles?: Record<string, File>;
   jobs?: Job[];
   onProjectRefresh?: () => void;
+  /** Sections of the project (source scope); those with a source and a time range can be picked as the plain-text range. */
+  sections?: Array<{ id: string; label: string; scope?: string; sourceId?: string; startSeconds?: number; endSeconds?: number }>;
 };
+
+/** URL of the plain-text/HTML transcript route. Empty start/end mean the whole recording. */
+export function transcriptTextUrl(sourceId: string, extension: "txt" | "html", range: { start?: number | ""; end?: number | ""; title?: string } = {}) {
+  const params = new URLSearchParams();
+  if (range.start !== undefined && range.start !== "" && range.start > 0) params.set("start", String(range.start));
+  if (range.end !== undefined && range.end !== "") params.set("end", String(range.end));
+  if (range.title?.trim()) params.set("title", range.title.trim());
+  const query = params.toString();
+  return `/api/sources/${encodeURIComponent(sourceId)}/transcript.${extension}${query ? `?${query}` : ""}`;
+}
 
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 
-export default function TranscriptionEditor({ projectId, sources, pendingFiles = {}, jobs = [], onProjectRefresh }: Props) {
+export default function TranscriptionEditor({ projectId, sources, pendingFiles = {}, jobs = [], onProjectRefresh, sections = [] }: Props) {
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
   const [mode, setMode] = useState<"whole" | "range">("whole");
   const [rangeStart, setRangeStart] = useState(0);
@@ -41,6 +53,12 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
   const [newStart, setNewStart] = useState(0);
   const [newEnd, setNewEnd] = useState(2);
   const [newText, setNewText] = useState("");
+  const [textStart, setTextStart] = useState<number | "">(0);
+  const [textEnd, setTextEnd] = useState<number | "">("");
+  const [textTitle, setTextTitle] = useState("");
+  const [textSectionId, setTextSectionId] = useState("");
+  const [textPreview, setTextPreview] = useState("");
+  const [textStatus, setTextStatus] = useState("");
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -195,6 +213,31 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     } catch (e) { setError(errorMessage(e, "Could not add the caption line")); }
   }
 
+  // Plain-text export: the range defaults to the whole recording and follows the source.
+  useEffect(() => { setTextStart(0); setTextEnd(source?.durationMs != null ? Math.round(source.durationMs / 100) / 10 : ""); setTextSectionId(""); }, [source?.id, source?.durationMs]);
+  const textRangeError = textStart !== "" && textEnd !== "" && !(textEnd > textStart) ? "End must be greater than start." : "";
+  useEffect(() => {
+    if (!source || textRangeError) { setTextPreview(""); return; }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(transcriptTextUrl(source.id, "txt", { start: textStart, end: textEnd }), { cache: "no-store", signal: controller.signal })
+        .then(r => r.ok ? r.text() : Promise.reject(new Error("preview failed")))
+        .then(setTextPreview)
+        .catch(() => { if (!controller.signal.aborted) setTextPreview(""); });
+    }, 300);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [source?.id, textStart, textEnd, textRangeError, captions]);
+  const textSections = sections.filter(x => x.sourceId === source?.id && x.startSeconds !== undefined && x.endSeconds !== undefined);
+  function pickTextSection(id: string) {
+    setTextSectionId(id);
+    const picked = textSections.find(x => x.id === id);
+    if (picked) { setTextStart(picked.startSeconds!); setTextEnd(picked.endSeconds!); }
+    else { setTextStart(0); setTextEnd(source?.durationMs != null ? Math.round(source.durationMs / 100) / 10 : ""); }
+  }
+  async function copyText() {
+    try { await navigator.clipboard.writeText(textPreview); setTextStatus("Copied."); } catch { setTextStatus("Could not copy; select the text and copy it manually."); }
+  }
+
   const sortedActive = useMemo(() => [...(captions?.active ?? [])].sort((a, b) => a.startSeconds - b.startSeconds), [captions]);
   const jobRunning = !!job && !TERMINAL_STATUSES.has(job.status);
 
@@ -251,6 +294,25 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     {!!sortedActive.length && <div className="downloads">
       <a href={`/api/sources/${source.id}/captions.vtt`} download>Download VTT ↓</a>
       <a href={`/api/sources/${source.id}/captions.srt`} download>Download SRT ↓</a>
+    </div>}
+
+    {!!sortedActive.length && <div className="plain-text-export">
+      <h3>Plain text</h3>
+      <p className="muted">The spoken text without timings, for accessibility. Lines that start inside the range are included whole.</p>
+      <div className="range-inputs">
+        <label>Start (s)<input type="number" min="0" step=".1" value={textStart} onChange={e => { setTextSectionId(""); setTextStart(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
+        <label>End (s)<input type="number" min="0" step=".1" value={textEnd} onChange={e => { setTextSectionId(""); setTextEnd(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
+        <label>Section<select value={textSectionId} onChange={e => pickTextSection(e.target.value)}><option value="">Whole recording</option>{textSections.map(x => <option key={x.id} value={x.id}>{x.label} ({formatTime(x.startSeconds!)}–{formatTime(x.endSeconds!)})</option>)}</select></label>
+        <label>Title (optional)<input value={textTitle} onChange={e => setTextTitle(e.target.value)} /></label>
+      </div>
+      {textRangeError && <p className="error">{textRangeError}</p>}
+      <textarea readOnly rows={8} aria-label="Plain text preview" value={textPreview} placeholder="No text in this range." />
+      <div className="downloads">
+        <button type="button" disabled={!textPreview} onClick={() => void copyText()}>Copy</button>
+        <a href={transcriptTextUrl(source.id, "txt", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>Download .txt ↓</a>
+        <a href={transcriptTextUrl(source.id, "html", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>Download .html ↓</a>
+        {textStatus && <span className="muted" role="status">{textStatus}</span>}
+      </div>
     </div>}
 
     <div className="segment-list-head"><h3>Caption lines</h3>{captionsLoading && <span className="muted">Loading…</span>}</div>
