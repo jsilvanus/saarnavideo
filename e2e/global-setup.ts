@@ -40,6 +40,8 @@ function makeFixtures(dir: string) {
   for (const [name, color, frequency] of [["green", "green", 440], ["red", "red", 660]] as const) {
     ffmpeg(["-f", "lavfi", "-i", `color=c=${color}:s=640x360:r=30:d=5`, "-f", "lavfi", "-i", `sine=frequency=${frequency}:sample_rate=48000:duration=5`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path.join(dir, `${name}.mp4`)]);
   }
+  // Left half red, right half green: shows exactly which part of the picture a crop or fit keeps.
+  ffmpeg(["-f", "lavfi", "-i", "color=c=red:s=320x360:r=30:d=5", "-f", "lavfi", "-i", "color=c=green:s=320x360:r=30:d=5", "-f", "lavfi", "-i", "sine=frequency=550:sample_rate=48000:duration=5", "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]", "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path.join(dir, "split.mp4")]);
   ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=200x200", "-frames:v", "1", path.join(dir, "blue.png")]);
   // Own bytes for the render test: identical uploads share one library asset (and its key), which made it order-dependent.
   ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=202x202", "-frames:v", "1", path.join(dir, "logo.png")]);

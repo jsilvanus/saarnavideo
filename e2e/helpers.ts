@@ -44,13 +44,13 @@ export async function uploadAsset(projectId: string, fileName: string, assetKey:
 
 export type Item = Record<string, unknown> & { type: "source-clip" | "overlay" | "slate" | "audio-clip" };
 
-export async function setComposition(projectId: string, items: Item[], endSeconds = 10) {
+export async function setComposition(projectId: string, items: Item[], endSeconds = 10, extra: { template?: Record<string, unknown>; sections?: unknown[] } = {}) {
   const definition = {
     version: 1,
     semanticSegments: [],
-    sections: [],
+    sections: extra.sections ?? [],
     graphics: [],
-    template: { key: "basic", width: 1920, height: 1080, fps: 30, backgroundColor: "black", textColor: "white" },
+    template: { key: "basic", width: 1920, height: 1080, fps: 30, backgroundColor: "black", textColor: "white", ...extra.template },
     composition: { sourceStartSeconds: 0, sourceEndSeconds: endSeconds, items },
   };
   return api(`/api/projects/${projectId}`, { method: "PATCH", json: { definition } });
@@ -124,3 +124,8 @@ export const isGreen = ({ r, g, b }: { r: number; g: number; b: number }) => g >
 export const isRed = ({ r, g, b }: { r: number; g: number; b: number }) => r > 180 && g < 60 && b < 60;
 export const isBlue = ({ r, g, b }: { r: number; g: number; b: number }) => b > 180 && r < 60 && g < 60;
 export const isBlack = ({ r, g, b }: { r: number; g: number; b: number }) => r < 30 && g < 30 && b < 30;
+
+/** Average colour of a region of one frame; `region` is in output pixels. */
+export async function regionColor(filePath: string, seconds: number, region: { x: number; y: number; w: number; h: number }) {
+  return averageColor(await frameRgb(filePath, seconds, region));
+}
