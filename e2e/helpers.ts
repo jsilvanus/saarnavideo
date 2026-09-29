@@ -42,7 +42,7 @@ export async function uploadAsset(projectId: string, fileName: string, assetKey:
   return api<{ id: string }>(`/api/projects/${projectId}/assets`, { method: "POST", body: form });
 }
 
-export type Item = Record<string, unknown> & { type: "source-clip" | "overlay" | "slate" };
+export type Item = Record<string, unknown> & { type: "source-clip" | "overlay" | "slate" | "audio-clip" };
 
 export async function setComposition(projectId: string, items: Item[], endSeconds = 10) {
   const definition = {
