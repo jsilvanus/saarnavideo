@@ -18,6 +18,8 @@ enum SourceStatus {
 enum OutputType {
   VIDEO
   THUMBNAIL
+  CAPTIONS_SRT
+  CAPTIONS_VTT
 }
 enum MediaJobType {
   DOWNLOAD
@@ -151,6 +153,7 @@ model Output {
   preview Boolean @default(false)
   storagePath String
   mimeType String
+  language String?
   sizeBytes BigInt?
   createdAt DateTime @default(now())
   expiresAt DateTime?

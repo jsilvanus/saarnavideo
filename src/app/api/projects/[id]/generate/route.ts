@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
+import { captionOptionsSchema } from "@/domain/captions";
 
 function findDurationViolations(definition: unknown, sources: Array<{ id: string; durationMs: number | null }>) {
   if (!definition || typeof definition !== "object") return [];
@@ -21,7 +22,9 @@ function clampDefinition(definition: unknown, sources: Array<{ id: string; durat
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
-    const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; preview?: boolean; type?: "VIDEO" | "PREVIEW" | "THUMBNAIL" };
+    const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; preview?: boolean; type?: "VIDEO" | "PREVIEW" | "THUMBNAIL"; captions?: unknown };
+    const captions = captionOptionsSchema.safeParse(body.captions ?? {});
+    if (!captions.success) return NextResponse.json({ error: "Invalid captions options", issues: captions.error.issues }, { status: 400 });
     const type = body.type ?? (body.preview ? "PREVIEW" : "VIDEO");
     const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, storagePath: true, youtubeVideoId: true, youtubeUrl: true, durationMs: true, referenceDurationMs: true } } } });
     if (!project) return jsonError("Project not found", 404);
@@ -40,7 +43,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       dependencyId = download.id;
     }
     const firstSourceId = [...referencedIds][0];
-    const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
+    const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, captions: type === "THUMBNAIL" ? undefined : captions.data, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
     if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id, parameters: { renderDefinition } }, select: { id: true } });
     return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0 });
   } catch (error) { console.error("Media job queue error:", error); return jsonError(error instanceof Error ? error.message : "Could not queue media job", 500); }
