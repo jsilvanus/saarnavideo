@@ -48,3 +48,6 @@ lerna-debug.log*
 # Prisma
 prisma/dev.db
 .next-e2e-*/
+.next-*/
+.claude/
+tsconfig.tsbuildinfo

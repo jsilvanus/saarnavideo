@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -77,7 +77,11 @@ function stop(child: ChildProcess | undefined) {
   }
 }
 
+// `next dev` rewrites these tracked files (pointing next-env.d.ts at the private dist dir); put them back afterwards.
+const NEXT_TRACKED_FILES = ["next-env.d.ts", "tsconfig.json"].map((file) => path.join(ROOT, file));
+
 export default async function setup(project: TestProject) {
+  const trackedBefore = await Promise.all(NEXT_TRACKED_FILES.map((file) => readFile(file, "utf8").catch(() => undefined)));
   for (const tool of ["ffmpeg", "ffprobe"]) {
     try {
       execFileSync(tool, ["-version"], { stdio: "ignore" });
@@ -135,5 +139,6 @@ export default async function setup(project: TestProject) {
     await fakeGraph.close();
     if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true });
     await rm(path.join(ROOT, distDir), { recursive: true, force: true });
+    await Promise.all(NEXT_TRACKED_FILES.map((file, index) => (trackedBefore[index] === undefined ? undefined : writeFile(file, trackedBefore[index]))));
   };
 }
