@@ -25,9 +25,9 @@ export const GraphicsEditorProperties: FC<{
   aspectLock: boolean;
   onLayer: (id: string, patch: Partial<Layer>) => void;
   onStyle: (id: string, key: string, value: string | number) => void;
-  onChooseAsset: (key: string) => void; onToggleAssetPicker: () => void;
+  onChooseAsset: (key: string) => void; onToggleAssetPicker: () => void; onOpenLibrary?: () => void;
   onAspectLock: (value: boolean) => void;
-}> = ({ projectId, graphicId, item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onAspectLock }) => (
+}> = ({ projectId, graphicId, item, assets, primary, assetPicker, aspectLock, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onOpenLibrary, onAspectLock }) => (
   <aside className="ge-properties">
     <div className="ge-section"><b>Graphic package</b><button onClick={() => void exportGraphic(projectId, graphicId)}>Export .svgraphic</button><label>Import graphic<input type="file" accept=".svgraphic,application/vnd.saarnavideo.graphic+json,application/json" onChange={e => { const file = e.target.files?.[0]; if (file) void importGraphic(projectId, file); e.currentTarget.value = ""; }} /></label></div>
     {primary && <div className="ge-section"><b>Layer: {primary.id}</b><label>Type<span>{primary.type}</span></label>{primary.type === "caption" && <small>Caption style: this box is where burned-in captions appear. The text below is only a preview sample; the real text comes from the transcript. Long cues are wrapped to the box width and split by Max lines.</small>}{(primary.type === "text" || primary.type === "caption") && <label>{primary.type === "caption" ? "Sample text" : "Text"}<textarea value={primary.text ?? ""} onChange={e => onLayer(primary.id, { text: e.target.value })} /></label>}{primary.type === "image" && <label>Image<button onClick={onToggleAssetPicker}>{primary.src ? "Change image" : "Choose image"}</button></label>}
@@ -52,6 +52,6 @@ export const GraphicsEditorProperties: FC<{
       <label>Animation<select value={(primary.animation ?? "").split(" ")[0]} onChange={e => onLayer(primary.id, { animation: e.target.value ? `${e.target.value} 1s ease 0s 1 normal forwards` : undefined })}>{ANIMATIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
       <label><span>Aspect lock</span><input type="checkbox" checked={aspectLock} onChange={e => onAspectLock(e.target.checked)} /></label>
     </div>}
-    {assetPicker && <div className="ge-section"><b>Assets</b>{assets.filter(a => a.type !== "FONT").map(a => <button key={a.id} onClick={() => onChooseAsset(a.assetKey)}>{a.assetKey}</button>)}{!assets.length && <span>No image assets yet.</span>}</div>}
+    {assetPicker && <div className="ge-section"><b>Assets</b>{assets.filter(a => a.type !== "FONT" && a.type !== "AUDIO").map(a => <button key={a.id} onClick={() => onChooseAsset(a.assetKey)}>{a.assetKey}</button>)}{!assets.some(a => a.type !== "FONT" && a.type !== "AUDIO") && <span>No image assets linked to this project yet.</span>}{onOpenLibrary && <button data-testid="choose-from-library" onClick={onOpenLibrary}>Choose from library…</button>}</div>}
   </aside>
 );

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, requestJson } from "@/components/api";
 import { formatTime } from "@/components/format";
+import AssetPicker from "@/components/AssetPicker";
 
 export type AudioAsset = { id: string; assetKey: string; type: string; mimeType?: string | null; durationMs?: number | null };
 type Item = { type: string; assetId?: string; mode?: string; startSeconds?: number; endSeconds?: number; [key: string]: unknown };
@@ -28,6 +29,7 @@ export function audioClipFor(asset: AudioAsset, mode: "standalone" | "mix"): Ite
 type Props = { projectId: string; assets: AudioAsset[]; definition: Definition; onSaveDefinition: (definition: Definition) => Promise<void>; onChanged: () => void | Promise<void> };
 
 export default function VoiceoverPanel({ projectId, assets, definition, onSaveDefinition, onChanged }: Props) {
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [state, setState] = useState<"idle" | "recording" | "recorded">("idle");
   const [seconds, setSeconds] = useState(0);
   const [blob, setBlob] = useState<Blob | null>(null);
@@ -127,7 +129,8 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
     {message && <p className="success">{message}</p>}{error && <p className="error">{error}</p>}
 
     <div>
-      <strong>Project audio</strong>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><strong>Project audio</strong><button data-testid="audio-from-library" onClick={() => setLibraryOpen(true)}>Add from library</button></div>
+      {libraryOpen && <AssetPicker projectId={projectId} kind="audio" title="Add audio from the library" linkedIds={assets.map(a => a.id)} pickLinked={false} onPick={async () => { await onChanged(); setMessage("Audio added to this project."); }} onClose={() => setLibraryOpen(false)} />}
       <div className="list" style={{ marginTop: 8 }}>
         {assets.map(asset => <div className="row" key={asset.id} style={{ flexWrap: "wrap", gap: 10 }}>
           <span><strong>{asset.assetKey}</strong><small style={{ display: "block" }}>{asset.durationMs ? formatTime(asset.durationMs / 1000) : "unknown length"}{usage(asset.id) ? ` · used ${usage(asset.id)}×` : ""}</small></span>
