@@ -44,20 +44,20 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
 
     await prisma.project.delete({ where: { id } });
 
-    for (const source of project.sources) {
-      const remaining = await prisma.source.count({ where: { projects: { some: { id: { not: id } } } } });
-      if (remaining === 0) {
-        if (source.storagePath) await rm(source.storagePath, { force: true }).catch(() => undefined);
-        await prisma.source.delete({ where: { id: source.id } }).catch(() => undefined);
-      }
-    }
+    // The project's own links are gone now, so a source still linked is used by another project.
+    // Assets are library items managed from the asset library, so they are kept.
+    const sourceIds = project.sources.map((source) => source.id);
+    const shared = await prisma.source.findMany({ where: { id: { in: sourceIds }, projects: { some: {} } }, select: { id: true } });
+    const sharedIds = new Set(shared.map((source) => source.id));
+    const orphans = project.sources.filter((source) => !sharedIds.has(source.id));
 
-    for (const asset of project.assets) {
-      const remaining = await prisma.asset.count({ where: { projects: { some: { id: { not: id } } } } });
-      if (remaining === 0) {
-        if (asset.storagePath) await rm(asset.storagePath, { force: true }).catch(() => undefined);
-        await prisma.asset.delete({ where: { id: asset.id } }).catch(() => undefined);
-      }
+    await prisma.source.deleteMany({ where: { id: { in: orphans.map((source) => source.id) } } });
+    // Duplicated projects get their own Source rows that share the file, so only remove files no row references.
+    const orphanPaths = [...new Set(orphans.flatMap((source) => (source.storagePath ? [source.storagePath] : [])))];
+    const referenced = await prisma.source.findMany({ where: { storagePath: { in: orphanPaths } }, select: { storagePath: true } });
+    const referencedPaths = new Set(referenced.map((source) => source.storagePath));
+    for (const storagePath of orphanPaths) {
+      if (!referencedPaths.has(storagePath)) await rm(storagePath, { force: true }).catch(() => undefined);
     }
 
     return new Response(null, { status: 204 });

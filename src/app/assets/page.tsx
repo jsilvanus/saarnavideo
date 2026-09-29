@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { DragEvent, useEffect, useMemo, useState } from "react";
 interface Asset { id:string; assetKey:string; type:string; mimeType:string; width:number|null; height:number|null; sizeBytes:string; folderId:string|null; projectCount:number; }
 interface Folder { id:string; name:string; parentId:string|null; }
@@ -22,7 +23,7 @@ export default function AssetLibraryPage(){
  async function upload(){if(!file||!assetKey.trim())return;setBusy(true);try{const form=new FormData();form.set("file",file);form.set("assetKey",assetKey.trim());if(currentId)form.set("folderId",currentId);const r=await fetch("/api/assets",{method:"POST",body:form});if(!r.ok)throw new Error((await r.json()).error??"Upload failed");setFile(null);setAssetKey("");setUploadOpen(false);await load();setMessage("Graphic added to the library.")}catch(e){setError(e instanceof Error?e.message:"Upload failed")}finally{setBusy(false)}}
  const title=currentId?(folders.find(f=>f.id===currentId)?.name??"Folder"):"Graphics library";
  return <main style={{maxWidth:1200,margin:"0 auto",padding:24,fontFamily:"system-ui, sans-serif"}}>
-  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,marginBottom:16}}><div><a href="/" style={{textDecoration:"none"}}>← Projects</a><h1 style={{margin:"8px 0 0"}}>Graphics library</h1></div><div style={{display:"flex",gap:8}}><button onClick={()=>setNewFolderOpen(true)}>New folder</button><button onClick={()=>setUploadOpen(true)}>Add graphic</button></div></div>
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,marginBottom:16}}><div><Link href="/" style={{textDecoration:"none"}}>← Projects</Link><h1 style={{margin:"8px 0 0"}}>Graphics library</h1></div><div style={{display:"flex",gap:8}}><button onClick={()=>setNewFolderOpen(true)}>New folder</button><button onClick={()=>setUploadOpen(true)}>Add graphic</button></div></div>
   <div style={{fontSize:14,color:"#666",marginBottom:16}}>Reusable graphics are shared between projects. All library entries are graphics; folders only organize them.</div>
   {error&&<div style={{padding:10,background:"#fee",marginBottom:10}}>{error}</div>}{message&&<div style={{padding:10,background:"#efe",marginBottom:10}}>{message}</div>}
   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:14}}><button onClick={()=>setCurrentId(null)} onDragOver={e=>allowDrop(e,"root")} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,null)}} style={{fontWeight:currentId?400:700,outline:dragOver==="root"?"2px solid #1976d2":undefined}}>Root</button>{path.map(f=><span key={f.id}> / <button onClick={()=>setCurrentId(f.id)} onDragOver={e=>allowDrop(e,f.id)} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,f.id)}}>{f.name}</button></span>)}{currentId&&<button onClick={deleteFolder} style={{marginLeft:"auto"}}>Delete folder</button>}</div>

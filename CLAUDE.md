@@ -179,6 +179,16 @@ Project
    - Generate with FFmpeg
 6. **Output Storage** - Download or publish video
 
+### Asset Library
+Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB) live in one global, deduplicated library shared by all projects. The UI is at `/assets` ("Graphics library" link in the root layout, `src/app/assets/page.tsx`).
+
+- **Storage:** content-addressed files at `MEDIA_ROOT/assets/library/<sha256>.<ext>`. `Asset.contentHash` deduplicates: uploading identical bytes again reuses the existing row (the new `assetKey` is ignored) instead of creating a copy.
+- **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. They are removed only through `DELETE /api/projects/[id]/assets/[assetId]` when the last linked project unlinks them.
+- **Folders:** `AssetFolder` is a tree (`parentId`) used only for organisation. The library page supports drag-and-drop moves between folders and breadcrumbs.
+- **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. The graphics editor's image picker lists only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
+- **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is silently skipped.
+- **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images only.
+
 ### Template System
 Projects reference templates by key (e.g., "sermon"). Templates define:
 - Default visual styling (colors, fonts, layout)
@@ -254,14 +264,24 @@ Projects reference templates by key (e.g., "sermon"). Templates define:
 - `GET /api/sources/[sourceId]` - Get source details
 - `DELETE /api/sources/[sourceId]` - Delete source directly
 
-### Assets
-- `POST /api/projects/[id]/assets` - Upload image asset
-- `GET /api/projects/[id]/assets/[assetId]` - Get asset
-- `DELETE /api/projects/[id]/assets/[assetId]` - Delete asset
+### Asset library (global)
+- `GET /api/assets` - List all library assets (with `projectCount`) and folders
+- `POST /api/assets` - Upload an image into the library (multipart: `file`, `assetKey`, optional `type`, `folderId`)
+- `GET /api/assets/[id]` - Serve the image file
+- `PATCH /api/assets/[id]` - Move to a folder (`folderId`) or rename (`assetKey`)
+- `GET/POST /api/assets/folders` - List / create folders (`name`, `parentId`)
+- `PATCH /api/assets/folders/[id]` - Rename or move a folder (cycle-checked)
+- `DELETE /api/assets/folders/[id]` - Delete a folder; its assets and subfolders move to the parent
+
+### Project assets
+- `GET /api/projects/[id]/assets` - List assets linked to the project
+- `POST /api/projects/[id]/assets` - Upload an image and link it to the project (deduplicated into the library)
+- `GET /api/projects/[id]/assets/[assetId]` - Serve a linked asset (this URL is what graphics store as image `src`)
+- `POST /api/projects/[id]/assets/[assetId]` - Link an existing library asset to the project
+- `DELETE /api/projects/[id]/assets/[assetId]` - Unlink; deletes the asset and file when no other project uses it
 
 ### Jobs
-- `GET /api/projects/[id]/jobs` - List generation jobs
-- `GET /api/projects/[id]/jobs/[jobId]` - Get job status
+- `GET /api/projects/[id]/jobs/[jobId]` - Get job status (the 10 latest jobs come with `GET /api/projects/[id]`)
 - `POST /api/projects/[id]/jobs/[jobId]/cancel` - Cancel running job
 
 ### Outputs
@@ -309,6 +329,8 @@ npm run test:watch  # Watch mode
 - `npm run db:generate` - Regenerate Prisma client
 
 ### Testing
+- `npm test` runs unit tests. Database-backed tests need a pushed schema (`npx prisma db push`).
+- `npm run test:e2e` runs `e2e/*.e2e.test.ts`. The global setup generates fixtures with FFmpeg, pushes the SQLite schema into a temp DB, starts `next dev` and the worker, and drives the real HTTP API. It needs `ffmpeg`/`ffprobe` with a default font for `drawtext`, and a SQLite-generated Prisma client. Set `E2E_VERBOSE=1` for server/worker logs and `E2E_KEEP=1` to keep the temp dir.
 - Unit tests use **Vitest** 
 - Test files follow `*.test.ts` naming
 - Mock FFmpeg output in renderer tests

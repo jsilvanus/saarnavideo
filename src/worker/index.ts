@@ -68,7 +68,15 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await execFileAsync("ffmpeg", ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath]); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
   const sourcePaths = resolveSourcePaths(definition, project.sources); const assetPaths = new Map<string, string>(); for (const asset of project.assets) { assetPaths.set(asset.assetKey, asset.storagePath); assetPaths.set(asset.id, asset.storagePath); assetPaths.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
-  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths); const outputIndex = plan.args.length - 1; if (type === "PREVIEW") plan.args.splice(outputIndex, 0, "-vf", "scale=640:-2", "-preset", "ultrafast", "-crf", "30");
+  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths);
+  if (type === "PREVIEW") {
+    // -vf cannot be combined with a -filter_complex output, so the downscale is appended to the graph.
+    const graphIndex = plan.args.indexOf("-filter_complex") + 1;
+    const videoMapIndex = plan.args.indexOf("-map", graphIndex) + 1;
+    plan.args[graphIndex] += `;${plan.args[videoMapIndex]}scale=640:-2[preview]`;
+    plan.args[videoMapIndex] = "[preview]";
+    plan.args.splice(plan.args.length - 1, 0, "-preset", "ultrafast", "-crf", "30");
+  }
   const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const totalMs = Math.max(1, Math.round((definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds) * 1000)); plan.args.splice(plan.args.length - 1, 0, "-progress", "pipe:1", "-nostats");
   await updateProgress(job.id, { phase, message: type === "PREVIEW" ? "Rendering preview" : "Rendering video", progress: 0, totalMs: BigInt(totalMs) }, true);
   const ffmpegProcess = spawn("ffmpeg", plan.args, { stdio: ["pipe", "pipe", "pipe"] }); runningProcesses.set(job.id, ffmpegProcess); let stdoutBuffer = ""; let stderr = "";

@@ -21,8 +21,8 @@ function clampDefinition(definition: unknown, sources: Array<{ id: string; durat
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
-    const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; type?: "VIDEO" | "PREVIEW" | "THUMBNAIL" };
-    const type = body.type ?? "VIDEO";
+    const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; preview?: boolean; type?: "VIDEO" | "PREVIEW" | "THUMBNAIL" };
+    const type = body.type ?? (body.preview ? "PREVIEW" : "VIDEO");
     const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, storagePath: true, youtubeVideoId: true, youtubeUrl: true, durationMs: true, referenceDurationMs: true } } } });
     if (!project) return jsonError("Project not found", 404);
     const pending = project.sources.filter(source => source.status === "PENDING");
