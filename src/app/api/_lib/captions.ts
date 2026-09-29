@@ -8,10 +8,10 @@ const FORMATS = {
   vtt: { format: formatVtt, contentType: "text/vtt; charset=utf-8" },
 } as const;
 
-function captionsFilename(source: { originalName: string | null; youtubeVideoId: string | null; id: string }, extension: string): string {
+/** Download-safe base name of a source's files: its file name without extension, else the YouTube id, else the id. */
+export function sourceFileBase(source: { originalName: string | null; youtubeVideoId: string | null; id: string }, fallback: string): string {
   const base = source.originalName?.replace(/\.[^.]+$/, "") || source.youtubeVideoId || source.id;
-  const safe = base.replace(/[^a-zA-Z0-9._-]/g, "_") || "captions";
-  return `${safe}.${extension}`;
+  return base.replace(/[^a-zA-Z0-9._-]/g, "_") || fallback;
 }
 
 /** Downloads a source's active transcript segments as an SRT or VTT attachment. */
@@ -22,6 +22,6 @@ export async function captionsDownload(sourceId: string, extension: keyof typeof
   const { format, contentType } = FORMATS[extension];
   return new NextResponse(format(segments), {
     status: 200,
-    headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename="${captionsFilename(source, extension)}"` },
+    headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename="${sourceFileBase(source, "captions")}.${extension}"` },
   });
 }

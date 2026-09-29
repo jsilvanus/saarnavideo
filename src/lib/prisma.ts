@@ -27,8 +27,7 @@ async function ignoreExpiryFilter({ args, query }: QueryHook) {
   return query(args as never);
 }
 
-// findFirst is included: the publish route and the worker look up outputs with `expiresAt: { gt: now }`, which matches nothing once expiry is cleared.
-const persistentMedia = { create: clearExpiry, update: clearExpiry, updateMany: clearExpiry, findMany: ignoreExpiryFilter, findFirst: ignoreExpiryFilter };
+const persistentMedia = { create: clearExpiry, update: clearExpiry, updateMany: clearExpiry, findMany: ignoreExpiryFilter };
 
 export const prisma = basePrisma.$extends({
   query: {
