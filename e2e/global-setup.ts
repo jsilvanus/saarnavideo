@@ -42,7 +42,7 @@ function makeFixtures(dir: string) {
   }
   ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=200x200", "-frames:v", "1", path.join(dir, "blue.png")]);
   // Own bytes for the render test: identical uploads share one library asset (and its key), which made it order-dependent.
-  ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=201x201", "-frames:v", "1", path.join(dir, "logo.png")]);
+  ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=202x202", "-frames:v", "1", path.join(dir, "logo.png")]);
 }
 
 async function waitForServer(url: string, server: ChildProcess, timeoutMs = 120_000) {

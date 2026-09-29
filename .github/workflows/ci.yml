@@ -55,7 +55,11 @@ jobs:
       - run: npx prisma generate
       - run: npm run test:e2e
 
+  # Opt-in: the Auditor image is private, so this job only runs once a repo admin has allowed this
+  # repository to pull it (Package settings > Manage Actions access) and set the repository
+  # variable AUDITOR_E2E=true. The test also runs locally against any reachable AUDITOR_STT_URL.
   e2e-transcription:
+    if: ${{ vars.AUDITOR_E2E == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
