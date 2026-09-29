@@ -246,6 +246,13 @@ Response: 204 No Content
 
 ```
 POST /projects/{projectId}/generate
+Content-Type: application/json
+
+{
+  "allowClamping": false,
+  "preview": false,
+  "captions": { "mode": "none" | "soft", "language": "fi" }   // optional; default { "mode": "none" }
+}
 
 Response: 202 Accepted
 {
@@ -330,8 +337,23 @@ Content-Length: 1234567890
 ```
 
 **Output Types:**
-- `VIDEO` - Rendered MP4 video
-- `THUMBNAIL` - Generated JPG thumbnail
+- `VIDEO` - Rendered MP4 video (`.mp4`)
+- `THUMBNAIL` - Generated JPG thumbnail (`.jpg`)
+- `CAPTIONS_SRT` - Sidecar SubRip captions on the output timeline (`.srt`, `application/x-subrip; charset=utf-8`)
+- `CAPTIONS_VTT` - Sidecar WebVTT captions on the output timeline (`.vtt`, `text/vtt; charset=utf-8`)
+
+Caption outputs carry a `language` (BCP 47 tag) and are named `saarnavideo-captions-<language>.<ext>`.
+They exist only for renders queued with `captions.mode = "soft"`, and share the video's `jobId`.
+
+#### Caption options
+
+`captions.mode = "soft"` maps the active transcript segments of every source used by the composition
+onto the rendered timeline, muxes them into the MP4 as a `mov_text` subtitle track (language tagged
+with the ISO 639-2 code, e.g. `fin`) and stores the SRT/VTT sidecar outputs. `language` defaults to the
+language of the source's applied transcription run. If there are no active segments inside the
+composition the render succeeds without a track and a `WARN` job log is written. Invalid options
+return `400`. When such a video is published to YouTube, the SRT sidecar is uploaded as a caption
+track afterwards (failures are logged and do not fail the publication).
 
 ### Publications
 

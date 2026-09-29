@@ -189,6 +189,16 @@ Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB) live in one glob
 - **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is silently skipped.
 - **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images only.
 
+### Captions and export formats
+Captions come from the active `TranscriptSegment`s of each source (see `docs/transcription-editor-contract.md`). Source-level export is `GET /api/sources/[id]/captions.vtt|.srt`. Composition-level (soft) captions are a render option:
+
+- **Request:** `POST /api/projects/[id]/generate` accepts `captions: { mode: "none" | "soft", language? }` (Zod: `captionOptionsSchema` in `src/domain/captions.ts`; `"burn"` is reserved for a later step). It is stored in `MediaJob.parameters.captions` and read by the worker (`readCaptionOptions`, `src/worker/captions.ts`). The UI selector is on the Generate panel.
+- **Timing:** `mapCaptionsToTimeline` (`src/renderer/caption-timeline.ts`, pure) puts each source's segments on the output timeline: per source-clip it keeps overlapping segments, clips them to the clip range and shifts by the clip's output start (`layoutTimeline` mirrors `buildCompositionRenderPlan`: crossfades pull the next item back by the transition, standalone slates take time and carry no cues, overlays take none). Output cues never overlap (an earlier cue is cut where the next starts), because mov_text cannot hold overlapping cues.
+- **Soft mode:** the worker writes `<output>.srt`/`.vtt`, passes the SRT to `buildCompositionRenderPlan(..., { captions: { path, language } })` (extra last `-i`, `-map N:0 -c:s mov_text -metadata:s:s:0 language=<iso639-2>` appended after the video/audio maps, so the preview rewrite of the first `-map` still works), and stores two extra `Output` rows of type `CAPTIONS_SRT` / `CAPTIONS_VTT` (with `Output.language`) beside the `VIDEO` row. Previews get them too (`preview = true`). No transcript in range = render without a track (WARN job log).
+- **Downloads:** `GET /api/outputs/[id]` picks extension/mime from the output type (`outputExtension`, `CAPTION_MIME` in `src/domain/captions.ts`).
+- **YouTube:** after a successful video upload `processPublication` uploads the job's SRT sidecar with `captions.insert` (`uploadCaptionToYouTube`, `src/worker/caption-publish.ts`). Fails soft (WARN JobLog + console). Needs the `youtube.force-ssl` OAuth scope, which `youtube-oauth.ts` now requests; connections made earlier must be reconnected for caption upload to work (the video upload is unaffected). `captions.insert` costs 400 API quota units.
+- **Not covered:** burned-in captions, soft captions in the legacy no-items render path.
+
 ### Template System
 Projects reference templates by key (e.g., "sermon"). Templates define:
 - Default visual styling (colors, fonts, layout)
