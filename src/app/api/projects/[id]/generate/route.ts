@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
 import { captionOptionsSchema, wantsBurnedCaptions } from "@/domain/captions";
-import { podcastSettingsSchema, type Graphic } from "@/domain/project";
+import { podcastSettingsPatchSchema, type Graphic } from "@/domain/project";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import { validateRenderSettings } from "@/domain/render-settings";
 import { computeDurationReport } from "@/lib/duration-report";
@@ -35,7 +35,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const body = await request.json().catch(() => ({})) as { allowClamping?: boolean; preview?: boolean; type?: "VIDEO" | "PREVIEW" | "THUMBNAIL" | "PODCAST"; captions?: unknown; podcast?: unknown };
     const captions = captionOptionsSchema.safeParse(body.captions ?? {});
     if (!captions.success) return NextResponse.json({ error: "Invalid captions options", issues: captions.error.issues }, { status: 400 });
-    const podcast = podcastSettingsSchema.partial().safeParse(body.podcast ?? {});
+    const podcast = podcastSettingsPatchSchema.safeParse(body.podcast ?? {});
     if (!podcast.success) return NextResponse.json({ error: "Invalid podcast options", issues: podcast.error.issues }, { status: 400 });
     const type = body.type ?? (body.preview ? "PREVIEW" : "VIDEO");
     if (!["VIDEO", "PREVIEW", "THUMBNAIL", "PODCAST"].includes(type)) return jsonError("Unknown generation type", 400);

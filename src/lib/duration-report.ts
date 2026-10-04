@@ -25,20 +25,29 @@ export function formatDuration(seconds: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Podcast length: base items minus standalone slates, plus intro and outro, minus the crossfades between them. */
-export function podcastDuration(definition: ProjectDefinition, assetDurations: ReadonlyMap<string, number> = new Map()): number | undefined {
+/** Length of the podcast body: base items minus standalone slates, minus crossfade overlaps; undefined when there is no audio. */
+export function podcastBodySeconds(definition: Pick<ProjectDefinition, "composition">): number | undefined {
   const slots = layoutTimeline(definition.composition.items);
   const hasVoice = slots.some(({ item }) => item.type === "source-clip" || item.type === "audio-clip");
   if (!hasVoice) return undefined;
-  const settings = definition.podcast;
   const bodyEnd = slots.filter(({ item }) => item.type !== "slate").reduce((total, slot) => total + slot.duration, 0);
   // Crossfades shorten the body by their overlap, which the layout already applies to slot starts; recompute from the timeline.
   const overlap = slots.reduce((sum, slot, index) => sum + (index > 0 && slot.item.type !== "slate" ? Math.max(0, slots[index - 1].outputStart + slots[index - 1].duration - slot.outputStart) : 0), 0);
+  return Math.max(0, bodyEnd - overlap);
+}
+
+/** Podcast length: the chosen part of the body (all of it when no range is set), plus intro and outro, minus the crossfades between them. */
+export function podcastDuration(definition: ProjectDefinition, assetDurations: ReadonlyMap<string, number> = new Map()): number | undefined {
+  const body = podcastBodySeconds(definition);
+  if (body === undefined) return undefined;
+  const settings = definition.podcast;
+  const start = Math.min(Math.max(0, settings?.startSeconds ?? 0), body);
+  const chosen = Math.max(0, Math.min(body, settings?.endSeconds ?? body) - start);
   const introSeconds = settings?.introAssetId ? assetDurations.get(settings.introAssetId) ?? 0 : 0;
   const outroSeconds = settings?.outroAssetId ? assetDurations.get(settings.outroAssetId) ?? 0 : 0;
   const fade = settings?.crossfadeSeconds ?? 0;
   const joins = (introSeconds ? 1 : 0) + (outroSeconds ? 1 : 0);
-  return Math.max(0, bodyEnd - overlap + introSeconds + outroSeconds - joins * fade);
+  return Math.max(0, chosen + introSeconds + outroSeconds - joins * fade);
 }
 
 export function computeDurationReport(definition: ProjectDefinition, assetDurations?: ReadonlyMap<string, number>): DurationReport {
@@ -59,7 +68,7 @@ export function computeDurationReport(definition: ProjectDefinition, assetDurati
     warnings.push({ code: "off-target", level: "warning", message: `Video is ${formatDuration(videoSeconds)}, target was ${formatDuration(target)} (${videoSeconds > target ? "+" : "-"}${formatDuration(Math.abs(videoSeconds - target))}).` });
   }
   if (podcastSeconds !== undefined && videoSeconds > 0 && Math.abs(podcastSeconds - videoSeconds) > PODCAST_DIFFERENCE) {
-    warnings.push({ code: "podcast-differs", level: "info", message: `Podcast is ${formatDuration(podcastSeconds)} and video ${formatDuration(videoSeconds)}: standalone slates are left out of the podcast and intro/outro are added.` });
+    warnings.push({ code: "podcast-differs", level: "info", message: `Podcast is ${formatDuration(podcastSeconds)} and video ${formatDuration(videoSeconds)}: ${definition.podcast?.startSeconds !== undefined || definition.podcast?.endSeconds !== undefined ? "the podcast uses only its chosen start–end, " : ""}standalone slates are left out of the podcast and intro/outro are added.` });
   }
   return { videoSeconds, podcastSeconds, targetSeconds: target, limitSeconds: chosen?.maxSeconds, limitLabel: chosen?.label, warnings };
 }

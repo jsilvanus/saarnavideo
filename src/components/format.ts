@@ -9,3 +9,14 @@ export function formatTime(seconds: number) {
 export function sourceLabel(source: { id: string; originalName?: string | null; youtubeUrl?: string | null }) {
   return source.originalName || source.youtubeUrl || source.id;
 }
+
+/** Parses "h:mm:ss", "m:ss" or plain seconds ("75", "12.5") into seconds; undefined when empty or not a time. */
+export function parseClock(text: string): number | undefined {
+  const trimmed = text.trim().replace(",", ".");
+  if (!trimmed) return undefined;
+  const parts = trimmed.split(":");
+  if (parts.length > 3 || parts.some(part => !/^\d+(\.\d+)?$/.test(part))) return undefined;
+  const numbers = parts.map(Number);
+  if (numbers.slice(1).some(n => n >= 60) || numbers.slice(0, -1).some(n => !Number.isInteger(n))) return undefined;
+  return numbers.reduce((total, n) => total * 60 + n, 0);
+}

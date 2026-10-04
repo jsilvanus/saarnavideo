@@ -10,7 +10,7 @@ const LOUDNESS_RANGE = 11;
 export type LoudnormMeasurement = { input_i: string; input_tp: string; input_lra: string; input_thresh: string; target_offset: string };
 export type PodcastMetadata = Partial<Record<"title" | "artist" | "album" | "date" | "comment" | "genre", string>>;
 export type PodcastPlanOptions = {
-  settings: Pick<PodcastSettings, "format" | "channels" | "crossfadeSeconds">;
+  settings: Pick<PodcastSettings, "format" | "channels" | "crossfadeSeconds" | "startSeconds" | "endSeconds">;
   /** Prerecorded intro/outro files. They exist for the podcast only; the video render never reads them. */
   intro?: { path: string; durationSeconds?: number };
   outro?: { path: string; durationSeconds?: number };
@@ -62,12 +62,20 @@ function loudnormFilter(loudness: PodcastPlanOptions["loudness"]): string {
   return base;
 }
 
+/** The exported part of a podcast body of `bodySeconds`: the settings' start/end, clamped to the body; the whole body when unset. */
+export function podcastBodyRange(settings: { startSeconds?: number; endSeconds?: number }, bodySeconds: number): { start: number; end: number } {
+  const start = Math.min(Math.max(0, settings.startSeconds ?? 0), bodySeconds);
+  const end = Math.min(bodySeconds, settings.endSeconds ?? bodySeconds);
+  if (!(end > start)) throw new Error(`Podcast range ${start.toFixed(1)}–${end.toFixed(1)} s is outside the ${bodySeconds.toFixed(1)} s of audio`);
+  return { start, end };
+}
+
 /**
  * Audio-only render of a composition. Segments are, in order: [intro] + the composition's audio + [outro].
  * The composition's audio is its base items in order: source clips (their audio), standalone voiceovers (audio-clips),
  * with the same cut / fade / crossfade transitions as the video. Standalone slates carry no audio and are skipped;
  * mixed voiceovers are layered at their video-timeline position, moved earlier by the slate time removed before them.
- * Intro, body and outro are joined with a `crossfadeSeconds` crossfade (0 = plain concat), then the result is
+ * Only `startSeconds..endSeconds` of that body is kept when set. Intro, body and outro are joined with a `crossfadeSeconds` crossfade (0 = plain concat), then the result is
  * downmixed, loudness-normalised (loudnorm, -16 LUFS / -1.5 dBTP) and encoded at 44.1 kHz.
  */
 export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePaths: Map<string, string>, outputPath: string, assetPaths: Map<string, string>, options: PodcastPlanOptions): PodcastPlan {
@@ -144,10 +152,17 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
     current = mixed.output;
   });
 
+  // The chosen part of the body (startSeconds..endSeconds of the podcast body); the whole body when no range is set.
+  const range = podcastBodyRange(options.settings, bodyDuration);
+  if (range.start > 0 || range.end < bodyDuration) {
+    filters.push(`[${current}]atrim=start=${formatSeconds(range.start)}:end=${formatSeconds(range.end)},asetpts=PTS-STARTPTS[body]`);
+    current = "body";
+  }
+
   // Intro + body + outro.
   const crossfade = options.settings.crossfadeSeconds;
   let joined = current;
-  let total = bodyDuration;
+  let total = range.end - range.start;
   const join = (name: "intro" | "outro", track: { path: string; durationSeconds?: number }) => {
     filters.push(`[${addInput(track.path)}:a]${AUDIO_NORMALIZE}[${name}]`);
     const seconds = track.durationSeconds ?? Infinity;

@@ -228,6 +228,9 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
   baseItems.forEach((item, index) => {
     const duration = durations[index];
     const v = `v${index}`, a = `a${index}`;
+    // One frame rate and time base for every segment: xfade refuses inputs that differ (a source keeps its own time
+    // base, e.g. 1/12800, while concat outputs 1/1000000), and slates and sources need not share a frame rate.
+    filters.push(`[${v}]fps=${fps},settb=AVTB,format=yuv420p[vn${index}]`);
     if (item.type === "source-clip") {
       const input = sourceIndexMap.get(item.sourceId)!;
       filters.push(...sourceVideoFilters(input, item.startSeconds, duration, v, { width, height, bars: backgroundColor }, resolveReframe(item, definition.sections, template?.reframe)), sourceAudioFilter(input, item.startSeconds, duration, a));
@@ -244,12 +247,12 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     filters.push(item.type === "audio-clip" ? audioClipFilter(audio, item, a) : `[${audio}:a]atrim=duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${a}]`);
   });
 
-  let currentVideo = "v0", currentAudio = "a0", currentDuration = durations[0];
+  let currentVideo = "vn0", currentAudio = "a0", currentDuration = durations[0];
   for (let index = 1; index < baseItems.length; index++) {
     const duration = durations[index];
     const transition = baseItems[index].transitionIn;
     const d = transitionDuration(transition, Math.min(currentDuration, duration));
-    const inVideo = `v${index}`, inAudio = `a${index}`;
+    const inVideo = `vn${index}`, inAudio = `a${index}`;
     const nextVideo = `vc${index}`, nextAudio = `ac${index}`;
     if (transition?.type === "crossfade" && d > 0) {
       filters.push(`[${currentVideo}][${inVideo}]xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(currentDuration - d)}[${nextVideo}]`);

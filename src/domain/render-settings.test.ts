@@ -23,4 +23,11 @@ describe("validateRenderSettings", () => {
     expect(issues[1]).toContain('Section "Sermon"');
     expect(issues[2]).toContain("Clip 1");
   });
+
+  it("rejects invalid variable names and a podcast range that ends before it starts", () => {
+    expect(validateRenderSettings({ variables: [{ key: "saarnaaja", value: "x" }] })).toEqual([]);
+    expect(validateRenderSettings({ variables: [{ key: "two words", value: "x" }] })[0]).toMatch(/^Variables:/);
+    expect(validateRenderSettings({ podcast: { startSeconds: 10, endSeconds: 5 } })).toEqual(["Podcast: end must be after start"]);
+    expect(validateRenderSettings({ podcast: { startSeconds: 5 } })).toEqual([]);
+  });
 });

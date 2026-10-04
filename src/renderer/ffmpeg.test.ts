@@ -186,6 +186,29 @@ describe("buildCompositionRenderPlan", () => {
     expect(filter).toContain("xfade=transition=fade:duration=0.5");
   });
 
+  it("gives every segment one frame rate and time base so xfade accepts a concat output", () => {
+    const plan = buildCompositionRenderPlan(
+      {
+        ...base,
+        composition: {
+          ...baseComposition,
+          items: [
+            { type: "slate", template: "title", mode: "standalone", durationSeconds: 3, data: { title: "Alku" } },
+            { type: "source-clip", sourceId: "source-a", startSeconds: 10, endSeconds: 20 },
+            { type: "source-clip", sourceId: "source-a", startSeconds: 40, endSeconds: 50, transitionIn: { type: "crossfade", durationSeconds: 0.5 } },
+          ],
+        },
+      },
+      new Map([["source-a", "/tmp/source-a.mp4"]]),
+      "/tmp/output.mp4",
+    );
+
+    const filter = plan.args[plan.args.indexOf("-filter_complex") + 1];
+    for (const index of [0, 1, 2]) expect(filter).toContain(`[v${index}]fps=30,settb=AVTB,format=yuv420p[vn${index}]`);
+    expect(filter).toContain("[vn0][a0][vn1][a1]concat=n=2:v=1:a=1[vc1][ac1]");
+    expect(filter).toContain("[vc1][vn2]xfade=transition=fade:duration=0.5");
+  });
+
   it("handles source A -> source B transition", () => {
     const plan = buildCompositionRenderPlan(
       {
@@ -430,7 +453,7 @@ describe("audio clips", () => {
     expect(plan.args.join(" ")).toContain("color=c=black:s=1920x1080:r=30:d=3");
     const g = graph(plan);
     expect(g).toMatch(/\[\d:a\]atrim=start=1:duration=3,.*apad=whole_dur=3,atrim=duration=3.*\[a1\]/);
-    expect(g).toContain("[v0][a0][v1][a1]concat=n=2:v=1:a=1");
+    expect(g).toContain("[vn0][a0][vn1][a1]concat=n=2:v=1:a=1");
   });
 
   it("supports a voiceover-only composition and a background image", () => {
