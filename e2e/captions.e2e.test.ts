@@ -2,27 +2,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseVtt } from "../src/lib/captions";
-import { api, baseUrl, createProject, download, mediaRoot, setComposition, uploadSource, waitForJob } from "./helpers";
+import { api, baseUrl, createProject, download, generate, importVtt, mediaRoot, setComposition, uploadSource } from "./helpers";
 
 const execFileAsync = promisify(execFile);
 
-type OutputRow = { id: string; jobId: string; type: string; preview: boolean; mimeType: string; language: string | null };
-
-async function importVtt(sourceId: string, vtt: string, language = "fi") {
-  const form = new FormData();
-  form.set("file", new Blob([vtt], { type: "text/vtt" }), "captions.vtt");
-  form.set("language", language);
-  return api<{ id: string; status: string }>(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, 201);
-}
-
-async function generate(projectId: string, body: Record<string, unknown>) {
-  const job = await api<{ id: string }>(`/api/projects/${projectId}/generate`, { method: "POST", json: body });
-  const done = await waitForJob(projectId, job.id);
-  if (done.status !== "COMPLETED") throw new Error(`Render ${done.status}: ${done.error}`);
-  const project = await api<{ outputs: OutputRow[] }>(`/api/projects/${projectId}`);
-  const outputs = project.outputs.filter((output) => output.jobId === job.id);
-  return { jobId: job.id, outputs, byType: (type: string) => outputs.find((output) => output.type === type) };
-}
 
 async function streams(filePath: string) {
   const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "stream=index,codec_type,codec_name:stream_tags=language", "-of", "json", filePath]);

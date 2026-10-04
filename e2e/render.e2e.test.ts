@@ -181,3 +181,21 @@ describe("project lifecycle", () => {
     expect(await exists(storagePath)).toBe(false);
   });
 });
+
+describe("duplicating a project that has sources", () => {
+  it("renders the copy from its own sources", async () => {
+    const project = await createProject("Original with clips");
+    const green = await uploadSource(project.id, "green.mp4");
+    await setComposition(project.id, [{ type: "source-clip", sourceId: green.id, startSeconds: 0, endSeconds: 5 }], 5, { sections: [{ id: "sec", label: "Osio", scope: "SOURCE", sourceId: green.id, startSeconds: 0, endSeconds: 5, origin: "MANUAL" }] });
+    const copy = await api<{ id: string; sources: Array<{ id: string }> }>(`/api/projects/${project.id}/duplicate`, { method: "POST" });
+    expect(copy.sources).toHaveLength(1);
+    expect(copy.sources[0].id).not.toBe(green.id);
+
+    const { definition } = await api<{ definition: { composition: { items: Array<{ sourceId?: string }> }; sections: Array<{ sourceId?: string }> } }>(`/api/projects/${copy.id}`);
+    expect(definition.composition.items[0].sourceId).toBe(copy.sources[0].id);
+    expect(definition.sections[0].sourceId).toBe(copy.sources[0].id);
+
+    const { filePath } = await render(copy.id);
+    expect(isGreen(averageColor(await frameRgb(filePath, 1)))).toBe(true);
+  });
+});

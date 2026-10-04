@@ -10,12 +10,14 @@ import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
 import VoiceoverPanel from "@/components/VoiceoverPanel";
 import PodcastPanel from "@/components/PodcastPanel";
-import { baseItemDuration, isBaseItem, type PodcastSettings, type TimelineItem } from "@/domain/project";
+import { baseItemDuration, isBaseItem, type PodcastSettings, type ProjectDefinition, type TimelineItem } from "@/domain/project";
 import SectionManager from "@/components/SectionManager";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
 import OutputSettings from "@/components/OutputSettings";
 import TimelineView from "@/components/TimelineView";
 import VariablesEditor from "@/components/VariablesEditor";
+import { SaveAsTemplate, TemplatePicker, selectionFromValue } from "@/components/TemplatePicker";
+import { addSourceSection } from "@/domain/templates";
 import { variableNames, type ProjectVariable } from "@/domain/variables";
 import { findPreset, presetForSize } from "@/domain/output-presets";
 import DurationNotice from "@/components/DurationNotice";
@@ -118,6 +120,9 @@ type Definition = {
     presetKey?: string;
     targetSeconds?: number;
     reframe?: Reframe;
+    endingGraphicId?: string;
+    sectionOverlays?: Array<{ section: string; graphicId: string; durationSeconds: number }>;
+    sectionNames?: string[];
   };
   composition: { sourceStartSeconds: number; sourceEndSeconds: number; items: Item[] };
   podcast?: PodcastSettings;
@@ -160,6 +165,7 @@ export default function HomePage() {
   const [step, setStep] = useState<Step>("source");
   const [creating, setCreating] = useState(false),
     [title, setTitle] = useState(""),
+    [templateValue, setTemplateValue] = useState("builtin:sermon"),
     [uploadFiles, setUploadFiles] = useState<File[]>([]),
     [uploadMode, setUploadMode] = useState<"now" | "later">("now"),
     [pendingFiles, setPendingFiles] = useState<Record<string, File>>({}),
@@ -203,6 +209,15 @@ export default function HomePage() {
     }
     if (!selectedId && data[0]) await openProject(data[0].id);
   }
+  /** Reloads only the publications (a few rows) of the open project; the publish panel polls this while an upload runs. */
+  async function refreshPublications(id: string) {
+    try {
+      const data = await requestJson<{ publications: Publication[] }>(`/api/projects/${id}/publications`, { cache: "no-store" }, "Could not load publications");
+      setSelected((current) => (current && current.id === id ? { ...current, publications: data.publications } : current));
+    } catch {
+      // The next tick tries again.
+    }
+  }
   async function openProject(id: string) {
     const r = await fetch(`/api/projects/${id}`, { cache: "no-store" });
     if (!r.ok) {
@@ -224,7 +239,7 @@ export default function HomePage() {
       setError("");
       const data = await requestJson<{ id: string }>(
         "/api/projects",
-        jsonInit("POST", { title, templateKey: "basic" }),
+        jsonInit("POST", { title, ...selectionFromValue(templateValue) }),
         "Project creation failed",
       );
       setCreating(false);
@@ -380,20 +395,9 @@ export default function HomePage() {
       setError("End must be greater than start.");
       return;
     }
-    const def = currentDefinition();
-    const segment = { id: crypto.randomUUID(), label: label || "Section", startSeconds: start, endSeconds: end, sourceId };
-    const section = { ...segment, scope: "SOURCE" as const, origin: "MANUAL" as const };
-    await saveDefinition({
-      ...def,
-      semanticSegments: [...def.semanticSegments, segment],
-      sections: [...(def.sections ?? []), section],
-      composition: {
-        ...def.composition,
-        sourceStartSeconds: Math.min(def.composition.sourceStartSeconds, start),
-        sourceEndSeconds: Math.max(def.composition.sourceEndSeconds, end),
-        items: [...def.composition.items, { type: "source-clip", sourceId, startSeconds: start, endSeconds: end }],
-      },
-    });
+    // The template decides where the clip goes (before its ending slate) and whether the section gets an overlay.
+    const next = addSourceSection(currentDefinition() as unknown as ProjectDefinition, { id: crypto.randomUUID(), label: label || "Section", sourceId, startSeconds: start, endSeconds: end });
+    await saveDefinition(next as unknown as Definition);
     setMessage("Section saved.");
   }
   async function removeSegment(id: string) {
@@ -512,11 +516,11 @@ export default function HomePage() {
       form.set("file", assetFile);
       form.set("assetKey", assetKey.trim());
       form.set("type", assetType);
-      await requestJson(`/api/projects/${selected.id}/assets`, { method: "POST", body: form }, "Asset upload failed");
+      const asset = await requestJson<{ assetKey: string; reused?: boolean; requestedKey?: string }>(`/api/projects/${selected.id}/assets`, { method: "POST", body: form }, "Asset upload failed");
       setAssetFile(null);
       setAssetKey("");
       await openProject(selected.id);
-      setMessage("Graphic asset uploaded.");
+      setMessage(asset.requestedKey ? `Sama kuva oli jo kirjastossa nimellä "${asset.assetKey}". Käytä tätä nimeä; "${asset.requestedKey}" ei ole käytössä.` : "Graphic asset uploaded.");
     });
   }
   async function createGraphic() {
@@ -635,10 +639,11 @@ export default function HomePage() {
       }
       throw new Error(data.error ?? fallback);
     }
-    return data as { id: string; clamped?: boolean; durationWarnings?: Array<{ message: string }> };
+    return data as { id: string; clamped?: boolean; durationWarnings?: Array<{ message: string }>; assetWarnings?: string[] };
   }
-  function withWarnings(text: string, data: { durationWarnings?: Array<{ message: string }> }) {
-    return data.durationWarnings?.length ? `${text} ${data.durationWarnings.map((w) => w.message).join(" ")}` : text;
+  function withWarnings(text: string, data: { durationWarnings?: Array<{ message: string }>; assetWarnings?: string[] }) {
+    const warnings = [...(data.durationWarnings?.map((w) => w.message) ?? []), ...(data.assetWarnings ?? [])];
+    return warnings.length ? `${text} ${warnings.join(" ")}` : text;
   }
   async function generate() {
     if (!selected) return;
@@ -844,6 +849,7 @@ export default function HomePage() {
                       <h3 className="subhead">Muuttujat</h3>
                       <p className="muted">Grafiikat käyttävät muuttujia muodossa {"{{nimi}}"}. Arvot täytetään, kun video tehdään.</p>
                       <VariablesEditor variables={currentDefinition().variables ?? []} graphics={selected.definition?.graphics} onSave={saveVariables} />
+                      <SaveAsTemplate projectId={selected.id} defaultName={selected.title} onSaved={(name) => setMessage(`Pohja "${name}" tallennettu. Se löytyy uuden projektin pohjista.`)} />
                     </Panel>
                   </aside>
                 </div>
@@ -853,6 +859,7 @@ export default function HomePage() {
                   <Panel title="Osiot" text="Osiot jäsentävät tallenteen. Jokainen osio valitsee lähteensä ja rajauksensa. Luo ensin luettelo ja sijoita se, kun lähteen kohta tiedetään.">
                     <SectionManager
                       scope="SOURCE"
+                      suggestedNames={selected.definition?.template?.sectionNames}
                       sections={selected.definition?.sections ?? []}
                       sources={selected.sources}
                       onChange={saveSections}
@@ -1171,6 +1178,7 @@ export default function HomePage() {
                         publications={selected.publications ?? []}
                         hasVideo={!!selected.outputs?.some((o) => o.type === "VIDEO" && !o.preview)}
                         onRefresh={() => void openProject(selected.id)}
+                        onPoll={() => void refreshPublications(selected.id)}
                       />
                     </Panel>
                     <Panel title="Podcast">
@@ -1205,6 +1213,7 @@ export default function HomePage() {
               Otsikko
               <input value={title} onChange={(e) => setTitle(e.target.value)} required />
             </label>
+            <TemplatePicker value={templateValue} onChange={setTemplateValue} />
             <div className="actions">
               <button type="button" onClick={() => setCreating(false)}>
                 Peruuta

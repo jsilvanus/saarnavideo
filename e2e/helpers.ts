@@ -129,3 +129,56 @@ export const isBlack = ({ r, g, b }: { r: number; g: number; b: number }) => r <
 export async function regionColor(filePath: string, seconds: number, region: { x: number; y: number; w: number; h: number }) {
   return averageColor(await frameRgb(filePath, seconds, region));
 }
+
+/** Imports WebVTT cues as a new (active) transcription run of the source. */
+export async function importVtt(sourceId: string, vtt: string, language = "fi") {
+  const form = new FormData();
+  form.set("file", new Blob([vtt], { type: "text/vtt" }), "captions.vtt");
+  form.set("language", language);
+  return api<{ id: string; status: string }>(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, 201);
+}
+
+export type OutputRow = { id: string; jobId: string; type: string; preview: boolean; mimeType: string; language: string | null };
+
+/** Queues a generate request, waits for the job and returns the outputs it produced (`byType` finds one by its output type). */
+export async function generate(projectId: string, body: Record<string, unknown>) {
+  const job = await api<{ id: string }>(`/api/projects/${projectId}/generate`, { method: "POST", json: body });
+  const done = await waitForJob(projectId, job.id);
+  if (done.status !== "COMPLETED") throw new Error(`Render ${done.status}: ${done.error}`);
+  const project = await api<{ outputs: OutputRow[] }>(`/api/projects/${projectId}`);
+  const outputs = project.outputs.filter((output) => output.jobId === job.id);
+  return { jobId: job.id, outputs, byType: (type: string) => outputs.find((output) => output.type === type) };
+}
+
+const SHORT_CUES = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHyvää huomenta\n\n00:00:03.000 --> 00:00:04.000\nTervetuloa\n";
+
+export type PublishableOutput = { id: string; jobId: string; type: string; preview: boolean; sizeBytes: string | number | null };
+
+/** A rendered 5 s video with soft captions and its auto-generated thumbnail: everything a publication uploads. */
+export async function renderPublishableProject(title: string) {
+  const project = await createProject(title);
+  const source = await uploadSource(project.id, "green.mp4");
+  await importVtt(source.id, SHORT_CUES);
+  await setComposition(project.id, [{ type: "source-clip", sourceId: source.id, startSeconds: 0, endSeconds: 5 }], 5);
+  await generate(project.id, { captions: { mode: "soft" } });
+  let outputs: PublishableOutput[] = [];
+  for (const deadline = Date.now() + 60_000; Date.now() < deadline; await new Promise((resolve) => setTimeout(resolve, 300))) {
+    outputs = (await api<{ outputs: PublishableOutput[] }>(`/api/projects/${project.id}`)).outputs;
+    if (outputs.some((output) => output.type === "THUMBNAIL")) break;
+  }
+  return { project, outputs, video: outputs.find((output) => output.type === "VIDEO" && !output.preview)!, srt: outputs.find((output) => output.type === "CAPTIONS_SRT")! };
+}
+
+export type Publication = { id: string; provider: string; status: string; privacy: string; externalId: string | null; error: string | null };
+
+/** Waits until the worker has finished (COMPLETED or FAILED) a publication of the project. */
+export async function waitForPublication(projectId: string, id: string, timeoutMs = 60_000): Promise<Publication> {
+  for (const deadline = Date.now() + timeoutMs; ; await new Promise((resolve) => setTimeout(resolve, 300))) {
+    const publication = (await api<{ publications: Publication[] }>(`/api/projects/${projectId}`)).publications.find((item) => item.id === id)!;
+    if (publication.status === "COMPLETED" || publication.status === "FAILED") return publication;
+    if (Date.now() > deadline) throw new Error(`Publication still ${publication.status}`);
+  }
+}
+
+/** Queues a publication (`platform`, `privacy`); answers 202 unless `status` says otherwise. */
+export const publish = (projectId: string, json: Record<string, unknown>, status = 202) => api<Publication>(`/api/projects/${projectId}/publish`, { method: "POST", json }, status);

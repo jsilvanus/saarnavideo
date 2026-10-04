@@ -21,7 +21,8 @@ export function publicationUrl(publication: Publication): string | null {
   return publication.provider === "YOUTUBE" ? `https://www.youtube.com/watch?v=${publication.externalId}` : `https://www.facebook.com/${publication.externalId}`;
 }
 
-export default function PublishPanel({ projectId, publications, hasVideo, onRefresh }: { projectId: string; publications: Publication[]; hasVideo: boolean; onRefresh: () => void }) {
+/** `onRefresh` reloads the whole project (after queuing); `onPoll` is the cheaper refresh used while an upload runs, defaulting to `onRefresh`. */
+export default function PublishPanel({ projectId, publications, hasVideo, onRefresh, onPoll }: { projectId: string; publications: Publication[]; hasVideo: boolean; onRefresh: () => void; onPoll?: () => void }) {
   const [platform, setPlatform] = useState<Platform>("YOUTUBE");
   const [privacy, setPrivacy] = useState("PRIVATE");
   const [busy, setBusy] = useState(false);
@@ -37,8 +38,8 @@ export default function PublishPanel({ projectId, publications, hasVideo, onRefr
   // Publications finish in the worker; keep the list fresh while one is running.
   // The latest onRefresh is read through a ref, so a new callback identity on each parent render does not restart the timer.
   const running = publications.some(p => ACTIVE.has(p.status));
-  const refresh = useRef(onRefresh);
-  refresh.current = onRefresh;
+  const refresh = useRef(onPoll ?? onRefresh);
+  refresh.current = onPoll ?? onRefresh;
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(() => refresh.current(), 3000);

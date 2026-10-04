@@ -17,9 +17,14 @@ export function clipSourceIds(definition: ProjectDefinition): string[] {
   return Array.from(new Set(definition.composition.items.flatMap((item) => (item.type === "source-clip" ? [item.sourceId] : []))));
 }
 
-/** Output-timeline cues plus their SRT and VTT renderings. */
+/** Output-timeline cues of the composition (what burned captions need). */
+export function buildCaptionCues(definition: ProjectDefinition, segmentsBySource: ReadonlyMap<string, readonly CaptionSegment[]>) {
+  return mapCaptionsToTimeline(definition.composition.items, segmentsBySource);
+}
+
+/** The cues plus their SRT and VTT renderings (what soft captions need; burn-only renders skip the formatting). */
 export function buildCaptionFiles(definition: ProjectDefinition, segmentsBySource: ReadonlyMap<string, readonly CaptionSegment[]>) {
-  const cues = mapCaptionsToTimeline(definition.composition.items, segmentsBySource);
+  const cues = buildCaptionCues(definition, segmentsBySource);
   return { cues, srt: formatSrt(cues), vtt: formatVtt(cues) };
 }
 

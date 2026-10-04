@@ -2,7 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { decryptYouTubeToken, encryptYouTubeToken } from "@/integrations/youtube-token-crypto";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token";
+/** Token endpoint; overridable for tests (e2e points it at a fake server). */
+const tokenUrl = () => process.env.YOUTUBE_OAUTH_TOKEN_URL?.trim() || DEFAULT_TOKEN_URL;
 // youtube.force-ssl is required by captions.insert; connections made before it was added can still upload videos, only the caption track fails (soft).
 const SCOPE = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl";
 
@@ -19,7 +21,7 @@ function tokenExpiry(expiresIn?: number): Date | null {
 }
 
 async function requestToken(params: Record<string, string>): Promise<Response> {
-  return fetch(TOKEN_URL, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params) });
+  return fetch(tokenUrl(), { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params) });
 }
 
 export function youtubeAuthorizationUrl(state: string): string {

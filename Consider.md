@@ -1,6 +1,6 @@
 # Consider
 
-Cleanups found by the `/simplify` review of #23 that were **not** done in #25, because they are larger refactors, change behaviour, or could not be verified in the environment where the review ran. Each entry says where the issue is, what it costs, and the suggested fix.
+Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (and not in the follow-up that did the small ones: WebM duration by remux, `GET /api/projects/[id]/publications` for polling, Range support for outputs and `?type=AUDIO` for the library, burn-only captions skipping SRT/VTT formatting, the duplicate-route retention leftover and most repeated e2e helpers), because they are larger refactors, change behaviour, or could not be verified in the environment where the review ran. Each entry says where the issue is, what it costs, and the suggested fix.
 
 ## Structural
 
@@ -46,40 +46,13 @@ Cleanups found by the `/simplify` review of #23 that were **not** done in #25, b
   - Cheapest: add input-side `-ss`/`-t` per clip.
   - Better: render the body once to a temporary WAV or FLAC, then run the loudnorm measure and encode passes from that file.
 
-### 7. Cheaper WebM duration measurement
-- **Where:** `probeAudioFile` in `src/integrations/audio-assets.ts`.
-- **Cost:** when the header has no duration (MediaRecorder WebM), the whole recording is decoded inside the upload request.
-- **Fix:** use `-map 0:a:0 -c copy -f null -` (remux only) instead of decoding. Verify that the reported `time=` matches the real duration before switching; this was not possible without ffmpeg.
-
-### 8. Lighter polling of publications
-- **Where:** `src/components/PublishPanel.tsx` together with `openProject` in `src/app/page.tsx`.
-- **Cost:** every 3 s while a publication runs, the whole project is fetched (sources, jobs, outputs, assets, definition) only to update `publications`.
-- **Fix:** add `GET /api/projects/[id]/publications` and poll that.
-
-### 9. Seekable podcast audio and a filtered library request
-- **Where:** `src/app/api/outputs/[id]/route.ts`, `src/components/PodcastPanel.tsx`.
-- **Cost:**
-  - The podcast `<audio>` player streams the output without Range support, so every seek restarts the download.
-  - PodcastPanel loads the whole `/api/assets` library and filters for AUDIO in the browser.
-- **Fix:**
-  - Serve AUDIO outputs with `rangedFileResponse`, keeping the attachment `Content-Disposition` for downloads (for example only when a `Range` header is present, or with `?inline=1`).
-  - Add a `?type=AUDIO` filter to `GET /api/assets`.
-
-### 10. Minor
-- `buildCaptionFiles` (`src/worker/captions.ts`) formats both the SRT and VTT strings even for burn-only captions, where only the cues are used.
-- `prepareCaptions` loads every column of every active transcript segment of a source. Selecting only `sourceId`, `startSeconds`, `endSeconds` and `text` would be enough.
-
 ## Consistency
 
-### 11. Retention setting left in project duplication
-- **Where:** `src/app/api/projects/[id]/duplicate/route.ts` (`SOURCE_RETENTION_MS`, `expiresAt` on duplicated sources).
-- **Cost:** it still writes a retention date, although media is persistent and `src/lib/prisma.ts` clears it on write. This was outside the diff under review.
-- **Fix:** remove the constant and the `expiresAt` write. After that, consider removing the `$extends` block in `src/lib/prisma.ts` (and optionally nulling the column once), because nothing writes or filters `expiresAt` any more.
+### 7. Leftovers from the retention removal
+- **Where:** `src/lib/prisma.ts` (the `$extends` block that clears `expiresAt` on write and strips it from filters).
+- **Cost:** nothing writes or filters `expiresAt` any more (the duplicate route no longer sets it), so the extension only hides the column.
+- **Fix:** remove the `$extends` block, and optionally null the column once and then drop it from both schemas.
 
-### 12. Repeated e2e helpers
-- **Where:** `e2e/*.e2e.test.ts`.
-- **Cost:**
-  - `importVtt` is defined four times: in the captions, burned-captions, Facebook and transcript-text tests.
-  - A `generate(projectId, body)` helper is defined three times.
-  - `ffprobeJson` in the voiceover/podcast test overlaps `probe()` in `e2e/helpers.ts`.
-- **Fix:** move `importVtt` and `generate` into `e2e/helpers.ts`, and reuse `probe()`.
+### 8. Repeated e2e helpers
+- **Where:** `e2e/captions-burned.e2e.test.ts` (its own `generate`, which also downloads the video), `e2e/voiceover-podcast.e2e.test.ts` (`ffprobeJson`, which overlaps `probe()` in `e2e/helpers.ts` but reads more fields).
+- **Fix:** let the burned-captions `generate` call the shared one and download afterwards; extend `probe()` with format tags and attached-picture disposition and drop `ffprobeJson`.

@@ -2,48 +2,9 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, inject, it } from "vitest";
 import { fakeGraphConfigure, fakeGraphReset, fakeGraphState } from "./fake-graph-server";
-import { api, baseUrl, createProject, download, mediaRoot, setComposition, uploadSource, waitForJob } from "./helpers";
+import { api, baseUrl, createProject, download, mediaRoot, publish, renderPublishableProject as renderedProject, setComposition, uploadSource, waitForJob, waitForPublication } from "./helpers";
 
 const fakeUrl = inject("facebookUrl");
-const CUES = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHyvää huomenta\n\n00:00:03.000 --> 00:00:04.000\nTervetuloa\n";
-
-type Publication = { id: string; provider: string; status: string; privacy: string; externalId: string | null; error: string | null };
-type Output = { id: string; jobId: string; type: string; preview: boolean; sizeBytes: string | number | null };
-
-async function importVtt(sourceId: string) {
-  const form = new FormData();
-  form.set("file", new Blob([CUES], { type: "text/vtt" }), "captions.vtt");
-  form.set("language", "fi");
-  await api(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, 201);
-}
-
-/** A rendered 5 s video with soft captions and its auto-generated thumbnail. */
-async function renderedProject(title: string) {
-  const project = await createProject(title);
-  const source = await uploadSource(project.id, "green.mp4");
-  await importVtt(source.id);
-  await setComposition(project.id, [{ type: "source-clip", sourceId: source.id, startSeconds: 0, endSeconds: 5 }], 5);
-  const job = await api<{ id: string }>(`/api/projects/${project.id}/generate`, { method: "POST", json: { captions: { mode: "soft" } } });
-  const done = await waitForJob(project.id, job.id);
-  if (done.status !== "COMPLETED") throw new Error(`Render ${done.status}: ${done.error}`);
-  let outputs: Output[] = [];
-  for (const deadline = Date.now() + 60_000; Date.now() < deadline; await new Promise((resolve) => setTimeout(resolve, 300))) {
-    outputs = (await api<{ outputs: Output[] }>(`/api/projects/${project.id}`)).outputs;
-    if (outputs.some((output) => output.type === "THUMBNAIL")) break;
-  }
-  return { project, outputs, video: outputs.find((output) => output.type === "VIDEO" && !output.preview)!, srt: outputs.find((output) => output.type === "CAPTIONS_SRT")! };
-}
-
-async function waitForPublication(projectId: string, id: string, timeoutMs = 60_000): Promise<Publication> {
-  for (const deadline = Date.now() + timeoutMs; ; await new Promise((resolve) => setTimeout(resolve, 300))) {
-    const publication = (await api<{ publications: Publication[] }>(`/api/projects/${projectId}`)).publications.find((item) => item.id === id)!;
-    if (publication.status === "COMPLETED" || publication.status === "FAILED") return publication;
-    if (Date.now() > deadline) throw new Error(`Publication still ${publication.status}`);
-  }
-}
-
-const publish = (projectId: string, json: Record<string, unknown>, status = 202) => api<Publication>(`/api/projects/${projectId}/publish`, { method: "POST", json }, status);
-
 describe("Facebook publishing (fake Graph API)", () => {
   beforeEach(async () => { await fakeGraphReset(fakeUrl); });
 

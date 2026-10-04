@@ -107,6 +107,12 @@ export const templateSchema = z.object({
   fontFile: z.string().optional(),
   backgroundColor: z.string().default("black"),
   textColor: z.string().default("white"),
+  /** The slate that closes the video: new sections are inserted before it while it is still the last item. */
+  endingGraphicId: z.string().min(1).optional(),
+  /** Overlay added to a new section whose name matches `section` (case-insensitive). */
+  sectionOverlays: z.array(z.object({ section: z.string().min(1), graphicId: z.string().min(1), durationSeconds: z.number().positive() })).optional(),
+  /** Section names the template suggests (offered as a list in the Structure step). */
+  sectionNames: z.array(z.string().min(1)).optional(),
 });
 
 /** Podcast (audio-only) export settings. Intro/outro are audio assets and are used for the podcast only, never for the video. */

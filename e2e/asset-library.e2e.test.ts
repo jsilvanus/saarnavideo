@@ -99,3 +99,42 @@ describe("asset library: link, render, unlink, rename, delete", () => {
     expect((await rawStatus(`/api/assets/${other.id}`, "DELETE")).status).toBe(204);
   });
 });
+
+describe("asset keys shared between projects", () => {
+  it("tells the uploader that the existing key stays, and warns when a project refers to a key it does not have", async () => {
+    const bytes = await bluePng("asset-key-collision.png");
+    const upload = (projectId: string, key: string) => {
+      const form = new FormData();
+      form.set("file", new Blob([new Uint8Array(bytes)], { type: "image/png" }), `${key}.png`);
+      form.set("assetKey", key);
+      form.set("type", "OVERLAY");
+      return api<{ id: string; assetKey: string; reused?: boolean; requestedKey?: string }>(`/api/projects/${projectId}/assets`, { method: "POST", body: form });
+    };
+    const a = await createProject("Key owner");
+    const first = await upload(a.id, "kcblue");
+    expect(first).toMatchObject({ assetKey: "kcblue" });
+    expect(first.reused).toBeUndefined();
+
+    const b = await createProject("Key collision");
+    const second = await upload(b.id, "kclogo");
+    expect(second).toMatchObject({ id: first.id, assetKey: "kcblue", reused: true, requestedKey: "kclogo" });
+
+    const green = await uploadSource(b.id, "green.mp4");
+    await setComposition(b.id, [
+      { type: "source-clip", sourceId: green.id, startSeconds: 0, endSeconds: 5 },
+      { type: "overlay", kind: "image", imageAsset: "kclogo", startSeconds: 0, endSeconds: 3 },
+      { type: "overlay", kind: "image", imageAsset: "kcblue", startSeconds: 0, endSeconds: 3 },
+    ], 5);
+    const job = await api<{ id: string; assetWarnings: string[] }>(`/api/projects/${b.id}/generate`, { method: "POST", json: { preview: true } });
+    expect(job.assetWarnings).toHaveLength(1);
+    expect(job.assetWarnings[0]).toContain('"kclogo"');
+
+    // Using the key that exists leaves nothing to warn about.
+    await setComposition(b.id, [
+      { type: "source-clip", sourceId: green.id, startSeconds: 0, endSeconds: 5 },
+      { type: "overlay", kind: "image", imageAsset: "kcblue", startSeconds: 0, endSeconds: 3 },
+    ], 5);
+    const clean = await api<{ assetWarnings: string[] }>(`/api/projects/${b.id}/generate`, { method: "POST", json: { preview: true } });
+    expect(clean.assetWarnings).toEqual([]);
+  });
+});

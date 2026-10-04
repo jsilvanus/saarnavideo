@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { beforeAll, describe, expect, it } from "vitest";
 import { parseVtt } from "../src/lib/captions";
-import { api, averageColor, baseUrl, createProject, download, frameRgb, fixturesDir, isBlack, isGreen, mediaRoot, probe, setComposition, uploadSource, waitForJob } from "./helpers";
+import { api, averageColor, baseUrl, createProject, download, frameRgb, fixturesDir, isBlack, isGreen, mediaRoot, generate, probe, setComposition, uploadSource, waitForJob } from "./helpers";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,14 +35,6 @@ async function uploadAudio(projectId: string | null, fileName: string, mimeType:
   form.set("assetKey", assetKey);
   form.set("type", "AUDIO");
   return api<{ id: string; type: string; mimeType: string; durationMs: number | null }>(projectId ? `/api/projects/${projectId}/assets` : "/api/assets", { method: "POST", body: form });
-}
-
-async function generate(projectId: string, body: Record<string, unknown>) {
-  const job = await api<{ id: string; type: string }>(`/api/projects/${projectId}/generate`, { method: "POST", json: body });
-  const done = await waitForJob(projectId, job.id);
-  if (done.status !== "COMPLETED") throw new Error(`Render ${done.status}: ${done.error}`);
-  const project = await api<{ outputs: Array<{ id: string; jobId: string; type: string; mimeType: string }> }>(`/api/projects/${projectId}`);
-  return { jobId: job.id, outputs: project.outputs.filter((output) => output.jobId === job.id) };
 }
 
 /** Mono 16 kHz samples of a file. */
@@ -98,6 +90,11 @@ describe("audio assets", () => {
     // MediaRecorder reports the codec in the type.
     const webm = await uploadAudio(project.id, "voice.webm", "audio/webm;codecs=opus", "recorded");
     expect(mp3).toMatchObject({ type: "AUDIO", mimeType: "audio/mpeg" });
+    const audioOnly = await api<{ assets: Array<{ type: string; id: string }> }>("/api/assets?type=AUDIO");
+    expect(audioOnly.assets.length).toBeGreaterThanOrEqual(4);
+    expect(audioOnly.assets.every((asset) => asset.type === "AUDIO")).toBe(true);
+    expect(audioOnly.assets.map((asset) => asset.id)).toContain(mp3.id);
+    expect((await api<{ assets: Array<{ type: string }> }>("/api/assets?type=OVERLAY")).assets.some((asset) => asset.type === "AUDIO")).toBe(false);
     expect(webm).toMatchObject({ type: "AUDIO", mimeType: "audio/webm" });
     expect(mp3.durationMs).toBeGreaterThan(1900);
     expect(mp3.durationMs).toBeLessThan(2200);
@@ -233,8 +230,22 @@ describe("podcast export", () => {
     const response = await fetch(`${baseUrl}/api/outputs/${audio.id}`);
     expect(response.headers.get("content-type")).toBe("audio/mpeg");
     expect(response.headers.get("content-disposition")).toContain("saarnavideo-podcast.mp3");
+    expect(response.headers.get("accept-ranges")).toBeNull();
     const filePath = path.join(mediaRoot, `podcast-${audio.id}.mp3`);
     await download(audio.id, filePath);
+
+    // A player seeks with byte ranges: the first request (`?inline=1`) advertises them, later ones get 206 and no attachment header.
+    const inline = await fetch(`${baseUrl}/api/outputs/${audio.id}?inline=1`);
+    expect(inline.status).toBe(200);
+    expect(inline.headers.get("accept-ranges")).toBe("bytes");
+    expect(inline.headers.get("content-disposition")).toBeNull();
+    const size = (await readFile(filePath)).length;
+    expect(Number(inline.headers.get("content-length"))).toBe(size);
+    await inline.arrayBuffer();
+    const part = await fetch(`${baseUrl}/api/outputs/${audio.id}`, { headers: { Range: "bytes=100-199" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe(`bytes 100-199/${size}`);
+    expect((await part.arrayBuffer()).byteLength).toBe(100);
 
     const info = await ffprobeJson(filePath);
     // 2 (intro) + 7 (body) + 2 (outro) - two 0.5 s crossfades.
