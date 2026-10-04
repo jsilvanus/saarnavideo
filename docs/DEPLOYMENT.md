@@ -46,6 +46,22 @@ MAX_UPLOAD_BYTES=53687091200               # 50 GB
 WORKER_POLL_MS=3000
 ```
 
+### Rendering on an fffleet fleet (Optional)
+By default the worker runs ffmpeg itself. With `RENDER_EXECUTOR=fffleet` it sends VIDEO, PREVIEW, THUMBNAIL and PODCAST ffmpeg commands to an [fffleet](https://github.com/jsilvanus/fffleet) fleet instead. YouTube downloads, transcription and the audio probe on upload still run where the worker runs.
+
+```bash
+RENDER_EXECUTOR=fffleet
+FFFLEET_URL=http://orchestrator:5000          # unset = render here, through the same S3 staging
+FFFLEET_CLIENT_ID=saarnavideo                 # an app login, or FFFLEET_TOKEN for a static token
+FFFLEET_CLIENT_SECRET=...
+FFFLEET_S3_BUCKET=saarnavideo-render
+FFFLEET_S3_ENDPOINT=https://hel1.your-objectstorage.com   # S3-compatible stores only
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+The remote workers need no shared volume. For each render the worker uploads the files it reads to S3 (sources, assets, audio, the generated `.ass`/`.srt`, a template font), submits one batch job, and copies the output back to `MEDIA_ROOT`, so Output rows, downloads and publishing are unchanged. A file is uploaded once (keyed by path, size and modification time) and reused by later renders. Temporary caption files and the output copy in S3 are deleted after each job; sources and assets stay, so give the bucket a lifecycle rule if you want them to expire. Fleet workers should run with `FFFLEET_CACHE_DIR` so a source is downloaded to a worker once, not for every job, and the worker image must have `libass`, `drawtext` and `libmp3lame` (the published `fffleet-worker` image does).
+
 ### Transcription (Optional)
 ```bash
 # Python transcription worker
