@@ -79,6 +79,10 @@ describe("YouTube publishing (fake Google endpoints)", () => {
     expect(queued).toMatchObject({ provider: "YOUTUBE", privacy: "PRIVATE", status: "QUEUED" });
     const done = await waitForPublication(project.id, queued.id);
     expect(done).toMatchObject({ status: "COMPLETED", error: null });
+    // The light endpoint the publish panel polls lists the same publication.
+    const listed = await api<{ publications: Array<{ id: string; status: string; externalId: string | null }> }>(`/api/projects/${project.id}/publications`);
+    expect(listed.publications).toEqual([expect.objectContaining({ id: queued.id, status: "COMPLETED", externalId: done.externalId })]);
+    await api("/api/projects/missing/publications", {}, 404);
 
     const fake = await fakeYouTubeState(fakeUrl);
     expect(fake.videos).toHaveLength(1);

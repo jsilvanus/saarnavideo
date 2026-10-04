@@ -9,9 +9,11 @@ const metadataSchema = z.object({ assetKey: z.string().trim().min(1).max(64), ty
 
 function serialize(asset: any) { return { id: asset.id, assetKey: asset.assetKey, type: asset.type, mimeType: asset.mimeType, width: asset.width, height: asset.height, hasAlpha: asset.hasAlpha, durationMs: asset.durationMs ?? null, sizeBytes: asset.sizeBytes.toString(), contentHash: asset.contentHash, folderId: asset.folderId ?? null, projectCount: asset.projects?.length ?? 0, createdAt: asset.createdAt?.toISOString?.() }; }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const type = new URL(request.url).searchParams.get("type");
+  const typeFilter = type && metadataSchema.shape.type.safeParse(type).success ? { type: type as "OVERLAY" | "BACKGROUND" | "LOGO" | "FONT" | "AUDIO" } : {};
   const [assets, folders] = await Promise.all([
-    prisma.asset.findMany({ select: { id: true, assetKey: true, type: true, mimeType: true, width: true, height: true, hasAlpha: true, durationMs: true, sizeBytes: true, contentHash: true, folderId: true, createdAt: true, projects: { select: { id: true } } }, orderBy: { createdAt: "desc" } }),
+    prisma.asset.findMany({ where: typeFilter, select: { id: true, assetKey: true, type: true, mimeType: true, width: true, height: true, hasAlpha: true, durationMs: true, sizeBytes: true, contentHash: true, folderId: true, createdAt: true, projects: { select: { id: true } } }, orderBy: { createdAt: "desc" } }),
     prisma.assetFolder.findMany({ select: { id: true, name: true, parentId: true }, orderBy: [{ parentId: "asc" }, { name: "asc" }] }),
   ]);
   return NextResponse.json({ assets: assets.map(serialize), folders });

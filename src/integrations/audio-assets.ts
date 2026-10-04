@@ -49,7 +49,7 @@ export function audioExtension(mimeType: string): string {
 
 export type AudioProbe = { durationMs: number };
 
-/** Parses the last `time=HH:MM:SS.xx` progress stamp out of ffmpeg's stderr; used when the container header has no duration (MediaRecorder WebM). */
+/** Parses the last `time=HH:MM:SS.xx` progress stamp out of ffmpeg's stderr; used when the container header has no duration (MediaRecorder WebM); the file is remuxed, not decoded. */
 export function parseFfmpegTime(stderr: string): number | undefined {
   const matches = [...stderr.matchAll(/time=(\d+):(\d\d):(\d\d(?:\.\d+)?)/g)];
   const last = matches[matches.length - 1];
@@ -58,7 +58,7 @@ export function parseFfmpegTime(stderr: string): number | undefined {
 
 /**
  * Checks with ffprobe that the file holds an audio stream and returns its duration. Streams without a duration in the
- * header (Chrome's MediaRecorder WebM) are decoded once to measure it. Returns null for a file ffprobe cannot read as audio.
+ * header (Chrome's MediaRecorder WebM) are remuxed once (stream copy, no decoding) to measure it; the reported time matches a full decode. Returns null for a file ffprobe cannot read as audio.
  */
 export async function probeAudioFile(filePath: string): Promise<AudioProbe | null> {
   try {
@@ -67,7 +67,7 @@ export async function probeAudioFile(filePath: string): Promise<AudioProbe | nul
     if (!data.streams?.some(stream => stream.codec_type === "audio")) return null;
     const header = Number(data.format?.duration);
     if (Number.isFinite(header) && header > 0) return { durationMs: Math.round(header * 1000) };
-    const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-v", "info", "-stats", "-i", filePath, "-vn", "-f", "null", "-"], { maxBuffer: 16 * 1024 * 1024 }).catch(error => ({ stderr: String((error as { stderr?: string }).stderr ?? "") }));
+    const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-v", "info", "-stats", "-i", filePath, "-map", "0:a:0", "-c", "copy", "-f", "null", "-"], { maxBuffer: 16 * 1024 * 1024 }).catch(error => ({ stderr: String((error as { stderr?: string }).stderr ?? "") }));
     const measured = parseFfmpegTime(stderr);
     return measured && measured > 0 ? { durationMs: Math.round(measured * 1000) } : null;
   } catch {

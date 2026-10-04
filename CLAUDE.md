@@ -53,6 +53,8 @@ Core domain models using Zod for type-safe validation:
 - **`project.ts`** - Project composition schema (timeline items: source-clips, overlays, slates)
 - **`templates.ts`** - Template system and template resolution
 - **`graphics.ts`** - Graphic elements and scene graphs
+- **`saved-templates.ts`** - Capture a project as a template and apply it again
+- **`source-ids.ts`** - Translate source ids in a definition (project duplication)
 - **`transcription.ts`** - Transcription data structures
 - **`validation.ts`** - Shared validation utilities
 - **`*.test.ts`** - Unit tests for domain logic
@@ -63,6 +65,7 @@ Core domain models using Zod for type-safe validation:
 - **`SidebarToggle.tsx`** - UI toggle component
 - **`/graphics-editor/`** - Graphics editor subcomponents, geometry and types
 - **`SourcePlayer.tsx`** - Shared YouTube/local source preview player hook
+- **`TemplatePicker.tsx`** - Template list for the new-project dialog and the "save as template" block
 - **`TimelineView.tsx`** - Read-only output timeline (Video / Grafiikat / Ääni), horizontal or vertical
 - **`VariablesEditor.tsx`** - Project variables editor (`{{name}}` values for graphics)
 - **`api.ts`**, **`format.ts`** - Shared fetch and formatting helpers
@@ -188,7 +191,7 @@ Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB; audio is describ
 - **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. Project removal (`DELETE /api/projects/[id]/assets/[assetId]`) only unlinks (409 with `usage` while the project's definition still uses the asset, `?force=1` overrides). They are removed only explicitly through `DELETE /api/assets/[id]` (409 while linked to projects, `?force=1` overrides; the file is deleted only when no other row shares its `storagePath`). Renaming is `PATCH /api/assets/[id]` (validated with `validateAssetKey`, 409 if another asset has the name). The `/assets` page has Rename/Delete with confirmation and shows "used in N projects".
 - **Folders:** `AssetFolder` is a tree (`parentId`) used only for organisation. The library page supports drag-and-drop moves between folders and breadcrumbs.
 - **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. `AssetPicker` (`src/components/AssetPicker.tsx`) browses the whole library and links on pick (`POST /api/projects/[id]/assets/[assetId]`); it is used by "Add from library" (Graphics and Voiceover tabs) and by "Choose from library" in the graphics editor's image layer. The editor's quick list shows only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
-- **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is silently skipped.
+- **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is skipped, but not silently any more: `findUnresolvedImageRefs` (`src/domain/asset-usage.ts`) lists such image references; `POST /generate` returns them as `assetWarnings` and the worker writes a WARN job log. Uploading bytes that are already in the library reuses that asset and its key; the response says `reused: true` and `requestedKey` when the name asked for was not applied.
 - **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images and audio only. `AUDIO` is set automatically for audio files.
 
 ### Captions and export formats
@@ -197,7 +200,7 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Request:** `POST /api/projects/[id]/generate` accepts `captions: { mode: "none" | "soft" | "burn" | "both", language?, styleGraphicId? }` (Zod: `captionOptionsSchema` in `src/domain/captions.ts`; modes `none | soft | burn | both`, plus `styleGraphicId` for burned captions, see below). It is stored in `MediaJob.parameters.captions` and read by the worker (`readCaptionOptions`, `src/worker/captions.ts`). The UI selector is on the Generate panel.
 - **Timing:** `mapCaptionsToTimeline` (`src/renderer/caption-timeline.ts`, pure) puts each source's segments on the output timeline: per source-clip it keeps overlapping segments, clips them to the clip range and shifts by the clip's output start (`layoutTimeline` mirrors `buildCompositionRenderPlan`: crossfades pull the next item back by the transition, standalone slates take time and carry no cues, overlays take none). Output cues never overlap (an earlier cue is cut where the next starts), because mov_text cannot hold overlapping cues.
 - **Soft mode:** the worker writes `<output>.srt`/`.vtt`, passes the SRT to `buildCompositionRenderPlan(..., { captions: { path, language } })` (extra last `-i`, `-map N:0 -c:s mov_text -metadata:s:s:0 language=<iso639-2>` appended after the video/audio maps, so the preview rewrite of the first `-map` still works), and stores two extra `Output` rows of type `CAPTIONS_SRT` / `CAPTIONS_VTT` (with `Output.language`) beside the `VIDEO` row. Previews get them too (`preview = true`). No transcript in range = render without a track (WARN job log).
-- **Downloads:** `GET /api/outputs/[id]` picks extension/mime from the output type (`outputExtension`, `CAPTION_MIME` in `src/domain/captions.ts`).
+- **Downloads:** `GET /api/outputs/[id]` picks extension/mime from the output type (`outputExtension`, `CAPTION_MIME` in `src/domain/captions.ts`). A `Range` header or `?inline=1` returns a seekable `rangedFileResponse` (206, no attachment header); the podcast player uses `?inline=1`.
 - **YouTube:** after a successful video upload `processPublication` uploads the job's SRT sidecar with `captions.insert` (`uploadCaptionToYouTube`, `src/worker/caption-publish.ts`). Fails soft (WARN JobLog + console). Needs the `youtube.force-ssl` OAuth scope, which `youtube-oauth.ts` now requests; connections made earlier must be reconnected for caption upload to work (the video upload is unaffected). `captions.insert` costs 400 API quota units.
 - **Not covered:** captions in the legacy no-items render path.
 
@@ -218,6 +221,7 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Facebook (one Page, env only):** `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` (never stored in the DB or logged; scrubbed from errors), optional `FACEBOOK_GRAPH_VERSION` (default `v24.0`), `FACEBOOK_GRAPH_BASE_URL`, `FACEBOOK_STATUS_POLL_MS`, `FACEBOOK_PROCESSING_TIMEOUT_MS`. `GET /api/integrations/facebook/status` reports configured + Page name. `PUBLIC` = published, `PRIVATE` = unpublished upload, `UNLISTED` = 400.
 - **Upload:** `src/integrations/facebook.ts` (resumable start/transfer/finish with server-dictated chunk ranges, retries on 5xx/network, status polling, thumbnail, `video.<locale>.srt` captions, Graph error mapping such as code 190) and `src/worker/facebook-publish.ts` (orchestration: thumbnail and caption failures are WARN job logs, never fail the publication; upload/processing errors fail it with a readable `Publication.error`).
 - **Tests:** `e2e/fake-graph-server.ts` is a fake Graph API with chunk accounting and an admin API; `src/integrations/facebook.test.ts` (unit/integration) and `e2e/facebook.e2e.test.ts`. `e2e/global-setup.ts` starts the fake server and points the worker and Next server at it (`inject("facebookUrl")`). Never verified against the real Graph API; see `docs/FACEBOOK_SETUP.md`.
+- **YouTube e2e:** `e2e/fake-youtube-server.ts` fakes the Google token endpoint and the resumable video/caption/thumbnail uploads; the worker and server reach it through `YOUTUBE_API_BASE_URL` and `YOUTUBE_OAUTH_TOKEN_URL` (test-only overrides, defaults are Google). `e2e/youtube.e2e.test.ts` covers the OAuth round trip, token refresh, privacy mapping and the soft failure of thumbnail and caption uploads (the video is already on YouTube by then, so they never fail the publication). Never verified against real Google.
 - Output lookups (publish route, worker thumbnail/sidecar) do not filter on `expiresAt`: media is persistent and `src/lib/prisma.ts` clears expiry on write, so such a filter matched nothing.
 
 ### Voiceover and podcast
@@ -252,11 +256,11 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 `definition.variables` (`[{ key, value }]`, `src/domain/variables.ts`) are user-defined; nothing about the service (preacher, Gospel reference) is predefined. Graphics write `{{name}}` in text layers; `materializeGraphics` (`src/renderer/composition.ts`) fills them in graphic layers, inline `data.layers` and plain `data` text (title/subtitle/text) at render time. Unknown names stay as written so a missing value shows. Keys: letters (incl. ä/ö/å), digits, `-`, `_`, max 40, unique; `PATCH /api/projects/[id]` rejects invalid ones (`validateRenderSettings`). The graphics editor shows the raw `{{name}}`.
 
 ### Template System
-Projects reference templates by key (e.g., "sermon"). Templates define:
-- Default visual styling (colors, fonts, layout)
-- Overlay/slate placement and animation
-- Composition structure
-- Resolution and aspect ratio
+A template seeds a new project; afterwards the project is ordinary data and nothing refers back to the template. Details and the API are in `docs/TEMPLATE_CREATION.md`.
+- **Built-in** (`src/domain/templates.ts`): `sermon` (Saarna), `liturgy` (Messu, 17 sections in the order of the Mass), `vespers` (Iltahartaus), `short-vertical` (Shorts size, 60 s target). Finnish content for the Evangelical Lutheran Church of Finland. A template is output settings (`OUTPUT_PRESETS` key, fps, target length, reframe), variable names, graphic specs (`title-card`, `lower-third`, `caption-style`), an opening and ending slate, `sectionOverlays` (graphic put on a new section whose name matches) and suggested section names. `applyTemplate` builds the `ProjectDefinition`; `applyTemplateByKey("basic")` is null (blank project).
+- **Saved** (`UserTemplate` table, `src/domain/saved-templates.ts`): "Tallenna pohjaksi" in the Lähde step captures a project's structure without sources, clips or sections (`captureTemplate`); `applySavedTemplate` gives fresh graphic ids. `GET/POST /api/templates`, `DELETE /api/templates/[id]`; `POST /api/projects` takes `templateKey` or `userTemplateId`.
+- **Section flow:** `addSourceSection` (`src/domain/templates.ts`) is what the Structure step calls when a section is added: it adds the section, its segment and clip (before `template.endingGraphicId` while that slate is still the last base item) and the template's overlay for that section name. `template.sectionNames` feeds the "Pohjan osiot" button of the section manager.
+- The renderer does not know templates; it only sees the definition they produced.
 
 ### Generation Pipeline Phases
 1. **ACQUIRING_SOURCE** - Download/verify source media
@@ -318,7 +322,9 @@ Projects reference templates by key (e.g., "sermon"). Templates define:
 - `DELETE /api/projects/[id]` - Delete project
 - `POST /api/projects/[id]/duplicate` - Clone project
 - `POST /api/projects/[id]/generate` - Queue generation job (`type`: VIDEO, PREVIEW, THUMBNAIL or PODCAST)
-- `POST /api/projects/[id]/publish` - Queue YouTube publication
+- `POST /api/projects/[id]/publish` - Queue YouTube or Facebook publication
+- `GET /api/projects/[id]/publications` - Publications only (polled by the publish panel)
+- `GET/POST /api/templates`, `DELETE /api/templates/[id]` - Built-in and saved templates
 
 ### Sources
 - `POST /api/projects/[id]/source` - Add source to project

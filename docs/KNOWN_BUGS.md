@@ -34,16 +34,17 @@
 - **Graphics editor styles missing** (`GraphicsEditor.tsx`): the scoped `<style jsx>` no
   longer reached the extracted sub-components (canvas and property panel rendered
   unstyled); it is now `<style jsx global>`.
+- **Asset keys shared between projects.** Identical image bytes reuse the library asset and its key, so a
+  second project's overlays that named the file differently did not resolve and were silently skipped. The
+  upload response now says `reused: true` and `requestedKey` (the UI tells the uploader which name to use), the
+  generate route returns `assetWarnings` for image references that name no linked asset, and the worker writes
+  a WARN job log for each. (`src/domain/asset-usage.ts`, `findUnresolvedImageRefs`; `e2e/asset-library.e2e.test.ts`.)
+- **Duplicated projects pointed at the original's sources.** The duplicate got its own source rows but kept
+  the original source ids in clips, sections and segments, so rendering the copy failed with a missing source
+  path. The ids are translated (`src/domain/source-ids.ts`, `e2e/render.e2e.test.ts`).
+- **A rejected YouTube thumbnail failed a published video.** The video was already on YouTube, so the
+  publication read FAILED and a retry would have uploaded it twice. The thumbnail is now best effort (WARN job log).
 
 ## Open
 
-### Asset keys are shared between projects
-
-Uploading identical image bytes reuses the existing library asset, including its
-`assetKey`. If project B uploads the same file as "logo" but project A first
-uploaded it as "blue", B's overlays that refer to `imageAsset: "logo"` do not
-resolve and are silently skipped at render time (graphics that store the
-project asset URL are unaffected). Decide whether keys should be per project
-(a link-level alias) or the upload should report the existing key, and make an
-unresolved key a visible warning. Found via test-order dependence in
-`e2e/render.e2e.test.ts`.
+None known.

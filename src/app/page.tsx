@@ -209,6 +209,15 @@ export default function HomePage() {
     }
     if (!selectedId && data[0]) await openProject(data[0].id);
   }
+  /** Reloads only the publications (a few rows) of the open project; the publish panel polls this while an upload runs. */
+  async function refreshPublications(id: string) {
+    try {
+      const data = await requestJson<{ publications: Publication[] }>(`/api/projects/${id}/publications`, { cache: "no-store" }, "Could not load publications");
+      setSelected((current) => (current && current.id === id ? { ...current, publications: data.publications } : current));
+    } catch {
+      // The next tick tries again.
+    }
+  }
   async function openProject(id: string) {
     const r = await fetch(`/api/projects/${id}`, { cache: "no-store" });
     if (!r.ok) {
@@ -1169,6 +1178,7 @@ export default function HomePage() {
                         publications={selected.publications ?? []}
                         hasVideo={!!selected.outputs?.some((o) => o.type === "VIDEO" && !o.preview)}
                         onRefresh={() => void openProject(selected.id)}
+                        onPoll={() => void refreshPublications(selected.id)}
                       />
                     </Panel>
                     <Panel title="Podcast">

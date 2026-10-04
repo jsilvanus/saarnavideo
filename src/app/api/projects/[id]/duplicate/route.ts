@@ -2,8 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError, jsonSafe } from "@/app/api/_lib/http";
-
-const SOURCE_RETENTION_MS = Number(process.env.MEDIA_RETENTION_DAYS ?? 7) * 24 * 60 * 60 * 1000;
+import { remapSourceIds } from "@/domain/source-ids";
 
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -29,8 +28,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       },
     });
 
+    const sourceIds = new Map<string, string>();
     for (const item of source.sources) {
-      await tx.source.create({
+      const created = await tx.source.create({
         data: {
           type: item.type,
           status: item.status,
@@ -42,11 +42,13 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
           sizeBytes: item.sizeBytes,
           durationMs: item.durationMs,
           referenceDurationMs: item.referenceDurationMs,
-          expiresAt: item.storagePath ? new Date(Date.now() + SOURCE_RETENTION_MS) : null,
           projects: { connect: { id: project.id } },
         },
       });
+      sourceIds.set(item.id, created.id);
     }
+    // The copy's clips and sections must name the copy's own source rows, not the original's.
+    if (source.definition !== null && sourceIds.size) await tx.project.update({ where: { id: project.id }, data: { definition: remapSourceIds(source.definition, sourceIds) as Prisma.InputJsonValue } });
 
     return tx.project.findUniqueOrThrow({
       where: { id: project.id },

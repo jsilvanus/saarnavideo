@@ -31,7 +31,7 @@ export default function PodcastPanel({ projectId, projectTitle, preacher, gospel
   // The episode is cut from the composition audio by hand; nothing is picked automatically.
   const rangeProblem = start === undefined || end === undefined ? "Aseta jakson alku ja loppu." : end <= start ? "Lopun pitää olla alun jälkeen." : body !== undefined && start >= body ? `Alku on äänen lopun (${formatTime(body)}) jälkeen.` : "";
 
-  useEffect(() => { void requestJson<{ assets?: LibraryAudio[] }>("/api/assets", { cache: "no-store" }, "Could not load the library").then(d => setLibrary((d.assets ?? []).filter(a => a.type === "AUDIO"))).catch(() => undefined); }, []);
+  useEffect(() => { void requestJson<{ assets?: LibraryAudio[] }>("/api/assets?type=AUDIO", { cache: "no-store" }, "Could not load the library").then(d => setLibrary((d.assets ?? []).filter(a => a.type === "AUDIO"))).catch(() => undefined); }, []);
 
   const podcastJobs = jobs.filter(job => job.type === "PODCAST");
   const active = podcastJobs.find(job => ACTIVE.includes(job.status));
@@ -83,7 +83,7 @@ export default function PodcastPanel({ projectId, projectTitle, preacher, gospel
     {message && <p className="success">{message}</p>}{error && <p className="error">{error}</p>}
     {podcastJobs[0]?.status === "FAILED" && <p className="error">Edellinen podcast epäonnistui: {podcastJobs[0].errorMessage ?? podcastJobs[0].error}</p>}
     <div className="list">
-      {podcasts.map(output => <div className="row" key={output.id} style={{ flexWrap: "wrap", gap: 10 }}><span>Podcast · {output.mimeType === "audio/mp4" ? "M4A" : "MP3"}{output.createdAt ? ` · ${new Date(output.createdAt).toLocaleString()}` : ""}</span><audio controls preload="none" src={`/api/outputs/${output.id}`} style={{ height: 34 }} /><a href={`/api/outputs/${output.id}`}>Lataa ↓</a></div>)}
+      {podcasts.map(output => <div className="row" key={output.id} style={{ flexWrap: "wrap", gap: 10 }}><span>Podcast · {output.mimeType === "audio/mp4" ? "M4A" : "MP3"}{output.createdAt ? ` · ${new Date(output.createdAt).toLocaleString()}` : ""}</span><audio controls preload="none" src={`/api/outputs/${output.id}?inline=1`} style={{ height: 34 }} /><a href={`/api/outputs/${output.id}`}>Lataa ↓</a></div>)}
       {!podcasts.length && <p className="muted">Podcastia ei ole vielä tehty.</p>}
     </div>
   </div>;

@@ -12,12 +12,13 @@ import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/v
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
 import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
-import { buildBurnedCaptionAss, buildCaptionFiles, clipSourceIds, readCaptionOptions } from "@/worker/captions";
+import { buildBurnedCaptionAss, buildCaptionCues, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
 import { PODCAST_TARGET_LUFS, buildPodcastRenderPlan, parseLoudnormMeasurement, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
 import { findUnresolvedImageRefs } from "@/domain/asset-usage";
+import { formatSrt, formatVtt } from "@/lib/captions";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
 
@@ -82,31 +83,31 @@ function fontFamilyOfFile(fontFile: string): Promise<string | undefined> {
  */
 async function prepareCaptions(jobId: string, definition: ProjectDefinition, outputPath: string, options: CaptionOptions) {
   const sourceIds = clipSourceIds(definition);
-  const segments = await prisma.transcriptSegment.findMany({ where: { sourceId: { in: sourceIds }, isActive: true }, orderBy: { startSeconds: "asc" } });
+  const segments = await prisma.transcriptSegment.findMany({ where: { sourceId: { in: sourceIds }, isActive: true }, orderBy: { startSeconds: "asc" }, select: { sourceId: true, startSeconds: true, endSeconds: true, text: true } });
   const bySource = new Map<string, typeof segments>();
   for (const segment of segments) { const list = bySource.get(segment.sourceId); if (list) list.push(segment); else bySource.set(segment.sourceId, [segment]); }
-  const files = buildCaptionFiles(definition, bySource);
-  if (!files.cues.length) { await logJobEvent(jobId, "WARN", `Captions (${options.mode}) requested but no active transcript segments fall inside the composition; rendering without captions`); return null; }
+  const cues = buildCaptionCues(definition, bySource);
+  if (!cues.length) { await logJobEvent(jobId, "WARN", `Captions (${options.mode}) requested but no active transcript segments fall inside the composition; rendering without captions`); return null; }
   const base = outputPath.replace(/\.mp4$/, "");
   let soft: { srtPath: string; vttPath: string; language: string } | null = null;
   if (wantsSoftCaptions(options)) {
     const run = options.language ? null : await prisma.transcriptionRun.findFirst({ where: { sourceId: { in: sourceIds }, status: "APPLIED" }, orderBy: { appliedAt: "desc" }, select: { language: true } });
     const language = options.language ?? run?.language ?? "und";
     const srtPath = `${base}.srt`; const vttPath = `${base}.vtt`;
-    await writeFile(srtPath, files.srt, "utf8"); await writeFile(vttPath, files.vtt, "utf8");
+    await writeFile(srtPath, formatSrt(cues), "utf8"); await writeFile(vttPath, formatVtt(cues), "utf8");
     soft = { srtPath, vttPath, language };
-    await logJobEvent(jobId, "INFO", "Soft captions prepared", { cues: files.cues.length, language });
+    await logJobEvent(jobId, "INFO", "Soft captions prepared", { cues: cues.length, language });
   }
   let burn: { assPath: string; fontsDir?: string } | null = null;
   if (wantsBurnedCaptions(options)) {
     const fontFile = definition.template?.fontFile;
     const fontName = fontFile ? await fontFamilyOfFile(fontFile) : undefined;
-    const built = buildBurnedCaptionAss(definition, files.cues, options, fontName);
+    const built = buildBurnedCaptionAss(definition, cues, options, fontName);
     if (built.warning) await logJobEvent(jobId, "WARN", built.warning);
     const assPath = `${base}.ass`;
     await writeFile(assPath, built.ass, "utf8");
     burn = { assPath, fontsDir: fontFile && fontName ? path.dirname(fontFile) : undefined };
-    await logJobEvent(jobId, "INFO", "Burned-in captions prepared", { cues: files.cues.length, displayCues: built.lines, styleGraphicId: options.styleGraphicId ?? "default", font: fontName ?? built.style.fontFamily });
+    await logJobEvent(jobId, "INFO", "Burned-in captions prepared", { cues: cues.length, displayCues: built.lines, styleGraphicId: options.styleGraphicId ?? "default", font: fontName ?? built.style.fontFamily });
   }
   return { soft, burn };
 }

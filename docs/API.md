@@ -32,7 +32,7 @@ Content-Type: application/json
   "preacher": "Fr. John Doe",
   "gospelRef": "Mt 5:1-12",
   "gospelText": "And seeing the multitudes...",
-  "templateKey": "sermon",
+  "templateKey": "sermon",            // built-in key; or "userTemplateId": "..." for a saved template
   "semanticSegments": [
     {
       "id": "gospel",
@@ -148,7 +148,9 @@ Response: 201 Created
 **Limits:**
 - Max file size: 50 GB (configurable via `MAX_UPLOAD_BYTES`)
 - Supported formats: MP4, MOV, MKV, WebM
-- Retention: 7 days by default
+- Kept permanently in the shared library
+
+**Identical bytes already in the library** are reused (200 instead of 201): the existing asset and its `assetKey` stay, and the response adds `"reused": true` and, when the name asked for differs, `"requestedKey": "logo"` so the caller knows overlays must use the returned `assetKey`.
 
 ### Assets (Images for Slates/Overlays)
 
@@ -280,7 +282,9 @@ Response: 202 Accepted
   "id": "job-id",
   "status": "QUEUED",
   "progress": 0,
-  "createdAt": "2024-08-20T12:00:00Z"
+  "createdAt": "2024-08-20T12:00:00Z",
+  "durationWarnings": [],              // length notices (platform limit, target); never block
+  "assetWarnings": []                  // image references that name no asset linked to the project; they render without it
 }
 ```
 
@@ -356,6 +360,8 @@ Content-Length: 1234567890
 
 (binary file data)
 ```
+
+Add a `Range` header (or `?inline=1`, which also advertises `Accept-Ranges: bytes` and drops the attachment header) for a seekable stream: players get `206 Partial Content`.
 
 **Output Types:**
 - `VIDEO` - Rendered MP4 video (`.mp4`)
@@ -489,23 +495,27 @@ Response: 201 Created
 - `UNLISTED` - Visible via link
 - `PUBLIC` - Visible in search/subscriptions
 
-#### Get Publication
+#### List Publications
 
 ```
-GET /projects/{projectId}/publications/{publicationId}
+GET /projects/{projectId}/publications
 
 Response: 200 OK
-{
-  "id": "publication-id",
-  "provider": "YOUTUBE",
-  "externalId": "youtube-video-id",
-  "status": "COMPLETED",
-  "privacy": "PRIVATE",
-  "error": null,
-  "createdAt": "2024-08-20T12:00:00Z",
-  "completedAt": "2024-08-20T12:15:00Z"
-}
+{ "publications": [
+  {
+    "id": "publication-id",
+    "provider": "YOUTUBE",
+    "externalId": "youtube-video-id",
+    "status": "COMPLETED",
+    "privacy": "PRIVATE",
+    "error": null,
+    "createdAt": "2024-08-20T12:00:00Z",
+    "completedAt": "2024-08-20T12:15:00Z"
+  }
+] }
 ```
+
+Newest first; 404 for an unknown project. This is the light request the publish panel polls while an upload runs.
 
 ### Facebook Integration
 
@@ -541,55 +551,39 @@ Response: 302 Redirect to /
 
 (Automatically stores credentials in database)
 
-## Templates & Themes
+## Templates
 
-### List Available Templates
+Built-in templates (`sermon`, `liturgy`, `vespers`, `short-vertical`) and templates saved from projects. See `docs/TEMPLATE_CREATION.md`.
+
+### List templates
 
 ```
-GET /templates
+GET /api/templates
 
 Response: 200 OK
-[
-  {
-    "key": "sermon",
-    "name": "Sermon",
-    "description": "Suitable for sermon videos with Gospel overlay",
-    "themeKey": "default",
-    "renderSettings": { ... },
-    "expectedSegments": ["gospel", "sermon"]
-  },
-  ...
-]
+{ "templates": [
+  { "kind": "builtin", "key": "sermon", "name": "Saarna", "description": "...", "sections": ["Evankeliumi", "Saarna"], "presetKey": "youtube-1080p", "targetSeconds": 900 },
+  { "kind": "saved", "id": "ckx...", "name": "Oma iltahartaus", "description": "", "sections": ["Psalmi"], "presetKey": "youtube-1080p", "targetSeconds": null }
+] }
 ```
 
-### Get Template Details
+### Save a project as a template
 
 ```
-GET /templates/{templateKey}
+POST /api/templates
+{ "projectId": "...", "name": "Oma iltahartaus", "description": "optional" }
 
-Response: 200 OK
-{
-  "key": "sermon",
-  "name": "Sermon",
-  ...
-}
+Response: 201 Created   { "id": "...", "name": "...", "description": "", "sections": [...] }
+404 unknown project, 409 a template with this name exists
 ```
 
-### List Available Themes
+### Delete a saved template
 
 ```
-GET /themes
-
-Response: 200 OK
-[
-  {
-    "key": "default",
-    "name": "Default Church Theme",
-    "colors": { ... },
-    "typography": { ... }
-  }
-]
+DELETE /api/templates/{id}     Response: 200 { "ok": true }   (404 when unknown)
 ```
+
+Projects made from the template keep their copy.
 
 ## Webhooks (Future)
 
