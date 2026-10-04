@@ -165,6 +165,27 @@ describe("rendering through the real API and worker", () => {
   });
 });
 
+describe("cancelling a render", () => {
+  it("stops a running render and ends the job as CANCELLED", async () => {
+    const project = await createProject("Cancel");
+    const green = await uploadSource(project.id, "green.mp4");
+    await setComposition(project.id, Array.from({ length: 40 }, () => ({ type: "source-clip" as const, sourceId: green.id, startSeconds: 0, endSeconds: 5 })), 200);
+    const job = await api<{ id: string }>(`/api/projects/${project.id}/generate`, { method: "POST", json: {} });
+    for (const deadline = Date.now() + 60_000; ; await new Promise((resolve) => setTimeout(resolve, 200))) {
+      const state = await api<{ status: string; phase: string; progress: number }>(`/api/projects/${project.id}/jobs/${job.id}`);
+      if (state.status === "RUNNING" && state.phase === "ENCODING" && state.progress > 0) break;
+      if (Date.now() > deadline) throw new Error(`Job never started encoding: ${JSON.stringify(state)}`);
+    }
+
+    await api(`/api/projects/${project.id}/jobs/${job.id}/cancel`, { method: "POST" });
+
+    const done = await waitForJob(project.id, job.id, 30_000);
+    expect(done.status).toBe("CANCELLED");
+    const detail = await api<{ outputs: Array<{ jobId: string }> }>(`/api/projects/${project.id}`);
+    expect(detail.outputs.filter((output) => output.jobId === job.id)).toEqual([]);
+  });
+});
+
 describe("project lifecycle", () => {
   it("keeps a source file while a duplicate uses it and removes it with the last project", async () => {
     const project = await createProject("Original");
