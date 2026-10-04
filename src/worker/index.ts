@@ -21,6 +21,7 @@ import { findUnresolvedImageRefs } from "@/domain/asset-usage";
 import { formatSrt, formatVtt } from "@/lib/captions";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
+import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -31,6 +32,8 @@ const PROGRESS_WRITE_MS = 750;
 const MEDIA_ROOT = process.env.MEDIA_ROOT ?? "/data/media";
 const RESOURCE_LIMITS: ResourceLimits = { maxSourceFileSizeBytes: Number(process.env.MAX_SOURCE_SIZE_BYTES ?? 50 * 1024 * 1024 * 1024), maxOutputFileSizeBytes: Number(process.env.MAX_OUTPUT_SIZE_BYTES ?? 100 * 1024 * 1024 * 1024), maxDurationSeconds: Number(process.env.MAX_DURATION_SECONDS ?? 12 * 60 * 60), maxConcurrentJobs: Number(process.env.MAX_CONCURRENT_JOBS ?? 2), requestTimeoutSeconds: Number(process.env.REQUEST_TIMEOUT_SECONDS ?? 60 * 60) };
 const runningProcesses = new Map<string, ChildProcessWithoutNullStreams>();
+/** RENDER_EXECUTOR=fffleet sends ffmpeg commands to an fffleet fleet (staged through S3) instead of spawning them here. */
+const remoteExecutor = createRemoteExecutorFromEnv(process.env, message => console.log(`[remote-ffmpeg] ${message}`));
 const progressTimers = new Map<string, NodeJS.Timeout>();
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -125,7 +128,7 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   await mkdir(MEDIA_ROOT, { recursive: true });
   if (type === "THUMBNAIL") {
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
-    const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await execFileAsync("ffmpeg", ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath]); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
+    const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await runSimpleFfmpeg(job.id, ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath], { files: [video.storagePath], outputPath }); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
   const sourcePaths = resolveSourcePaths(definition, project.sources); const assetPaths = new Map<string, string>(); for (const asset of project.assets) { assetPaths.set(asset.assetKey, asset.storagePath); assetPaths.set(asset.id, asset.storagePath); assetPaths.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
   for (const warning of findUnresolvedImageRefs(definition, project.assets)) await logJobEvent(job.id, "WARN", warning);
@@ -143,7 +146,8 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   }
   const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const totalMs = Math.max(1, Math.round((definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds) * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
-  try { await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase, message, from: 0, to: 99, reportSpeed: true }); }
+  const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };
+  try { await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase, message, from: 0, to: 99, reportSpeed: true }, remote); }
   finally { if (prepared?.burn) void rm(prepared.burn.assPath, { force: true }).catch(() => undefined); }
   await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW", captionFiles?.language);
   if (captionFiles) { await createOutput(project.id, job.id, "CAPTIONS_SRT", captionFiles.srtPath, CAPTION_MIME.srt, type === "PREVIEW", captionFiles.language); await createOutput(project.id, job.id, "CAPTIONS_VTT", captionFiles.vttPath, CAPTION_MIME.vtt, type === "PREVIEW", captionFiles.language); }
@@ -153,7 +157,27 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
 type ProgressRange = { phase: string; message: string; from: number; to: number; reportSpeed?: boolean };
 
 /** Runs ffmpeg with -progress output; resolves with stderr (loudnorm prints its measurement there). Progress covers [from, to] percent. */
-async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: number, { phase, message, from, to, reportSpeed }: ProgressRange): Promise<string> {
+type RemoteFiles = Pick<RemoteRun, "files" | "fonts" | "outputPath">;
+
+/** Runs a short ffmpeg command (no progress) locally, or on the fleet when RENDER_EXECUTOR=fffleet. */
+async function runSimpleFfmpeg(jobId: string, args: string[], remote: RemoteFiles) {
+  if (!remoteExecutor) { await execFileAsync("ffmpeg", args); return; }
+  await remoteExecutor.run({ jobId, args, totalMs: 1, mediaRoot: MEDIA_ROOT, labels: { jobType: "THUMBNAIL" }, ...remote });
+}
+
+async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: number, { phase, message, from, to, reportSpeed }: ProgressRange, remote?: RemoteFiles): Promise<string> {
+  if (remoteExecutor) {
+    if (!remote) throw new Error("RENDER_EXECUTOR=fffleet: this ffmpeg command did not say which files it uses");
+    const result = await remoteExecutor.run({
+      jobId, args, totalMs, mediaRoot: MEDIA_ROOT, labels: { jobType: phase }, ...remote,
+      onProgress: ({ currentMs, speed }) => {
+        const progress = Math.round(from + Math.max(0, Math.min(1, currentMs / totalMs)) * (to - from));
+        void updateProgress(jobId, { phase, message, progress: Math.min(99, progress), currentMs: BigInt(Math.round(currentMs)), totalMs: BigInt(totalMs) });
+        if (reportSpeed && speed) void updateProgress(jobId, { speed });
+      },
+    });
+    return result.stderr;
+  }
   const withProgress = [...args.slice(0, 2), "-progress", "pipe:1", "-nostats", ...args.slice(2)];
   const child = spawn("ffmpeg", withProgress, { stdio: ["pipe", "pipe", "pipe"] });
   runningProcesses.set(jobId, child);
@@ -186,14 +210,15 @@ async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
   const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: "measure" });
   const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
   await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 0, totalMs: BigInt(totalMs) }, true);
-  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 0, to: 40 });
+  const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(coverPath ? [coverPath] : [])], outputPath };
+  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 0, to: 40 }, remote);
   const measurement = parseLoudnormMeasurement(measureLog);
   // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
   if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
   else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
   const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: measurement ?? undefined });
   await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 40 }, true);
-  await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 40, to: 100 });
+  await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 40, to: 100 }, remote);
   await createOutput(project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Podcast ready", completedAt: new Date() }, true);
 }
@@ -397,6 +422,6 @@ async function processPublication() {
 // No expiry cleanup: project media is persistent (src/lib/prisma.ts clears expiresAt on write and drops expiresAt filters on
 // findMany). The former cleanupExpiredMedia() relied on that filter, so it selected *every* source and output and deleted
 // their files once a minute.
-process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); process.exit(0); });
+process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); process.exit(0); });
 async function main() { await resumeInterruptedTranscriptions().catch(error => console.error("Failed to resume interrupted transcriptions:", error)); while (true) { try { const didWork = (await processPublication()) || (await processJob()); if (!didWork) await sleep(POLL_MS); } catch (error) { console.error("Worker loop error:", error); await sleep(POLL_MS); } } }
 main().catch(error => { console.error("Fatal error:", error); process.exit(1); });
