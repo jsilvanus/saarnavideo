@@ -98,6 +98,32 @@ describe("rendering through the real API and worker", () => {
     expect(isGreen(averageColor(await frameRgb(filePath, 4.5)))).toBe(true);
   });
 
+  it("crossfades after a slate and keeps a section overlay on its clip", async () => {
+    const project = await createProject("Slate + crossfade");
+    const green = await uploadSource(project.id, "green.mp4");
+    const red = await uploadSource(project.id, "red.mp4");
+    // The slate is joined to the green clip with concat (time base 1/1000000), the red clip keeps the source's own: xfade used to refuse that.
+    await setComposition(project.id, [
+      { type: "slate", mode: "standalone", durationSeconds: 2, data: {} },
+      { type: "source-clip", sourceId: green.id, startSeconds: 0, endSeconds: 5 },
+      { type: "source-clip", sourceId: red.id, startSeconds: 0, endSeconds: 5, transitionIn: { type: "crossfade", durationSeconds: 2 } },
+      // Source seconds 1..3 of the red section; the red clip starts at output 2 + 5 - 2 = 5, so the text shows at 6..8.
+      { type: "overlay", kind: "text", sectionId: "red", startSeconds: 1, endSeconds: 3, data: { text: "SaarnaVideo", fontSize: "120", color: "white" } },
+    ], 10, { sections: [{ id: "red", label: "Red", scope: "SOURCE", sourceId: red.id, startSeconds: 0, endSeconds: 5, origin: "MANUAL" }] });
+
+    const { filePath } = await render(project.id);
+
+    const info = await probe(filePath);
+    expect(info.duration).toBeGreaterThan(9.8);
+    expect(info.duration).toBeLessThan(10.3);
+    expect(isBlack(averageColor(await frameRgb(filePath, 1)))).toBe(true);
+    expect(isGreen(averageColor(await frameRgb(filePath, 2.5)))).toBe(true);
+    expect(whiteShare(await frameRgb(filePath, 2.5, CENTER))).toBe(0);
+    expect(isRed(averageColor(await frameRgb(filePath, 7, { x: 0, y: 0, w: 300, h: 300 })))).toBe(true);
+    expect(whiteShare(await frameRgb(filePath, 7, CENTER))).toBeGreaterThan(0.02);
+    expect(whiteShare(await frameRgb(filePath, 9.5, CENTER))).toBe(0);
+  });
+
   it("composites an uploaded image asset as an overlay", async () => {
     const project = await createProject("Image overlay");
     const green = await uploadSource(project.id, "green.mp4");

@@ -1,6 +1,7 @@
 import { buildSourceRenderPlan, type FfmpegPlan, type RenderPlanOptions } from "@/renderer/ffmpeg";
 import type { Graphic, GraphicCarrierItem, ProjectDefinition, TimelineItem } from "@/domain/project";
 import { applyVariables, type ProjectVariable } from "@/domain/variables";
+import { anchorSectionOverlays } from "@/renderer/overlay-timing";
 
 function withGraphicLayers(item: GraphicCarrierItem, graphic: Graphic): GraphicCarrierItem {
   const data = { ...item.data, layers: JSON.stringify(graphic.layers), backgroundColor: graphic.backgroundColor };
@@ -55,5 +56,5 @@ export function buildCompositionRenderPlan(
   assetPaths?: Map<string, string>,
   options?: RenderPlanOptions,
 ): FfmpegPlan {
-  return buildSourceRenderPlan(materializeGraphics(definition), sourcePaths, outputPath, assetPaths, options);
+  return buildSourceRenderPlan(anchorSectionOverlays(materializeGraphics(definition)), sourcePaths, outputPath, assetPaths, options);
 }

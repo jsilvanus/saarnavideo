@@ -5,6 +5,7 @@ import type { Graphic } from "@/domain/graphics";
 import type { Section } from "@/domain/sections";
 import type { TimelineItem } from "@/domain/project";
 import { layoutTimeline } from "@/renderer/caption-timeline";
+import { overlayOutputRange } from "@/renderer/overlay-timing";
 import { formatTime, sourceLabel } from "./format";
 
 type Source = { id: string; originalName?: string | null; youtubeUrl?: string | null };
@@ -92,7 +93,7 @@ function ticks(total: number): number[] {
   return out;
 }
 
-/** Blocks on the output timeline, in seconds. Overlay and overlay-slate times are output seconds, as the renderer reads them. */
+/** Blocks on the output timeline, in seconds. Section overlays are placed on their clip exactly as the renderer places them. */
 export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections: Section[], sources: Source[], audioAssets: AudioAsset[]): { blocks: Block[]; total: number } {
   const graphicName = (id?: string) => graphics.find(g => g.id === id)?.name ?? "Grafiikka";
   const audioName = (id?: string) => audioAssets.find(a => a.id === id)?.assetKey ?? "Ääni";
@@ -114,7 +115,9 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
   items.forEach((item, index) => {
     if (item.type === "overlay" || (item.type === "slate" && item.mode === "overlay")) {
       if (item.startSeconds === undefined || item.endSeconds === undefined) return;
-      blocks.push({ key: `graphic-${index}`, lane: "graphics", start: item.startSeconds, end: item.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || "Grafiikka", detail: item.type === "slate" ? "päällä, tausta" : "päällä", tone: "graphic" });
+      const range = item.type === "overlay" ? overlayOutputRange(item, items, { sections }) : { startSeconds: item.startSeconds, endSeconds: item.endSeconds };
+      if (!range) return;
+      blocks.push({ key: `graphic-${index}`, lane: "graphics", start: range.startSeconds, end: range.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || "Grafiikka", detail: item.type === "slate" ? "päällä, tausta" : "päällä", tone: "graphic" });
     } else if (item.type === "audio-clip" && item.mode === "mix") {
       const start = item.atSeconds ?? 0;
       blocks.push({ key: `mix-${index}`, lane: "audio", start, end: start + Math.max(0, item.endSeconds - item.startSeconds), label: audioName(item.assetId), detail: item.duckSourceVolume !== undefined && item.duckSourceVolume < 1 ? "miksattu, lähde hiljennetty" : "miksattu", tone: "audio" });
