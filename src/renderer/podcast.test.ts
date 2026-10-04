@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectDefinition } from "@/domain/project";
-import { buildPodcastRenderPlan, parseLoudnormMeasurement, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
+import { buildPodcastRenderPlan, parseLoudnormMeasurement, podcastBodyRange, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
 
 const definition = (items: object[]) => ({ version: 1, semanticSegments: [], sections: [], graphics: [], composition: { sourceStartSeconds: 0, sourceEndSeconds: 100, items } }) as unknown as ProjectDefinition;
 const clip = (startSeconds: number, endSeconds: number, extra = {}) => ({ type: "source-clip", sourceId: "s", startSeconds, endSeconds, ...extra });
@@ -12,6 +12,22 @@ const settings = { format: "mp3" as const, channels: "mono" as const, crossfadeS
 const graphOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
 
 describe("buildPodcastRenderPlan", () => {
+  it("keeps only the chosen start..end of the body, before intro and outro are added", () => {
+    const plan = buildPodcastRenderPlan(definition([slate(5), clip(0, 10), voice()]), sources, "/out.mp3", assets, { settings: { ...settings, startSeconds: 2, endSeconds: 11 }, outro: { path: "/outro.wav", durationSeconds: 3 } });
+    const g = graphOf(plan.args);
+    expect(g).toContain("[pc2]atrim=start=2:end=11,asetpts=PTS-STARTPTS[body]");
+    expect(g).toContain("[body][outro]acrossfade=d=0.5");
+    expect(plan.durationSeconds).toBe(9 + 3 - 0.5);
+  });
+
+  it("clamps the range to the body and refuses an empty one", () => {
+    expect(podcastBodyRange({ startSeconds: 2, endSeconds: 99 }, 10)).toEqual({ start: 2, end: 10 });
+    expect(podcastBodyRange({}, 10)).toEqual({ start: 0, end: 10 });
+    expect(() => podcastBodyRange({ startSeconds: 12, endSeconds: 20 }, 10)).toThrow("outside");
+    const whole = buildPodcastRenderPlan(definition([clip(0, 10)]), sources, "/out.mp3", assets, { settings: { ...settings, startSeconds: 0, endSeconds: 10 } });
+    expect(graphOf(whole.args)).not.toContain("atrim=start=0:end=10");
+  });
+
   it("concatenates source clips and voiceovers, skips standalone slates and has no video", () => {
     const plan = buildPodcastRenderPlan(definition([slate(5), clip(0, 4), voice()]), sources, "/out.mp3", assets, { settings });
     const g = graphOf(plan.args);

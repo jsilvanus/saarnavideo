@@ -64,4 +64,28 @@ describe("materializeGraphics", () => {
     };
     expect(() => materializeGraphics(definition)).toThrow("Missing graphic definition: missing");
   });
+
+  it("fills project variables in graphic layers, inline layers and plain slate text", () => {
+    const definition: ProjectDefinition = {
+      version: 1,
+      semanticSegments: [],
+      sections: [],
+      graphics: [{ ...graphic, layers: [{ ...graphic.layers[0], text: "{{pyhäpäivä}} – {{tuntematon}}" }] }],
+      variables: [{ key: "pyhäpäivä", value: "Mikkelinpäivä" }, { key: "saarnaaja", value: "[Nimi]" }],
+      composition: {
+        sourceStartSeconds: 0,
+        sourceEndSeconds: 10,
+        items: [
+          { type: "slate", template: "placeholder", mode: "standalone", graphicId: "gospel", durationSeconds: 5, data: {} },
+          { type: "slate", template: "rich", mode: "standalone", durationSeconds: 5, data: { title: "Saarna: {{saarnaaja}}", layers: JSON.stringify([{ type: "text", text: "{{saarnaaja}}" }]) } },
+        ],
+      },
+    };
+    const [fromGraphic, inline] = materializeGraphics(definition).composition.items;
+    if (fromGraphic.type !== "slate" || inline.type !== "slate") throw new Error("expected slates");
+    expect(JSON.parse(fromGraphic.data.layers)[0].text).toBe("Mikkelinpäivä – {{tuntematon}}");
+    expect(inline.data.title).toBe("Saarna: [Nimi]");
+    expect(JSON.parse(inline.data.layers)[0].text).toBe("[Nimi]");
+    expect(definition.graphics[0].layers[0].text).toBe("{{pyhäpäivä}} – {{tuntematon}}");
+  });
 });

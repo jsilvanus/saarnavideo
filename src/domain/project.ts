@@ -3,6 +3,7 @@ import { graphicSchema, type Graphic } from "@/domain/graphics";
 import { sectionSchema, type Section } from "@/domain/sections";
 import { reframeSchema } from "@/domain/reframe";
 import { evenDimension } from "@/domain/output-presets";
+import { projectVariablesSchema } from "@/domain/variables";
 
 export const transitionSchema = z.object({
   type: z.enum(["cut", "fade", "crossfade"]),
@@ -109,7 +110,7 @@ export const templateSchema = z.object({
 });
 
 /** Podcast (audio-only) export settings. Intro/outro are audio assets and are used for the podcast only, never for the video. */
-export const podcastSettingsSchema = z.object({
+export const podcastSettingsObjectSchema = z.object({
   introAssetId: z.string().min(1).optional(),
   outroAssetId: z.string().min(1).optional(),
   format: z.enum(["mp3", "m4a"]).default("mp3"),
@@ -122,7 +123,17 @@ export const podcastSettingsSchema = z.object({
   album: z.string().trim().max(200).optional(),
   date: z.string().trim().max(32).optional(),
   comment: z.string().trim().max(1000).optional(),
+  /** Part of the podcast body (composition audio without slates, before intro/outro) to export, in seconds from its start. */
+  startSeconds: z.number().nonnegative().optional(),
+  endSeconds: z.number().positive().optional(),
 });
+
+/** A start and end given together must be in order. */
+export const podcastRangeIsOrdered = (settings: { startSeconds?: number; endSeconds?: number }) => settings.startSeconds === undefined || settings.endSeconds === undefined || settings.endSeconds > settings.startSeconds;
+const podcastRangeIssue = { message: "Podcast end must be after start", path: ["endSeconds"] };
+export const podcastSettingsSchema = podcastSettingsObjectSchema.refine(podcastRangeIsOrdered, podcastRangeIssue);
+/** Partial settings as a generate request sends them. */
+export const podcastSettingsPatchSchema = podcastSettingsObjectSchema.partial().refine(podcastRangeIsOrdered, podcastRangeIssue);
 
 export const projectDefinitionSchema = z.object({
   version: z.literal(1),
@@ -132,6 +143,8 @@ export const projectDefinitionSchema = z.object({
   template: templateSchema.optional(),
   composition: compositionSchema,
   podcast: podcastSettingsSchema.optional(),
+  /** User-defined values that graphics insert with `{{name}}`. */
+  variables: projectVariablesSchema.optional(),
 });
 
 export type Transition = z.infer<typeof transitionSchema>;

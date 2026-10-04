@@ -46,4 +46,10 @@ describe("duration report", () => {
   it("has no podcast length for a slate-only composition", () => {
     expect(computeDurationReport(definition([{ type: "slate", mode: "standalone", durationSeconds: 5, data: {} }])).podcastSeconds).toBeUndefined();
   });
+
+  it("counts only the chosen podcast range of the body", () => {
+    const items = [{ type: "slate", mode: "standalone", durationSeconds: 30, data: {} }, clip(60)];
+    const report = computeDurationReport(definition(items, {}, { podcast: { startSeconds: 10, endSeconds: 40, crossfadeSeconds: 0.5, format: "mp3", channels: "mono" } }));
+    expect(report.podcastSeconds).toBe(30);
+  });
 });
