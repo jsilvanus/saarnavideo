@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -71,7 +71,10 @@ function diskS3(dir: string): S3Client & { puts: string[] } {
   };
 }
 
-describe("createRemoteExecutor (real ffmpeg, an in-process fleet and a disk bucket)", () => {
+// The plain unit job has no ffmpeg; the e2e job (and local runs) do.
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
+
+describe.skipIf(!hasFfmpeg)("createRemoteExecutor (real ffmpeg, an in-process fleet and a disk bucket)", () => {
   let dir: string; let media: string; let s3: ReturnType<typeof diskS3>; let fleet: ReturnType<typeof createFleet>;
   beforeAll(async () => {
     dir = await mkdtemp(path.join(tmpdir(), "sv-remote-"));
