@@ -374,6 +374,7 @@ async function runFacebookPublication(publication: PublicationRow, inputs: Publi
 
 async function runYouTubePublication(publication: PublicationRow, inputs: PublicationInputs) {
   const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, ...inputs, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" });
+  if (result.thumbnailError && publication.output.jobId) await logJobEvent(publication.output.jobId, "WARN", "YouTube thumbnail upload failed; the video itself was published", { videoId: result.videoId, error: result.thumbnailError });
   return result.videoId;
 }
 

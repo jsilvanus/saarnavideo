@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { uploadCaptionToYouTube } from "@/integrations/youtube";
+import { uploadCaptionToYouTube, uploadToYouTube } from "@/integrations/youtube";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -32,5 +32,46 @@ describe("uploadCaptionToYouTube", () => {
   it("throws with the API error when initialization is rejected", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("insufficientPermissions", { status: 403 })));
     await expect(uploadCaptionToYouTube({ accessToken: "tok", videoId: "v", filePath: await captionFile(), language: "fi", name: "suomi" })).rejects.toThrow(/403.*insufficientPermissions/);
+  });
+});
+
+describe("uploadToYouTube", () => {
+  async function files() {
+    const dir = await mkdtemp(path.join(tmpdir(), "yt-up-"));
+    await writeFile(path.join(dir, "v.mp4"), "video-bytes");
+    await writeFile(path.join(dir, "t.jpg"), "jpeg-bytes");
+    return { filePath: path.join(dir, "v.mp4"), thumbnailPath: path.join(dir, "t.jpg") };
+  }
+  const stub = (thumbnailStatus: number) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.includes("/videos?")) return new Response("", { status: 200, headers: { location: "https://upload.example/s" } });
+      if (url === "https://upload.example/s") return new Response(JSON.stringify({ id: "vid9" }), { status: 200 });
+      return new Response("denied", { status: thumbnailStatus });
+    }));
+    return calls;
+  };
+
+  it("uploads the video and then the thumbnail", async () => {
+    const calls = stub(200);
+    const result = await uploadToYouTube({ accessToken: "tok", title: "T", ...(await files()) });
+    expect(result).toEqual({ videoId: "vid9", thumbnailError: undefined });
+    expect(calls[2]).toBe("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=vid9");
+  });
+
+  it("keeps the uploaded video when only the thumbnail is rejected and reports why", async () => {
+    stub(403);
+    const result = await uploadToYouTube({ accessToken: "tok", title: "T", ...(await files()) });
+    expect(result.videoId).toBe("vid9");
+    expect(result.thumbnailError).toMatch(/thumbnail upload failed \(403\): denied/);
+  });
+
+  it("sends requests to YOUTUBE_API_BASE_URL when it is set", async () => {
+    vi.stubEnv("YOUTUBE_API_BASE_URL", "http://fake.test/");
+    const calls = stub(200);
+    await uploadToYouTube({ accessToken: "tok", title: "T", ...(await files()) });
+    expect(calls[0]).toBe("http://fake.test/upload/youtube/v3/videos?part=snippet,status&uploadType=resumable");
+    vi.unstubAllEnvs();
   });
 });

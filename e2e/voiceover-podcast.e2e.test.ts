@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { beforeAll, describe, expect, it } from "vitest";
 import { parseVtt } from "../src/lib/captions";
-import { api, averageColor, baseUrl, createProject, download, frameRgb, fixturesDir, isBlack, isGreen, mediaRoot, probe, setComposition, uploadSource, waitForJob } from "./helpers";
+import { api, averageColor, baseUrl, createProject, download, frameRgb, fixturesDir, isBlack, isGreen, mediaRoot, generate, probe, setComposition, uploadSource, waitForJob } from "./helpers";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,14 +35,6 @@ async function uploadAudio(projectId: string | null, fileName: string, mimeType:
   form.set("assetKey", assetKey);
   form.set("type", "AUDIO");
   return api<{ id: string; type: string; mimeType: string; durationMs: number | null }>(projectId ? `/api/projects/${projectId}/assets` : "/api/assets", { method: "POST", body: form });
-}
-
-async function generate(projectId: string, body: Record<string, unknown>) {
-  const job = await api<{ id: string; type: string }>(`/api/projects/${projectId}/generate`, { method: "POST", json: body });
-  const done = await waitForJob(projectId, job.id);
-  if (done.status !== "COMPLETED") throw new Error(`Render ${done.status}: ${done.error}`);
-  const project = await api<{ outputs: Array<{ id: string; jobId: string; type: string; mimeType: string }> }>(`/api/projects/${projectId}`);
-  return { jobId: job.id, outputs: project.outputs.filter((output) => output.jobId === job.id) };
 }
 
 /** Mono 16 kHz samples of a file. */

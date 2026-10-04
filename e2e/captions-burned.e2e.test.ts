@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { api, createProject, download, frameRgb, mediaRoot, probe, uploadSource, waitForJob } from "./helpers";
+import { api, createProject, download, frameRgb, importVtt, mediaRoot, probe, uploadSource, waitForJob } from "./helpers";
 
 const execFileAsync = promisify(execFile);
 const W = 1920;
@@ -21,13 +21,6 @@ const captionLayer = (box: { x: number; y: number; width: number; height: number
 const styleBottom = { id: "style-bottom", name: "Alhaalla", width: W, height: H, backgroundColor: "transparent", layers: [captionLayer({ x: 160, y: 820, width: 1600, height: 200 }, { "font-family": "DejaVu Sans", "font-size": "56px", "font-weight": "700", color: "#ffffff", "text-align": "center", "vertical-align": "bottom", background: "rgba(0,0,0,0.6)", padding: "12px", "max-lines": 2 })] };
 const styleTop = { id: "style-top", name: "Ylhäällä", width: W, height: H, backgroundColor: "transparent", layers: [captionLayer({ x: 100, y: 100, width: 1000, height: 300 }, { "font-size": "48px", "font-weight": "700", color: "#ffffff", "text-align": "left", "vertical-align": "top", "-webkit-text-stroke": "3px #000000", padding: "12px", "max-lines": 3 })] };
 const plainGraphic = { id: "plain", name: "Tavallinen", width: W, height: H, backgroundColor: "#111", layers: [{ id: "t", type: "text", x: 0, y: 0, width: 100, height: 100, rotation: 0, text: "Hei", style: {} }] };
-
-async function importVtt(sourceId: string, vtt: string) {
-  const form = new FormData();
-  form.set("file", new Blob([vtt], { type: "text/vtt" }), "captions.vtt");
-  form.set("language", "fi");
-  await api(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, 201);
-}
 
 async function burnedProject(title: string) {
   const project = await createProject(title);

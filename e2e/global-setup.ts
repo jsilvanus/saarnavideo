@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestProject } from "vitest/node";
 import { startFakeGraphServer } from "./fake-graph-server";
+import { startFakeYouTubeServer } from "./fake-youtube-server";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -15,6 +16,8 @@ declare module "vitest" {
     auditorSttUrl: string;
     /** Base URL of the fake Facebook Graph API the worker and server are configured against (see e2e/fake-graph-server.ts). */
     facebookUrl: string;
+    /** Base URL of the fake Google endpoints (OAuth token + YouTube Data API) the worker and server are configured against (see e2e/fake-youtube-server.ts). */
+    youtubeUrl: string;
   }
 }
 
@@ -117,6 +120,9 @@ export default async function setup(project: TestProject) {
   // A fake Graph API so the Facebook publishing path can run without credentials; the worker and server see it as their configured Page.
   const fakeGraph = await startFakeGraphServer({ chunkSize: 32 * 1024 });
   Object.assign(env, { FACEBOOK_PAGE_ID: fakeGraph.state.config.pageId, FACEBOOK_PAGE_ACCESS_TOKEN: fakeGraph.state.config.expectedToken, FACEBOOK_GRAPH_BASE_URL: fakeGraph.url, FACEBOOK_STATUS_POLL_MS: "200", FACEBOOK_RETRY_DELAY_MS: "50" });
+  // Fake Google endpoints: OAuth token exchange/refresh and the YouTube upload API.
+  const fakeYouTube = await startFakeYouTubeServer();
+  Object.assign(env, { YOUTUBE_CLIENT_ID: "e2e-client", YOUTUBE_CLIENT_SECRET: "e2e-secret", YOUTUBE_REDIRECT_URI: "http://localhost/api/integrations/youtube/callback", YOUTUBE_TOKEN_ENCRYPTION_KEY: "a".repeat(64), YOUTUBE_API_BASE_URL: fakeYouTube.url, YOUTUBE_OAUTH_TOKEN_URL: `${fakeYouTube.url}/token` });
   execFileSync(path.join(BIN, "prisma"), ["db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], { cwd: ROOT, env, stdio: "ignore" });
 
   const server = start(path.join(BIN, "next"), ["dev", "--port", String(port)], env, "next");
@@ -128,6 +134,7 @@ export default async function setup(project: TestProject) {
     stop(server);
     stop(worker);
     await fakeGraph.close();
+    await fakeYouTube.close();
     throw error;
   }
 
@@ -136,11 +143,13 @@ export default async function setup(project: TestProject) {
   project.provide("fixturesDir", fixturesDir);
   project.provide("auditorSttUrl", auditorSttUrl);
   project.provide("facebookUrl", fakeGraph.url);
+  project.provide("youtubeUrl", fakeYouTube.url);
 
   return async () => {
     stop(server);
     stop(worker);
     await fakeGraph.close();
+    await fakeYouTube.close();
     if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true });
     await rm(path.join(ROOT, distDir), { recursive: true, force: true });
     await Promise.all(NEXT_TRACKED_FILES.map((file, index) => (trackedBefore[index] === undefined ? undefined : writeFile(file, trackedBefore[index]))));

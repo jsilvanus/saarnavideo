@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { api, baseUrl, createProject, uploadSource } from "./helpers";
-
-async function importVtt(sourceId: string, vtt: string, language = "fi") {
-  const form = new FormData();
-  form.set("file", new Blob([vtt], { type: "text/vtt" }), "captions.vtt");
-  form.set("language", language);
-  return api<{ id: string; status: string }>(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, 201);
-}
+import { api, baseUrl, createProject, importVtt, uploadSource } from "./helpers";
 
 // Cues: 0-2 and 2.5-4 are one paragraph; the 6 s pause before 10 starts a new one; 30 is far away.
 const VTT = [
