@@ -26,6 +26,14 @@ export async function assetFileResponse(asset: { storagePath: string; mimeType: 
   }
 }
 
+/**
+ * Upload responses say when identical bytes were already in the library: the existing asset (and its key) is reused, so
+ * `requestedKey` tells the caller that the name it asked for was not applied and overlays must use `assetKey`.
+ */
+export function withReuse<T extends { assetKey: string }>(asset: T, created: boolean, requestedKey: string) {
+  return created ? asset : { ...asset, reused: true, requestedKey: requestedKey !== asset.assetKey ? requestedKey : undefined };
+}
+
 /** Runs the shared asset key/type checks; returns an error response or null. */
 export function checkAssetKeyAndType(assetKey: string, type: string): Response | null {
   const keyValidation = validateAssetKey(assetKey);

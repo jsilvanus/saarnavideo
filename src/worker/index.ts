@@ -17,6 +17,7 @@ import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type C
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
 import { PODCAST_TARGET_LUFS, buildPodcastRenderPlan, parseLoudnormMeasurement, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
+import { findUnresolvedImageRefs } from "@/domain/asset-usage";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
 
@@ -126,6 +127,7 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await execFileAsync("ffmpeg", ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath]); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
   const sourcePaths = resolveSourcePaths(definition, project.sources); const assetPaths = new Map<string, string>(); for (const asset of project.assets) { assetPaths.set(asset.assetKey, asset.storagePath); assetPaths.set(asset.id, asset.storagePath); assetPaths.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
+  for (const warning of findUnresolvedImageRefs(definition, project.assets)) await logJobEvent(job.id, "WARN", warning);
   // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
   for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetPaths.set(asset.id, asset.storagePath);
   const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;

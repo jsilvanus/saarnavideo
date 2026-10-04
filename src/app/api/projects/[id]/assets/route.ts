@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getExtensionFromMimeType } from "@/integrations/image-assets";
-import { checkAssetKeyAndType, findOrCreateAudioAsset, isAudioUpload, readAudioUpload, readImageUpload, storeLibraryFile } from "@/app/api/_lib/assets";
+import { checkAssetKeyAndType, findOrCreateAudioAsset, isAudioUpload, readAudioUpload, readImageUpload, storeLibraryFile, withReuse } from "@/app/api/_lib/assets";
 import { jsonError } from "@/app/api/_lib/http";
 
 const assetMetadataSchema = z.object({ assetKey: z.string().min(1).max(64), type: z.enum(["OVERLAY", "BACKGROUND", "LOGO", "FONT", "AUDIO"]) });
@@ -30,7 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (audio instanceof Response) return audio;
       const result = await findOrCreateAudioAsset(audio, { assetKey: metadata.data.assetKey, projectId: id });
       if (result instanceof Response) return result;
-      return NextResponse.json(serializeAsset(result.asset), { status: result.created ? 201 : 200 });
+      return NextResponse.json(withReuse(serializeAsset(result.asset), result.created, metadata.data.assetKey), { status: result.created ? 201 : 200 });
     }
     const upload = await readImageUpload(file);
     if (upload instanceof Response) return upload;
@@ -40,7 +40,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const existing = await prisma.asset.findFirst({ where: { contentHash, mimeType, type: metadata.data.type } });
     if (existing) {
       await prisma.asset.update({ where: { id: existing.id }, data: { projects: { connect: { id } }, expiresAt: null } });
-      return NextResponse.json(serializeAsset(existing), { status: 200 });
+      return NextResponse.json(withReuse(serializeAsset(existing), false, metadata.data.assetKey), { status: 200 });
     }
 
     const storagePath = await storeLibraryFile(buffer, contentHash, getExtensionFromMimeType(mimeType));

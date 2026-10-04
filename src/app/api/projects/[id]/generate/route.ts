@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { findUnresolvedImageRefs } from "@/domain/asset-usage";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
 import { captionOptionsSchema, wantsBurnedCaptions } from "@/domain/captions";
@@ -39,7 +40,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!podcast.success) return NextResponse.json({ error: "Invalid podcast options", issues: podcast.error.issues }, { status: 400 });
     const type = body.type ?? (body.preview ? "PREVIEW" : "VIDEO");
     if (!["VIDEO", "PREVIEW", "THUMBNAIL", "PODCAST"].includes(type)) return jsonError("Unknown generation type", 400);
-    const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, sources: { select: { id: true, originalName: true, status: true, type: true, storagePath: true, youtubeVideoId: true, youtubeUrl: true, durationMs: true, referenceDurationMs: true } } } });
+    const project = await prisma.project.findUnique({ where: { id }, select: { id: true, definition: true, assets: { select: { id: true, assetKey: true } }, sources: { select: { id: true, originalName: true, status: true, type: true, storagePath: true, youtubeVideoId: true, youtubeUrl: true, durationMs: true, referenceDurationMs: true } } } });
     if (!project) return jsonError("Project not found", 404);
     const settingsIssues = validateRenderSettings(project.definition);
     if (settingsIssues.length) return NextResponse.json({ error: settingsIssues.join(" "), issues: settingsIssues }, { status: 400 });
@@ -74,6 +75,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const firstSourceId = [...referencedIds][0];
     const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, captions: type === "THUMBNAIL" || type === "PODCAST" ? undefined : captions.data, podcast: type === "PODCAST" ? podcast.data : undefined, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
     if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id, parameters: { renderDefinition } }, select: { id: true } });
-    return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0, durationWarnings: durationWarnings((renderDefinition ?? {}) as Parameters<typeof computeDurationReport>[0]) });
+    return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0, durationWarnings: durationWarnings((renderDefinition ?? {}) as Parameters<typeof computeDurationReport>[0]), assetWarnings: findUnresolvedImageRefs(renderDefinition, project.assets) });
   } catch (error) { console.error("Media job queue error:", error); return jsonError(error instanceof Error ? error.message : "Could not queue media job", 500); }
 }

@@ -507,11 +507,11 @@ export default function HomePage() {
       form.set("file", assetFile);
       form.set("assetKey", assetKey.trim());
       form.set("type", assetType);
-      await requestJson(`/api/projects/${selected.id}/assets`, { method: "POST", body: form }, "Asset upload failed");
+      const asset = await requestJson<{ assetKey: string; reused?: boolean; requestedKey?: string }>(`/api/projects/${selected.id}/assets`, { method: "POST", body: form }, "Asset upload failed");
       setAssetFile(null);
       setAssetKey("");
       await openProject(selected.id);
-      setMessage("Graphic asset uploaded.");
+      setMessage(asset.requestedKey ? `Sama kuva oli jo kirjastossa nimellä "${asset.assetKey}". Käytä tätä nimeä; "${asset.requestedKey}" ei ole käytössä.` : "Graphic asset uploaded.");
     });
   }
   async function createGraphic() {
@@ -630,10 +630,11 @@ export default function HomePage() {
       }
       throw new Error(data.error ?? fallback);
     }
-    return data as { id: string; clamped?: boolean; durationWarnings?: Array<{ message: string }> };
+    return data as { id: string; clamped?: boolean; durationWarnings?: Array<{ message: string }>; assetWarnings?: string[] };
   }
-  function withWarnings(text: string, data: { durationWarnings?: Array<{ message: string }> }) {
-    return data.durationWarnings?.length ? `${text} ${data.durationWarnings.map((w) => w.message).join(" ")}` : text;
+  function withWarnings(text: string, data: { durationWarnings?: Array<{ message: string }>; assetWarnings?: string[] }) {
+    const warnings = [...(data.durationWarnings?.map((w) => w.message) ?? []), ...(data.assetWarnings ?? [])];
+    return warnings.length ? `${text} ${warnings.join(" ")}` : text;
   }
   async function generate() {
     if (!selected) return;
