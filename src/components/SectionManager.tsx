@@ -11,12 +11,15 @@ type Props = {
   sections: Section[];
   sources?: Source[];
   durationSeconds?: number;
+  /** Section names the project's template suggests; offered as one more placement button. */
+  suggestedNames?: string[];
   onChange: (sections: Section[]) => Promise<void>;
   /** Extra per-section controls, e.g. the reframe button. */
   renderActions?: (section: Section) => ReactNode;
 };
 
-export default function SectionManager({ scope, sections, sources = [], durationSeconds, onChange, renderActions }: Props) {
+export default function SectionManager({ scope, sections, sources = [], durationSeconds, suggestedNames, onChange, renderActions }: Props) {
+  const templates = [...SECTION_TEMPLATES, ...(suggestedNames?.length ? [{ key: "project-template", label: "Pohjan osiot", sections: suggestedNames }] : [])];
   const [lines, setLines] = useState("");
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
   const [parentId, setParentId] = useState("");
@@ -46,7 +49,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
   }
 
   async function applyTemplate(key: string) {
-    const template = SECTION_TEMPLATES.find(item => item.key === key);
+    const template = templates.find(item => item.key === key);
     if (!template) return;
     const next = instantiateSectionTemplate(template, scope, {
       sourceId: scope === "SOURCE" ? sourceId || undefined : undefined,
@@ -81,7 +84,7 @@ export default function SectionManager({ scope, sections, sources = [], duration
     <label>Sections, one per line<textarea rows={6} value={lines} onChange={e => setLines(e.target.value)} placeholder={"Opening\nPsalm\nGospel\nSermon\nPrayers\nClosing"} /></label>
     <div className="button-row">
       <button onClick={() => void addLines()} disabled={!lines.trim() || (scope === "SOURCE" && !sourceId)}>Place evenly</button>
-      {SECTION_TEMPLATES.map(template => <button key={template.key} onClick={() => void applyTemplate(template.key)} disabled={!canPlace && scope === "SOURCE"}>{template.label}</button>)}
+      {templates.map(template => <button key={template.key} onClick={() => void applyTemplate(template.key)} disabled={!canPlace && scope === "SOURCE"}>{template.label}</button>)}
       <button disabled title="AI section placement will consume transcript/audio analysis once the assisted transcription service is connected.">Suggest positions with AI</button>
     </div>
     <p className="muted">{canPlace ? "New sections are evenly placed from " + formatTime(rangeStart) + " to " + formatTime(rangeEnd) + ". AI assistance can later refine those boundaries." : "Sections can be created without timestamps; choose a source/range when you want automatic placement."}</p>

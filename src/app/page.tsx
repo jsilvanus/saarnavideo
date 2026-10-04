@@ -10,12 +10,14 @@ import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
 import VoiceoverPanel from "@/components/VoiceoverPanel";
 import PodcastPanel from "@/components/PodcastPanel";
-import { baseItemDuration, isBaseItem, type PodcastSettings, type TimelineItem } from "@/domain/project";
+import { baseItemDuration, isBaseItem, type PodcastSettings, type ProjectDefinition, type TimelineItem } from "@/domain/project";
 import SectionManager from "@/components/SectionManager";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
 import OutputSettings from "@/components/OutputSettings";
 import TimelineView from "@/components/TimelineView";
 import VariablesEditor from "@/components/VariablesEditor";
+import { SaveAsTemplate, TemplatePicker, selectionFromValue } from "@/components/TemplatePicker";
+import { addSourceSection } from "@/domain/templates";
 import { variableNames, type ProjectVariable } from "@/domain/variables";
 import { findPreset, presetForSize } from "@/domain/output-presets";
 import DurationNotice from "@/components/DurationNotice";
@@ -118,6 +120,9 @@ type Definition = {
     presetKey?: string;
     targetSeconds?: number;
     reframe?: Reframe;
+    endingGraphicId?: string;
+    sectionOverlays?: Array<{ section: string; graphicId: string; durationSeconds: number }>;
+    sectionNames?: string[];
   };
   composition: { sourceStartSeconds: number; sourceEndSeconds: number; items: Item[] };
   podcast?: PodcastSettings;
@@ -160,6 +165,7 @@ export default function HomePage() {
   const [step, setStep] = useState<Step>("source");
   const [creating, setCreating] = useState(false),
     [title, setTitle] = useState(""),
+    [templateValue, setTemplateValue] = useState("builtin:sermon"),
     [uploadFiles, setUploadFiles] = useState<File[]>([]),
     [uploadMode, setUploadMode] = useState<"now" | "later">("now"),
     [pendingFiles, setPendingFiles] = useState<Record<string, File>>({}),
@@ -224,7 +230,7 @@ export default function HomePage() {
       setError("");
       const data = await requestJson<{ id: string }>(
         "/api/projects",
-        jsonInit("POST", { title, templateKey: "basic" }),
+        jsonInit("POST", { title, ...selectionFromValue(templateValue) }),
         "Project creation failed",
       );
       setCreating(false);
@@ -380,20 +386,9 @@ export default function HomePage() {
       setError("End must be greater than start.");
       return;
     }
-    const def = currentDefinition();
-    const segment = { id: crypto.randomUUID(), label: label || "Section", startSeconds: start, endSeconds: end, sourceId };
-    const section = { ...segment, scope: "SOURCE" as const, origin: "MANUAL" as const };
-    await saveDefinition({
-      ...def,
-      semanticSegments: [...def.semanticSegments, segment],
-      sections: [...(def.sections ?? []), section],
-      composition: {
-        ...def.composition,
-        sourceStartSeconds: Math.min(def.composition.sourceStartSeconds, start),
-        sourceEndSeconds: Math.max(def.composition.sourceEndSeconds, end),
-        items: [...def.composition.items, { type: "source-clip", sourceId, startSeconds: start, endSeconds: end }],
-      },
-    });
+    // The template decides where the clip goes (before its ending slate) and whether the section gets an overlay.
+    const next = addSourceSection(currentDefinition() as unknown as ProjectDefinition, { id: crypto.randomUUID(), label: label || "Section", sourceId, startSeconds: start, endSeconds: end });
+    await saveDefinition(next as unknown as Definition);
     setMessage("Section saved.");
   }
   async function removeSegment(id: string) {
@@ -844,6 +839,7 @@ export default function HomePage() {
                       <h3 className="subhead">Muuttujat</h3>
                       <p className="muted">Grafiikat käyttävät muuttujia muodossa {"{{nimi}}"}. Arvot täytetään, kun video tehdään.</p>
                       <VariablesEditor variables={currentDefinition().variables ?? []} graphics={selected.definition?.graphics} onSave={saveVariables} />
+                      <SaveAsTemplate projectId={selected.id} defaultName={selected.title} onSaved={(name) => setMessage(`Pohja "${name}" tallennettu. Se löytyy uuden projektin pohjista.`)} />
                     </Panel>
                   </aside>
                 </div>
@@ -853,6 +849,7 @@ export default function HomePage() {
                   <Panel title="Osiot" text="Osiot jäsentävät tallenteen. Jokainen osio valitsee lähteensä ja rajauksensa. Luo ensin luettelo ja sijoita se, kun lähteen kohta tiedetään.">
                     <SectionManager
                       scope="SOURCE"
+                      suggestedNames={selected.definition?.template?.sectionNames}
                       sections={selected.definition?.sections ?? []}
                       sources={selected.sources}
                       onChange={saveSections}
@@ -1205,6 +1202,7 @@ export default function HomePage() {
               Otsikko
               <input value={title} onChange={(e) => setTitle(e.target.value)} required />
             </label>
+            <TemplatePicker value={templateValue} onChange={setTemplateValue} />
             <div className="actions">
               <button type="button" onClick={() => setCreating(false)}>
                 Peruuta
