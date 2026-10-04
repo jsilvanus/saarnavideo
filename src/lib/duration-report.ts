@@ -68,7 +68,7 @@ export function computeDurationReport(definition: ProjectDefinition, assetDurati
     warnings.push({ code: "off-target", level: "warning", message: `Video is ${formatDuration(videoSeconds)}, target was ${formatDuration(target)} (${videoSeconds > target ? "+" : "-"}${formatDuration(Math.abs(videoSeconds - target))}).` });
   }
   if (podcastSeconds !== undefined && videoSeconds > 0 && Math.abs(podcastSeconds - videoSeconds) > PODCAST_DIFFERENCE) {
-    warnings.push({ code: "podcast-differs", level: "info", message: `Podcast is ${formatDuration(podcastSeconds)} and video ${formatDuration(videoSeconds)}: standalone slates are left out of the podcast and intro/outro are added.` });
+    warnings.push({ code: "podcast-differs", level: "info", message: `Podcast is ${formatDuration(podcastSeconds)} and video ${formatDuration(videoSeconds)}: ${definition.podcast?.startSeconds !== undefined || definition.podcast?.endSeconds !== undefined ? "the podcast uses only its chosen start–end, " : ""}standalone slates are left out of the podcast and intro/outro are added.` });
   }
   return { videoSeconds, podcastSeconds, targetSeconds: target, limitSeconds: chosen?.maxSeconds, limitLabel: chosen?.label, warnings };
 }
