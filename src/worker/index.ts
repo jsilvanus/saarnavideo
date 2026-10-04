@@ -32,6 +32,17 @@ const PROGRESS_WRITE_MS = 750;
 const MEDIA_ROOT = process.env.MEDIA_ROOT ?? "/data/media";
 const RESOURCE_LIMITS: ResourceLimits = { maxSourceFileSizeBytes: Number(process.env.MAX_SOURCE_SIZE_BYTES ?? 50 * 1024 * 1024 * 1024), maxOutputFileSizeBytes: Number(process.env.MAX_OUTPUT_SIZE_BYTES ?? 100 * 1024 * 1024 * 1024), maxDurationSeconds: Number(process.env.MAX_DURATION_SECONDS ?? 12 * 60 * 60), maxConcurrentJobs: Number(process.env.MAX_CONCURRENT_JOBS ?? 2), requestTimeoutSeconds: Number(process.env.REQUEST_TIMEOUT_SECONDS ?? 60 * 60) };
 const runningProcesses = new Map<string, ChildProcessWithoutNullStreams>();
+/** Jobs run side by side only when the fleet does the rendering (a local ffmpeg already uses the machine's cores). */
+const JOB_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENT_JOBS ?? (process.env.RENDER_EXECUTOR === "fffleet" ? 4 : 1)) || 1);
+const CANCEL_POLL_MS = 1500;
+/** The user cancelled the job while ffmpeg (local or on the fleet) was running it. */
+class JobCancelled extends Error { constructor() { super("Cancelled by user"); } }
+/** Calls `onCancel` once when the job's cancelRequested flag is set; returns a function that stops watching and says whether it fired. */
+function watchCancel(jobId: string, onCancel: () => void): () => boolean {
+  let fired = false;
+  const timer = setInterval(() => { void prisma.mediaJob.findUnique({ where: { id: jobId }, select: { cancelRequested: true } }).then(row => { if (row?.cancelRequested && !fired) { fired = true; onCancel(); } }, () => undefined); }, CANCEL_POLL_MS);
+  return () => { clearInterval(timer); return fired; };
+}
 /** RENDER_EXECUTOR=fffleet sends ffmpeg commands to an fffleet fleet (staged through S3) instead of spawning them here. */
 const remoteExecutor = createRemoteExecutorFromEnv(process.env, message => console.log(`[remote-ffmpeg] ${message}`));
 const progressTimers = new Map<string, NodeJS.Timeout>();
@@ -168,6 +179,7 @@ async function runSimpleFfmpeg(jobId: string, args: string[], remote: RemoteFile
 async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: number, { phase, message, from, to, reportSpeed }: ProgressRange, remote?: RemoteFiles): Promise<string> {
   if (remoteExecutor) {
     if (!remote) throw new Error("RENDER_EXECUTOR=fffleet: this ffmpeg command did not say which files it uses");
+    const stopWatching = watchCancel(jobId, () => void remoteExecutor?.cancel(jobId));
     const result = await remoteExecutor.run({
       jobId, args, totalMs, mediaRoot: MEDIA_ROOT, labels: { jobType: phase }, ...remote,
       onProgress: ({ currentMs, speed }) => {
@@ -175,16 +187,18 @@ async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: num
         void updateProgress(jobId, { phase, message, progress: Math.min(99, progress), currentMs: BigInt(Math.round(currentMs)), totalMs: BigInt(totalMs) });
         if (reportSpeed && speed) void updateProgress(jobId, { speed });
       },
-    });
+    }).catch(error => { throw stopWatching() ? new JobCancelled() : error; });
+    stopWatching();
     return result.stderr;
   }
   const withProgress = [...args.slice(0, 2), "-progress", "pipe:1", "-nostats", ...args.slice(2)];
   const child = spawn("ffmpeg", withProgress, { stdio: ["pipe", "pipe", "pipe"] });
   runningProcesses.set(jobId, child);
+  const stopWatching = watchCancel(jobId, () => child.kill("SIGTERM"));
   let stdoutBuffer = ""; let stderr = "";
   child.stdout.on("data", chunk => { stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; for (const line of lines) { const [key, value] = line.trim().split("="); if (key === "out_time_ms" && value && Number.isFinite(Number(value))) { const currentMs = Number(value) / 1000; const progress = Math.round(from + Math.max(0, Math.min(1, currentMs / totalMs)) * (to - from)); void updateProgress(jobId, { phase, message, progress: Math.min(99, progress), currentMs: BigInt(Math.round(currentMs)), totalMs: BigInt(totalMs) }); } if (reportSpeed && key === "speed" && value) void updateProgress(jobId, { speed: value }); } });
   child.stderr.on("data", chunk => { stderr += chunk.toString(); });
-  try { await new Promise<void>((resolve, reject) => { child.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); child.on("error", reject); }); } finally { runningProcesses.delete(jobId); }
+  try { await new Promise<void>((resolve, reject) => { child.on("close", code => code === 0 ? resolve() : reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-2000)}`))); child.on("error", reject); }); } catch (error) { throw stopWatching() ? new JobCancelled() : error; } finally { stopWatching(); runningProcesses.delete(jobId); }
   return stderr;
 }
 
@@ -375,7 +389,7 @@ async function resumeInterruptedTranscriptions() {
   }
 }
 
-async function processJob() { const job = await claimJob(); if (!job) return false; try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else if (job.type === "PODCAST") await runPodcastJob(job); else await runFfmpegJob(job, job.type); } catch (error) { await failJob(job.id, error, "Media job failed", { type: job.type }); } return true; }
+async function runClaimedJob(job: MediaJobRow) { try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else if (job.type === "PODCAST") await runPodcastJob(job); else await runFfmpegJob(job, job.type); } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } }
 
 const captionPublishDeps: CaptionPublishDeps = {
   findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),
@@ -423,5 +437,18 @@ async function processPublication() {
 // findMany). The former cleanupExpiredMedia() relied on that filter, so it selected *every* source and output and deleted
 // their files once a minute.
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); process.exit(0); });
-async function main() { await resumeInterruptedTranscriptions().catch(error => console.error("Failed to resume interrupted transcriptions:", error)); while (true) { try { const didWork = (await processPublication()) || (await processJob()); if (!didWork) await sleep(POLL_MS); } catch (error) { console.error("Worker loop error:", error); await sleep(POLL_MS); } } }
+/** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
+async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }
+async function main() {
+  await resumeInterruptedTranscriptions().catch(error => console.error("Failed to resume interrupted transcriptions:", error));
+  void publicationLane();
+  const running = new Set<Promise<void>>();
+  while (true) {
+    try {
+      if (running.size >= JOB_CONCURRENCY) { await Promise.race(running); continue; }
+      const job = await claimJob(); if (!job) { await sleep(POLL_MS); continue; }
+      const task: Promise<void> = runClaimedJob(job).finally(() => running.delete(task)); running.add(task);
+    } catch (error) { console.error("Worker loop error:", error); await sleep(POLL_MS); }
+  }
+}
 main().catch(error => { console.error("Fatal error:", error); process.exit(1); });

@@ -1,6 +1,6 @@
 # Consider
 
-Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (and not in the follow-up that did the small ones: WebM duration by remux, `GET /api/projects/[id]/publications` for polling, Range support for outputs and `?type=AUDIO` for the library, burn-only captions skipping SRT/VTT formatting, the duplicate-route retention leftover and most repeated e2e helpers), because they are larger refactors, change behaviour, or could not be verified in the environment where the review ran. Each entry says where the issue is, what it costs, and the suggested fix.
+Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (and not in the follow-up that did the small ones: WebM duration by remux, `GET /api/projects/[id]/publications` for polling, Range support for outputs and `?type=AUDIO` for the library, burn-only captions skipping SRT/VTT formatting, publications in their own worker lane (old #4), the duplicate-route retention leftover and most repeated e2e helpers), because they are larger refactors, change behaviour, or could not be verified in the environment where the review ran. Each entry says where the issue is, what it costs, and the suggested fix.
 
 ## Structural
 
@@ -25,12 +25,6 @@ Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (a
 - **Cost:** the worker and the renderer depend on each other's argument positions. Every new output option has to know about the worker's rewrite.
 - **Fix:** add `preview?: { width: number }` (and encode overrides) to the render plan options. The builder then appends the scale as the last video filter and picks `-preset ultrafast -crf 30` itself.
 - **Size:** small to medium, about 40 lines.
-
-### 4. Facebook publishing blocks the worker while Facebook processes the video
-- **Where:** `src/worker/index.ts` (`processPublication` runs inside the single main loop), `src/worker/facebook-publish.ts`, `waitForFacebookVideo` in `src/integrations/facebook.ts`.
-- **Cost:** after the upload, the worker polls every 5 s for up to 30 minutes (`FACEBOOK_PROCESSING_TIMEOUT_MS`). During that time no render, podcast or transcription job starts.
-- **Fix:** after the upload finishes, store the video id and a processing state on the `Publication` and return. Check the state once per loop iteration, or run publications as a separate concurrent task. Upload the thumbnail and captions when the state becomes ready.
-- **Size:** medium. It needs a publication state or column for "processing".
 
 ## Efficiency
 
