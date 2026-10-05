@@ -102,16 +102,18 @@ FFmpeg-based rendering pipeline:
 Models:
 - **Project** - Composition project with template reference
 - **Source** - Media input (upload or YouTube reference)
-- **GenerationJob** - Async video generation task
+- **MediaJob** - Async job (render, preview, thumbnail, podcast, download, transcribe) claimed by the worker
 - **Output** - Generated video or thumbnail artifact
-- **Publication** - YouTube upload record
+- **Publication** - YouTube or Facebook upload record
 - **Asset** - Library image or audio file (overlay, background, logo, font; audio for voiceovers and podcast intro/outro, with `durationMs`)
-- **JobLog** - Generation process logs
+- **JobLog** - Job process logs
+- **TranscriptionRun / TranscriptSegment**, **AssetFolder**, **UserTemplate**, **ApiConnector / ApiRequest**, **YouTubeConnection** - see the sections below
 
 Enums:
 - SourceType (UPLOAD, YOUTUBE)
 - OutputType (VIDEO, THUMBNAIL, CAPTIONS_SRT, CAPTIONS_VTT, AUDIO)
-- JobStatus (QUEUED → ACQUIRING_SOURCE → PROCESSING → RENDERING → COMPLETED/FAILED)
+- MediaJobType (DOWNLOAD, THUMBNAIL, PREVIEW, VIDEO, PODCAST, TRANSCRIBE)
+- MediaJobStatus (QUEUED → RUNNING → COMPLETED/FAILED/CANCELLED)
 - AssetType (OVERLAY, BACKGROUND, LOGO, FONT, AUDIO)
 - PublicationStatus (QUEUED → UPLOADING → COMPLETED/FAILED)
 
@@ -166,7 +168,7 @@ Enums:
 Project
   ├── Source (uploaded video or YouTube reference)
   ├── Composition (timeline of source clips, overlays, slates)
-  ├── GenerationJob (async rendering task)
+  ├── MediaJob (async rendering task)
   ├── Output (rendered video + thumbnail)
   ├── Publication (optional YouTube upload)
   └── Asset (image overlays, backgrounds, logos)
@@ -188,7 +190,7 @@ Project
 Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB; audio is described under "Voiceover and podcast") live in one global, deduplicated library shared by all projects. The UI is at `/assets` ("Graphics library" link in the root layout, `src/app/assets/page.tsx`).
 
 - **Storage:** content-addressed files at `MEDIA_ROOT/assets/library/<sha256>.<ext>`. `Asset.contentHash` deduplicates: uploading identical bytes again reuses the existing row (the new `assetKey` is ignored) instead of creating a copy.
-- **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. Project removal (`DELETE /api/projects/[id]/assets/[assetId]`) only unlinks (409 with `usage` while the project's definition still uses the asset, `?force=1` overrides). They are removed only explicitly through `DELETE /api/assets/[id]` (409 while linked to projects, `?force=1` overrides; the file is deleted only when no other row shares its `storagePath`). Renaming is `PATCH /api/assets/[id]` (validated with `validateAssetKey`, 409 if another asset has the name). The `/assets` page has Rename/Delete with confirmation and shows "used in N projects".
+- **Lifetime:** library assets are never removed automatically. Deleting a project only unlinks its assets. Project removal (`DELETE /api/projects/[id]/assets/[assetId]`) only unlinks (409 with `usage` while the project's definition still uses the asset, `?force=1` overrides). They are removed only explicitly through `DELETE /api/assets/[id]` (409 while linked to projects, `?force=1` overrides; the file is deleted only when no other row shares its `storagePath`). Renaming is `PATCH /api/assets/[id]` (validated with `validateAssetKey`, 409 if another asset has the name). The `/assets` page has Rename/Delete with confirmation and shows "used in N projects".
 - **Folders:** `AssetFolder` is a tree (`parentId`) used only for organisation. The library page supports drag-and-drop moves between folders and breadcrumbs.
 - **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. `AssetPicker` (`src/components/AssetPicker.tsx`) browses the whole library and links on pick (`POST /api/projects/[id]/assets/[assetId]`); it is used by "Add from library" (Graphics and Voiceover tabs) and by "Choose from library" in the graphics editor's image layer. The editor's quick list shows only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
 - **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is skipped, but not silently any more: `findUnresolvedImageRefs` (`src/domain/asset-usage.ts`) lists such image references; `POST /generate` returns them as `assetWarnings` and the worker writes a WARN job log. Uploading bytes that are already in the library reuses that asset and its key; the response says `reused: true` and `requestedKey` when the name asked for was not applied.
@@ -222,7 +224,7 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Upload:** `src/integrations/facebook.ts` (resumable start/transfer/finish with server-dictated chunk ranges, retries on 5xx/network, status polling, thumbnail, `video.<locale>.srt` captions, Graph error mapping such as code 190) and `src/worker/facebook-publish.ts` (orchestration: thumbnail and caption failures are WARN job logs, never fail the publication; upload/processing errors fail it with a readable `Publication.error`).
 - **Tests:** `e2e/fake-graph-server.ts` is a fake Graph API with chunk accounting and an admin API; `src/integrations/facebook.test.ts` (unit/integration) and `e2e/facebook.e2e.test.ts`. `e2e/global-setup.ts` starts the fake server and points the worker and Next server at it (`inject("facebookUrl")`). Never verified against the real Graph API; see `docs/FACEBOOK_SETUP.md`.
 - **YouTube e2e:** `e2e/fake-youtube-server.ts` fakes the Google token endpoint and the resumable video/caption/thumbnail uploads; the worker and server reach it through `YOUTUBE_API_BASE_URL` and `YOUTUBE_OAUTH_TOKEN_URL` (test-only overrides, defaults are Google). `e2e/youtube.e2e.test.ts` covers the OAuth round trip, token refresh, privacy mapping and the soft failure of thumbnail and caption uploads (the video is already on YouTube by then, so they never fail the publication). Never verified against real Google.
-- Output lookups (publish route, worker thumbnail/sidecar) do not filter on `expiresAt`: media is persistent and `src/lib/prisma.ts` clears expiry on write, so such a filter matched nothing.
+- Output lookups (publish route, worker thumbnail/sidecar) do not filter on `expiresAt`: media is persistent and `expiresAt` is unused, so such a filter matched nothing.
 
 ### Voiceover and podcast
 Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `Asset.durationMs` is probed with ffprobe on upload, `src/integrations/audio-assets.ts`: mp3/m4a/wav/ogg/webm, `MAX_AUDIO_ASSET_SIZE_BYTES` default 200 MB). `POST /api/assets` and `POST /api/projects/[id]/assets` detect audio by MIME/extension and force type AUDIO (`readAudioUpload`/`storeAudioAsset` in `src/app/api/_lib/assets.ts`). Browser recordings (`audio/webm;codecs=opus`, no duration in the header) get their duration by decoding once. The `/assets` page shows audio tiles with a player.
@@ -272,11 +274,8 @@ A template seeds a new project; afterwards the project is ordinary data and noth
 - **Section flow:** `addSourceSection` (`src/domain/templates.ts`) is what the Structure step calls when a section is added: it adds the section, its segment and clip (before `template.endingGraphicId` while that slate is still the last base item) and the template's overlay for that section name. `template.sectionNames` feeds the "Pohjan osiot" button of the section manager.
 - The renderer does not know templates; it only sees the definition they produced.
 
-### Generation Pipeline Phases
-1. **ACQUIRING_SOURCE** - Download/verify source media
-2. **PROCESSING** - Parse composition and build FFmpeg commands
-3. **RENDERING** - Execute FFmpeg, generate video and thumbnail
-4. **COMPLETED/FAILED** - Store outputs or log errors
+### Job lifecycle
+A `MediaJob` goes QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. While RUNNING the free-text `phase` and `progress` fields tell where it is (for example DOWNLOADING, EXTRACTING_RANGE, SUBMITTING, ANALYSING, ENCODING, COMPLETE); a render reports progress from ffmpeg's output. The worker claims QUEUED jobs, writes `JobLog` rows, stores `Output` rows on success and the error message on failure.
 
 ---
 
@@ -300,7 +299,7 @@ A template seeds a new project; afterwards the project is ordinary data and noth
 ✅ **Source Management**
 - Local file upload
 - YouTube URL reference (metadata stored)
-- Source expiration and cleanup
+- Sources and outputs are persistent (no expiry)
 
 ✅ **Media Assets**
 - Custom image upload (overlays, backgrounds) and audio upload/recording (voiceovers, jingles)
@@ -328,7 +327,7 @@ A template seeds a new project; afterwards the project is ordinary data and noth
 - `GET /api/projects` - List all projects
 - `POST /api/projects` - Create new project
 - `GET /api/projects/[id]` - Get project details
-- `PUT /api/projects/[id]` - Update project
+- `PATCH /api/projects/[id]` - Update project
 - `DELETE /api/projects/[id]` - Delete project
 - `POST /api/projects/[id]/duplicate` - Clone project
 - `POST /api/projects/[id]/generate` - Queue generation job (`type`: VIDEO, PREVIEW, THUMBNAIL or PODCAST)
@@ -430,13 +429,10 @@ export type Composition = z.infer<typeof compositionSchema>;
 - Prisma queries handle database errors
 - FFmpeg execution captures exit codes and stderr
 - Job logs record all processing steps
-- Errors stored in GenerationJob.error
+- Errors stored in MediaJob.error
 
-### File Expiration
-- NOTE: media is currently persistent (`src/lib/prisma.ts` clears `expiresAt`); the worker no longer runs an expiry cleanup (the old one deleted everything each minute, see git history). The retention bullets below describe the earlier design.
-- Sources expire after 7 days by default (configurable via PROJECT_EXPIRATION_DAYS)
-- Outputs expire after 7 days
-- Expired files auto-cleanup via worker background task
+### Media retention
+Project media (sources, outputs, assets) is persistent; nothing expires and the worker runs no cleanup. The `expiresAt` columns in the schema are legacy and unused; nothing reads or writes them. Files are removed only by explicit deletes (project, source, asset).
 
 ### Type Safety
 - Full TypeScript coverage (no `any` without reason)
@@ -445,22 +441,8 @@ export type Composition = z.infer<typeof compositionSchema>;
 
 ---
 
-## Next Implementation Phases
-
-**Phase 3** (In Progress)
-- Rich transcription integration
-- AI-powered timestamp suggestions
-- Enhanced overlay rendering system
-
-**Phase 4**
-- Advanced template customization UI
-- Preset management
-- Batch generation
-
-**Phase 5**
-- Analytics and metrics
-- Team collaboration
-- API v2 with GraphQL
+## Open work
+See `Consider.md` (refactor backlog), `docs/plan.md` (roadmap) and the "not implemented" notes in the sections above.
 
 ---
 
@@ -470,7 +452,7 @@ export type Composition = z.infer<typeof compositionSchema>;
 1. Check worker is running: `npm run worker`
 2. Verify database connection and environment variables
 3. Check job status: `GET /api/projects/[id]/jobs/[jobId]`
-4. Review job logs in database: `GenerationJob.logs`
+4. Review the job's `JobLog` rows
 
 ### FFmpeg Failures
 1. Verify FFmpeg installed: `which ffmpeg`
@@ -481,7 +463,7 @@ export type Composition = z.infer<typeof compositionSchema>;
 ### Media Upload Issues
 1. Check file permissions and disk space
 2. Verify MIME type is supported (video/audio)
-3. Review upload size limits in `src/app/api/projects/upload`
+3. Review upload size limits in the upload routes (`src/app/api/_lib/assets.ts`, `src/app/api/projects/[id]/source`)
 4. Check storage path configuration
 
 ### Database Issues
@@ -493,9 +475,8 @@ export type Composition = z.infer<typeof compositionSchema>;
 ---
 
 ## File Size Notes
-- Large media files are temporary by default (7-day retention)
-- Outputs stored in `MEDIA_OUTPUT_PATH` (usually `/tmp/saarnavideo-outputs`)
-- Sources cached during job processing, cleaned up after completion
+- Large media files are persistent; plan disk space accordingly
+- Sources, outputs and library assets live under `MEDIA_ROOT` (default `./data/media`)
 - Asset images and audio are stored permanently as content-addressed files in the library
 
 ---

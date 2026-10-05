@@ -39,12 +39,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     // Reuse an existing library asset with identical bytes. Only the project relation is new.
     const existing = await prisma.asset.findFirst({ where: { contentHash, mimeType, type: metadata.data.type } });
     if (existing) {
-      await prisma.asset.update({ where: { id: existing.id }, data: { projects: { connect: { id } }, expiresAt: null } });
+      await prisma.asset.update({ where: { id: existing.id }, data: { projects: { connect: { id } } } });
       return NextResponse.json(withReuse(serializeAsset(existing), false, metadata.data.assetKey), { status: 200 });
     }
 
     const storagePath = await storeLibraryFile(buffer, contentHash, getExtensionFromMimeType(mimeType));
-    const asset = await prisma.asset.create({ data: { assetKey: metadata.data.assetKey, type: metadata.data.type, storagePath, mimeType, width: image.width, height: image.height, hasAlpha: image.hasAlpha, sizeBytes: BigInt(buffer.length), contentHash, expiresAt: null, projects: { connect: { id } } } });
+    const asset = await prisma.asset.create({ data: { assetKey: metadata.data.assetKey, type: metadata.data.type, storagePath, mimeType, width: image.width, height: image.height, hasAlpha: image.hasAlpha, sizeBytes: BigInt(buffer.length), contentHash, projects: { connect: { id } } } });
     return NextResponse.json(serializeAsset(asset), { status: 201 });
   } catch (error) {
     console.error("Asset upload error:", error);

@@ -104,11 +104,11 @@ export async function findOrCreateAudioAsset(upload: AudioUpload, options: { ass
   const link = options.projectId ? { projects: { connect: { id: options.projectId } } } : {};
   const existing = await prisma.asset.findFirst({ where: { contentHash: upload.contentHash, mimeType: upload.mimeType, type: "AUDIO" } });
   if (existing) {
-    const asset = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: options.folderId ?? existing.folderId, expiresAt: null, ...link } });
+    const asset = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: options.folderId ?? existing.folderId, ...link } });
     return { asset, created: false };
   }
   const stored = await storeAudioAsset(upload);
   if (stored instanceof Response) return stored;
-  const asset = await prisma.asset.create({ data: { assetKey: options.assetKey, type: "AUDIO", storagePath: stored.storagePath, mimeType: upload.mimeType, durationMs: stored.durationMs, sizeBytes: BigInt(upload.buffer.length), contentHash: upload.contentHash, folderId: options.folderId ?? null, expiresAt: null, ...link } });
+  const asset = await prisma.asset.create({ data: { assetKey: options.assetKey, type: "AUDIO", storagePath: stored.storagePath, mimeType: upload.mimeType, durationMs: stored.durationMs, sizeBytes: BigInt(upload.buffer.length), contentHash: upload.contentHash, folderId: options.folderId ?? null, ...link } });
   return { asset, created: true };
 }

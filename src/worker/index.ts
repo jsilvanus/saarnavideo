@@ -433,9 +433,7 @@ async function processPublication() {
   return true;
 }
 
-// No expiry cleanup: project media is persistent (src/lib/prisma.ts clears expiresAt on write and drops expiresAt filters on
-// findMany). The former cleanupExpiredMedia() relied on that filter, so it selected *every* source and output and deleted
-// their files once a minute.
+// No expiry cleanup: project media is persistent. The expiresAt columns are legacy and nothing reads or writes them.
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); process.exit(0); });
 /** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
 async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }
