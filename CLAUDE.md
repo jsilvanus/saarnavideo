@@ -442,6 +442,9 @@ export type Composition = z.infer<typeof compositionSchema>;
 - Job logs record all processing steps
 - Errors stored in MediaJob.error
 
+### Media store (S3 or local)
+`src/lib/media-store/` is the storage layer for media files (`createMediaStoreFromEnv`, `getMediaStore`). A stored reference (`storagePath`) is either an absolute local path (every existing row) or `s3://bucket/key`; reads/deletes follow the reference, writes go to `MEDIA_STORAGE` (`local` default, `s3` needs `MEDIA_S3_BUCKET` + `AWS_*`, no silent fallback). Local storage is the install-time fallback. Plan and PR order: `s3-transition-plan-2026-10-05.md` in the project files. Call sites still use local paths directly until the follow-up PRs land.
+
 ### Media retention
 Project media (sources, outputs, assets) is persistent; nothing expires and the worker runs no cleanup. The `expiresAt` columns in the schema are legacy and unused; nothing reads or writes them. Files are removed only by explicit deletes (project, source, asset).
 
