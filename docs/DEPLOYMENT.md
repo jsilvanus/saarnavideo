@@ -26,8 +26,11 @@ YOUTUBE_CLIENT_SECRET=your-client-secret
 
 ### Media and Jobs
 ```bash
-# Media storage (should be on fast, high-capacity storage)
+# Media storage (should be on fast, high-capacity storage). With MEDIA_STORAGE=s3 it is only worker scratch space and a download cache.
 MEDIA_ROOT=/data/media
+
+# Where media files live, chosen at install time: "local" (default, files under MEDIA_ROOT) or "s3" (see "Media storage" below)
+MEDIA_STORAGE=local
 
 # Resource limits
 MAX_SOURCE_SIZE_BYTES=53687091200          # 50 GB
@@ -43,6 +46,30 @@ MAX_UPLOAD_BYTES=53687091200               # 50 GB
 WORKER_POLL_MS=3000
 ```
 
+### Media storage: local disk or S3
+**Install choice.** `MEDIA_STORAGE=local` (default) keeps uploads, outputs and the asset library under `MEDIA_ROOT`; the app and the worker must see the same directory (one volume, or NFS when they run on different machines). `MEDIA_STORAGE=s3` keeps them in an S3-compatible bucket and needs no shared volume:
+```bash
+MEDIA_STORAGE=s3
+MEDIA_S3_BUCKET=saarnavideo-media
+MEDIA_S3_PREFIX=media                       # optional key prefix, default "media"
+MEDIA_S3_ENDPOINT=https://hel1.your-objectstorage.com   # S3-compatible stores only
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=eu-north-1                       # optional
+MEDIA_CACHE_MAX_BYTES=21474836480           # worker download cache, default 20 GB
+```
+Startup fails with a clear message when `MEDIA_STORAGE=s3` is set without the bucket or credentials; there is no silent fallback to local disk. This bucket is separate from the render staging bucket below (`FFFLEET_S3_BUCKET`), although they may be the same bucket with different prefixes.
+
+How it works with S3: uploads are streamed into the bucket (`sources/`, `assets/library/`, `outputs/` under the prefix). The app proxies downloads and range requests from the bucket, so the bucket can stay private. The worker downloads what a job reads into `MEDIA_ROOT/cache` (least recently used files are removed above `MEDIA_CACHE_MAX_BYTES`), writes results to `MEDIA_ROOT/work/<job>` and uploads them when the job ends; the scratch directory is removed afterwards. Give workers disk for one source plus its output. A stored `storagePath` is either an absolute local path or `s3://bucket/key`, so a system can read old local files while writing new ones to S3.
+
+**Moving an existing install.** Stop the app and workers (or accept that files uploaded during the move are picked up by a second run), set the S3 variables, then:
+```bash
+npm run media:migrate -- --to s3 --dry-run     # list what would move
+npm run media:migrate -- --to s3               # copy, verify the size, then repoint the database rows
+npm run media:migrate -- --to s3 --delete-old  # same, and remove each local file after it is verified
+```
+The script is safe to re-run (finished files are skipped, a failed copy leaves its rows alone) and reports missing files. `--to local` moves files back (run it with `MEDIA_STORAGE=local` and the bucket variables set so `s3://` files can be read). Test S3 mode with MinIO: `docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile minio up`.
+
 ### Rendering on an fffleet fleet (Optional)
 By default the worker runs ffmpeg itself. With `RENDER_EXECUTOR=fffleet` it sends VIDEO, PREVIEW, THUMBNAIL and PODCAST ffmpeg commands to an [fffleet](https://github.com/jsilvanus/fffleet) fleet instead. Transcription and the audio probe on upload still run where the worker runs; YouTube downloads can be moved separately (next section).
 
@@ -57,7 +84,7 @@ AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 ```
 
-The remote workers need no shared volume. For each render the worker uploads the files it reads to S3 (sources, assets, audio, the generated `.ass`/`.srt`, a template font), submits one batch job, and copies the output back to `MEDIA_ROOT`, so Output rows, downloads and publishing are unchanged. A file is uploaded once (keyed by path, size and modification time) and reused by later renders. Temporary caption files and the output copy in S3 are deleted after each job; sources and assets stay, so give the bucket a lifecycle rule if you want them to expire. Fleet workers should run with `FFFLEET_CACHE_DIR` so a source is downloaded to a worker once, not for every job, and the worker image must have `libass`, `drawtext` and `libmp3lame` (the published `fffleet-worker` image does).
+The remote workers need no shared volume. This is render staging only: it does not change where media lives (that is `MEDIA_STORAGE` above). For each render the worker uploads the files it reads to S3 (sources, assets, audio, the generated `.ass`/`.srt`, a template font), submits one batch job, and copies the output back to its local path (`MEDIA_ROOT`, or the job's scratch directory with `MEDIA_STORAGE=s3`), so Output rows, downloads and publishing are unchanged. A file is uploaded once (keyed by path, size and modification time) and reused by later renders. Temporary caption files and the output copy in S3 are deleted after each job; sources and assets stay, so give the bucket a lifecycle rule if you want them to expire. Fleet workers should run with `FFFLEET_CACHE_DIR` so a source is downloaded to a worker once, not for every job, and the worker image must have `libass`, `drawtext` and `libmp3lame` (the published `fffleet-worker` image does).
 
 ### yt-dlp downloads on an fffleet worker (Optional)
 `DOWNLOAD_EXECUTOR=fffleet` (default `local`) runs the YouTube download of a DOWNLOAD job on a fleet worker instead of in the SaarnaVideo worker. It uses the same `FFFLEET_*` and `AWS_*` settings as rendering (`RENDER_EXECUTOR` and `DOWNLOAD_EXECUTOR` are independent). The fleet workers must be able to run the `download` job type: build them from `Dockerfile.fleet-worker`, which adds python3, yt-dlp and `fleet/download-executor.mjs` to the published `ghcr.io/jsilvanus/fffleet-worker` image and sets `FFFLEET_EXECUTORS`.
@@ -155,7 +182,7 @@ volumes:
 - [ ] Connection pool configured (pgBouncer recommended)
 
 ### Media Storage
-- [ ] `/data/media` mounted on fast, high-capacity storage (NAS, SSD array, or cloud object storage)
+- [ ] `MEDIA_STORAGE=local`: `/data/media` mounted on fast, high-capacity storage (NAS or SSD array), shared by the app and the workers; `MEDIA_STORAGE=s3`: bucket, credentials and a lifecycle/backup policy in place, and workers have scratch disk for `MEDIA_ROOT`
 - [ ] Disk has at least 500 GB available
 - [ ] Disk monitoring or a manual cleanup routine in place (media is persistent; nothing expires)
 - [ ] Filesystem permissions: app runs as dedicated user
@@ -208,16 +235,14 @@ volumes:
 - One app instance, one worker process
 
 ### Multiple Machines
-- PostgreSQL on dedicated database server
-- App instances behind load balancer
-- Worker processes on dedicated worker machines
-- Media storage on NAS (NFS, SMB) or S3-compatible object storage
+- PostgreSQL on dedicated database server (`schema.postgresql.prisma`)
+- Media storage: `MEDIA_STORAGE=s3` (no shared volume) or local disk on NFS/SMB shared by every app and worker instance
+- Several app instances behind a load balancer: the app keeps no state outside the database and the media store. Put authentication in front of it first; the app has no login of its own
+- Several workers: jobs are claimed atomically, running jobs carry a heartbeat, and a worker that dies has its interrupted transcription taken over by another worker (other stale jobs are failed). Run `prisma db push` after upgrading (new `MediaJob.workerId` / `heartbeatAt` columns)
+- Workers on dedicated machines; with S3 media each needs scratch disk for `MEDIA_ROOT` and the download cache
 
 ### Object Storage (S3)
-- Update source/output storage to use S3 SDK
-- Reduces local disk requirements
-- Enables multi-region deployment
-- Higher latency for thumbnail generation
+See "Media storage: local disk or S3" above. Higher latency applies the first time a worker needs a file it has not cached (a thumbnail of a cold source downloads the video first).
 
 ## Backup Strategy
 
