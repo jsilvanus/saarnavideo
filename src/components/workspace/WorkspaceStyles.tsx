@@ -583,6 +583,9 @@ export default function WorkspaceStyles() {
         padding: 7px 10px;
         font-weight: 700;
       }
+      .quick-step { display: grid; gap: 16px; max-width: 860px; }
+      .quick-list { margin: 8px 0 0; padding-left: 18px; }
+      .link-button { background: none; color: inherit; padding: 0; text-decoration: underline; font-weight: 600; }
       .downloads {
         display: flex;
         gap: 10px;
