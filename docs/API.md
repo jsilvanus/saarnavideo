@@ -643,6 +643,20 @@ POST /webhooks
 }
 ```
 
+## API connectors and fetched variables
+
+Connectors are global (like the asset library) and configured on the Asetukset page (`/settings`). Secrets are write-only: responses carry `auth.hasSecret`, never the secret. Requests are executed with the `varfetch` package (SSRF guard, 10 s timeout, 5 MiB limit).
+
+- `GET /api/connectors` - list connectors with their requests
+- `POST /api/connectors` - create `{ name, baseUrl, auth: { type: none|bearer|api_key|basic, secret?, headerName?, username? }, headers: [{key,value}] }` (409 duplicate name)
+- `GET|PATCH|DELETE /api/connectors/[id]` - omitted fields keep their stored value (an omitted `auth.secret` keeps the stored secret)
+- `POST /api/connectors/[id]/requests` - add a request `{ name, method, path, query, bodyType, body, responseType, mappings: [{jsonPath, variable, skipIfNull}], timeoutMs }`; `path`, query, headers and body may use `{{name}}`
+- `PATCH|DELETE /api/connectors/[id]/requests/[requestId]`
+- `POST /api/connectors/[id]/requests/[requestId]/test` - fire with `{ variables }`, nothing saved; returns `{ ok, status, values }`
+- `POST /api/projects/[id]/fetch-variables` - `{ requestId, variables? }`; project variables fill `{{name}}`, `variables` overrides them (for example `paiva`, the service date). Returns `{ ok, status, values }` and saves nothing; the Lähde step shows old and new values and saves the accepted ones with the normal project PATCH. 502 with the remote error when the call fails.
+
+Private-network targets are blocked by default. Allow or deny hosts with the env vars `CONNECTOR_ALLOW` / `CONNECTOR_DENY` (comma lists; deny wins). They are env-only because the app has no login.
+
 ## Rate Limiting (Future)
 
 Planned for production deployment:

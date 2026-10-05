@@ -283,3 +283,40 @@ model UserTemplate {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+/// A user-configured HTTP API whose responses fill project variables (see src/domain/connectors.ts, varfetch).
+model ApiConnector {
+  id String @id @default(cuid())
+  name String @unique
+  baseUrl String
+  /// { type: "none" | "bearer" | "api_key" | "basic", token?, headerName?, value?, username?, password? }. Secrets never leave the server.
+  auth Json
+  /// [{ key, value }] sent with every request of this connector.
+  headers Json
+  requests ApiRequest[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiRequest {
+  id String @id @default(cuid())
+  connectorId String
+  connector ApiConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  name String
+  method String @default("GET")
+  /// Path below the connector's base URL; may contain {{variable}}.
+  path String
+  /// [{ key, value }]
+  query Json
+  bodyType String @default("none")
+  body String?
+  responseType String @default("auto")
+  /// [{ jsonPath, variable, skipIfNull }]: which part of the response fills which project variable.
+  mappings Json
+  timeoutMs Int?
+  sortOrder Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([connectorId, name])
+  @@index([connectorId])
+}

@@ -4,6 +4,7 @@ import { formatTime, sourceLabel } from "@/components/format";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
 import OutputSettings from "@/components/OutputSettings";
 import VariablesEditor from "@/components/VariablesEditor";
+import FetchVariables from "@/components/FetchVariables";
 import { SaveAsTemplate } from "@/components/TemplatePicker";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
@@ -119,6 +120,7 @@ export default function SourceStep() {
           <ProjectTitle title={selected.title} onSave={saveTitle} />
           <h3 className="subhead">Muuttujat</h3>
           <p className="muted">Grafiikat käyttävät muuttujia muodossa {"{{nimi}}"}. Arvot täytetään, kun video tehdään.</p>
+          <FetchVariables projectId={selected.id} variables={currentDefinition().variables ?? []} onSave={saveVariables} />
           <VariablesEditor
             variables={currentDefinition().variables ?? []}
             graphics={selected.definition?.graphics}

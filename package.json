@@ -25,6 +25,7 @@
     "pnpm": "^11.22.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "varfetch": "^0.1.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
