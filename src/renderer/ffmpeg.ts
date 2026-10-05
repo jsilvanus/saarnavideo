@@ -6,7 +6,7 @@ import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type G
 export type CaptionTrackInput = { path: string; language: string };
 /** Burned-in captions: an ASS file rendered onto the picture with libass after overlays/slates (and before any preview downscale). */
 export type BurnedCaptionInput = { assPath: string; /** Directory libass searches for font files (the template font's directory). */ fontsDir?: string };
-export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput };
+export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput; /** Low-cost preview: the picture is downscaled to `width` (aspect kept) after overlays and burned captions, and encoded fast. */ preview?: { width: number } };
 export type FfmpegPlan = { sourcePaths: Map<string, string>; assetPaths?: Map<string, string>; outputPath: string; args: string[] };
 
 type SourceClipItem = Extract<TimelineItem, { type: "source-clip" }>;
@@ -15,6 +15,7 @@ type SlateItem = Extract<TimelineItem, { type: "slate" }>;
 type RichLayer = { id?: string; type?: string; x?: number; y?: number; width?: number; height?: number; rotation?: number; text?: string; src?: string; animation?: string; style?: Record<string, string | number> };
 type TimeRange = { start: number; end: number };
 
+const PREVIEW_ENCODE_ARGS = ["-preset", "ultrafast", "-crf", "30"];
 const ENCODE_ARGS = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart"];
 export const AUDIO_NORMALIZE = "asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
@@ -336,7 +337,12 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     outputVideo = "burned";
   }
 
-  args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS);
+  if (options.preview) {
+    filters.push(`[${outputVideo}]scale=${options.preview.width}:-2[preview]`);
+    outputVideo = "preview";
+  }
+
+  args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS, ...(options.preview ? PREVIEW_ENCODE_ARGS : []));
   if (options.captions) {
     // Added after the video/audio maps so callers that patch the first -map (previews) keep working.
     args.splice(args.indexOf("-filter_complex"), 0, "-i", options.captions.path);

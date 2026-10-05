@@ -548,3 +548,24 @@ describe("output size and reframing", () => {
     expect(filters).toContain("fontsize=60:x=200:y=100");
   });
 });
+
+describe("preview option", () => {
+  const definition = { ...base, composition: { ...baseComposition, items: [{ type: "source-clip" as const, sourceId: "a", startSeconds: 0, endSeconds: 5 }] } };
+  const sources = new Map([["a", "/a.mp4"]]);
+
+  it("downscales as the last video filter and encodes fast, leaving the soft caption track in place", () => {
+    const plan = buildCompositionRenderPlan(definition, sources, "/o.mp4", undefined, { preview: { width: 640 }, captions: { path: "/c.srt", language: "fin" } });
+    const graph = plan.args[plan.args.indexOf("-filter_complex") + 1];
+    expect(graph.endsWith("scale=640:-2[preview]")).toBe(true);
+    expect(plan.args[plan.args.indexOf("-map") + 1]).toBe("[preview]");
+    expect(plan.args.join(" ")).toMatch(/-map 1:0 -c:s mov_text/);
+    expect(plan.args.join(" ")).toContain("-preset ultrafast -crf 30");
+    expect(plan.args.at(-1)).toBe("/o.mp4");
+  });
+
+  it("changes nothing without the option", () => {
+    const plan = buildCompositionRenderPlan(definition, sources, "/o.mp4");
+    expect(plan.args.join(" ")).not.toContain("ultrafast");
+    expect(plan.args[plan.args.indexOf("-map") + 1]).not.toBe("[preview]");
+  });
+});

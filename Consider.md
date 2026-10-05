@@ -10,18 +10,13 @@ Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (a
 - **Fix:** add a `collectAssetRefs(definition)` next to `findAssetUsage` and one worker `resolveAssetPaths(definition, project)` that loads every referenced asset and keys the map by the original ref strings. Pick one link policy for all types: either auto-link an asset when a project references it, or allow the whole library. Use it in the video job, the podcast job and the generate-route validation.
 - **Size:** medium, about 60 lines. It changes behaviour for unlinked images.
 
-### 3. Preview render built by the renderer, not by editing the argv afterwards
-- **Where:** `src/worker/index.ts` (`runFfmpegJob`, the preview block that edits `plan.args`), `src/renderer/ffmpeg.ts` (the soft-caption `-i`/`-map` placement that keeps "the preview rewrite of the first `-map`" working).
-- **Cost:** the worker and the renderer depend on each other's argument positions. Every new output option has to know about the worker's rewrite.
-- **Fix:** add `preview?: { width: number }` (and encode overrides) to the render plan options. The builder then appends the scale as the last video filter and picks `-preset ultrafast -crf 30` itself.
-- **Size:** small to medium, about 40 lines.
-
 ## Efficiency
 
-### 5. Uploads are held fully in memory
-- **Where:** `readAudioUpload` / `readImageUpload` in `src/app/api/_lib/assets.ts`, after `request.formData()` in both upload routes.
-- **Cost:** an audio upload of up to 200 MB goes through a `File`, then an `ArrayBuffer`, and is hashed in memory: 200 to 400 MB of heap per concurrent upload.
-- **Fix:** stream `file.stream()` into a temporary file under `MEDIA_ROOT` while updating a SHA-256 hash. Then rename it to `<hash>.<ext>`, or delete it when the hash already exists.
+### 5. Uploads are still parsed into memory by `request.formData()`
+- **Where:** both upload routes (`src/app/api/assets/route.ts`, `src/app/api/projects/[id]/assets/route.ts`).
+- **Done:** audio is no longer copied again: `readAudioUpload` streams the file into a temporary file while hashing it, and the library file is a rename (`src/app/api/_lib/assets.ts`).
+- **Remaining cost:** `formData()` itself holds the whole multipart body, so a 200 MB upload still takes about 200 MB of heap per concurrent upload.
+- **Fix:** parse the multipart stream incrementally (for example `busboy`, a new dependency) or accept a raw body (`PUT` with the file as body and the name in the query) for audio, and stream `request.body` into the temporary file.
 
 ### 6. The podcast reads the full source video twice
 - **Where:** `buildPodcastRenderPlan` in `src/renderer/podcast.ts`, run twice by `runPodcastJob` (loudness measure pass and encode pass).
