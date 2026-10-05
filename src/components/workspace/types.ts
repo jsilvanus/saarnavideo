@@ -119,8 +119,9 @@ export type Project = {
   jobs?: Job[];
   definition?: Definition;
 };
-export type Step = "source" | "structure" | "publish";
+export type Step = "quick" | "source" | "structure" | "publish";
 export const STEPS: Array<{ id: Step; title: string; sub: string }> = [
+  { id: "quick", title: "Pikajulkaisu", sub: "Lähde, tiedot, video ja julkaisu yhdellä sivulla" },
   { id: "source", title: "Lähde", sub: "Tiedot, lähteet, litteroinnit, koko" },
   { id: "structure", title: "Rakenne", sub: "Osiot, grafiikat, ääni, aikajana" },
   { id: "publish", title: "Julkaisu", sub: "Video, tiedostot, kanavat, podcast" },

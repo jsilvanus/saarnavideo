@@ -122,6 +122,7 @@ export function useWorkspaceState() {
       setTitle("");
       await refreshProjects();
       await openProject(data.id);
+      setStep("quick");
       setMessage("Project created.");
     });
   }
@@ -546,7 +547,7 @@ export function useWorkspaceState() {
       const data = await queueGeneration(false, "Could not queue generation", captionRequest());
       if (!data) return;
       setAcceptedClamp(false);
-      setStep("publish");
+      setStep((current) => (current === "quick" ? current : "publish"));
       setMessage(
         withWarnings(
           data.clamped
@@ -566,7 +567,7 @@ export function useWorkspaceState() {
       async () => {
         const data = await queueGeneration(true, "Could not queue preview", captionRequest());
         if (!data) return;
-        setStep("publish");
+        setStep((current) => (current === "quick" ? current : "publish"));
         setMessage(withWarnings(`Preview render queued (${data.id}).`, data));
         await openProject(selected.id);
       },

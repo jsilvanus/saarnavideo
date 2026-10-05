@@ -1,6 +1,7 @@
 "use client";
 
 import { useOpenWorkspace } from "./useWorkspace";
+import QuickStep from "./QuickStep";
 import SourceStep from "./SourceStep";
 import StructureStep from "./StructureStep";
 import PublishStep from "./PublishStep";
@@ -45,6 +46,7 @@ export default function OpenProject() {
         ))}
       </nav>
       <div className="content">
+        {step === "quick" && <QuickStep />}
         {step === "source" && <SourceStep />}
         {step === "structure" && <StructureStep />}
         {step === "publish" && <PublishStep />}
