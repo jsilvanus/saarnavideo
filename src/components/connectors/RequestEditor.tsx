@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { errorMessage, jsonInit, requestJson } from "@/components/api";
 import { variableNames } from "@/domain/variables";
 import PairsEditor from "./PairsEditor";
@@ -14,6 +15,7 @@ const toDraft = ({ id: _id, connectorId: _connectorId, ...rest }: ApiRequestView
 
 /** One request of a connector: where to call, and which part of the response fills which project variable. */
 export default function RequestEditor({ connectorId, request, onSaved, onDeleted }: Props) {
+  const t = useT();
   const [draft, setDraft] = useState<Draft>(toDraft(request));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -33,9 +35,9 @@ export default function RequestEditor({ connectorId, request, onSaved, onDeleted
     setBusy(true);
     setError("");
     try {
-      onSaved(await requestJson<ApiRequestView>(url, jsonInit("PATCH", draft), "Pyyntöä ei voitu tallentaa"));
+      onSaved(await requestJson<ApiRequestView>(url, jsonInit("PATCH", draft), t("req.saveFailed")));
     } catch (e) {
-      setError(errorMessage(e, "Pyyntöä ei voitu tallentaa"));
+      setError(errorMessage(e, t("req.saveFailed")));
     } finally {
       setBusy(false);
     }
@@ -44,10 +46,10 @@ export default function RequestEditor({ connectorId, request, onSaved, onDeleted
   async function remove() {
     setBusy(true);
     try {
-      await requestJson(url, { method: "DELETE" }, "Pyyntöä ei voitu poistaa");
+      await requestJson(url, { method: "DELETE" }, t("req.deleteFailed"));
       onDeleted();
     } catch (e) {
-      setError(errorMessage(e, "Pyyntöä ei voitu poistaa"));
+      setError(errorMessage(e, t("req.deleteFailed")));
       setBusy(false);
     }
   }
@@ -57,10 +59,10 @@ export default function RequestEditor({ connectorId, request, onSaved, onDeleted
     setError("");
     setTestResult("");
     try {
-      const data = await requestJson<{ values: Record<string, string | null> }>(`${url}/test`, jsonInit("POST", { variables: testValues }), "Testi epäonnistui");
-      setTestResult(Object.keys(data.values).length ? Object.entries(data.values).map(([name, value]) => `{{${name}}} = ${value}`).join("\n") : "Pyyntö onnistui, mutta mikään kohdistus ei löytänyt arvoa.");
+      const data = await requestJson<{ values: Record<string, string | null> }>(`${url}/test`, jsonInit("POST", { variables: testValues }), t("req.testFailed"));
+      setTestResult(Object.keys(data.values).length ? Object.entries(data.values).map(([name, value]) => `{{${name}}} = ${value}`).join("\n") : t("req.testNoValues"));
     } catch (e) {
-      setError(errorMessage(e, "Testi epäonnistui"));
+      setError(errorMessage(e, t("req.testFailed")));
     } finally {
       setBusy(false);
     }
@@ -70,12 +72,12 @@ export default function RequestEditor({ connectorId, request, onSaved, onDeleted
     <div className={styles.subcard}>
       <div className={styles.grid2}>
         <label className={styles.field}>
-          Pyynnön nimi
+          {t("req.name")}
           <input value={draft.name} onChange={(e) => set("name", e.target.value)} />
         </label>
         <div className={styles.grid2}>
           <label className={styles.field}>
-            Metodi
+            {t("req.method")}
             <select value={draft.method} onChange={(e) => set("method", e.target.value)}>
               {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
                 <option key={m}>{m}</option>
@@ -83,65 +85,65 @@ export default function RequestEditor({ connectorId, request, onSaved, onDeleted
             </select>
           </label>
           <label className={styles.field}>
-            Vastaus
+            {t("req.response")}
             <select value={draft.responseType} onChange={(e) => set("responseType", e.target.value as Draft["responseType"])}>
-              <option value="auto">Tunnista</option>
+              <option value="auto">{t("req.responseAuto")}</option>
               <option value="json">JSON</option>
-              <option value="text">Teksti</option>
+              <option value="text">{t("req.typeText")}</option>
             </select>
           </label>
         </div>
       </div>
       <label className={styles.field}>
-        Polku (osoitteen perään; {"{{nimi}}"} täytetään muuttujasta)
+        {t("req.path")}
         <input className={styles.mono} value={draft.path} placeholder="/api/v1/date/{{paiva}}" onChange={(e) => set("path", e.target.value)} />
       </label>
-      <PairsEditor label="Kyselyparametrit" rows={draft.query} onChange={(rows: Pair[]) => set("query", rows)} />
+      <PairsEditor label={t("req.query")} rows={draft.query} onChange={(rows: Pair[]) => set("query", rows)} />
       {draft.method !== "GET" && (
         <div className={styles.grid2}>
           <label className={styles.field}>
-            Sisällön tyyppi
+            {t("req.bodyType")}
             <select value={draft.bodyType} onChange={(e) => set("bodyType", e.target.value as Draft["bodyType"])}>
-              <option value="none">Ei sisältöä</option>
+              <option value="none">{t("req.bodyNone")}</option>
               <option value="json">JSON</option>
-              <option value="text">Teksti</option>
+              <option value="text">{t("req.typeText")}</option>
             </select>
           </label>
           {draft.bodyType !== "none" && (
             <label className={styles.field}>
-              Sisältö
+              {t("req.body")}
               <textarea value={draft.body ?? ""} onChange={(e) => set("body", e.target.value)} />
             </label>
           )}
         </div>
       )}
       <div className={styles.rows}>
-        <span className={styles.muted}>Vastauksen kohdistus muuttujiin. Polku on muotoa $.kentta.alikentta tai $.lista[0].nimi. Jos kaksi riviä täyttää saman muuttujan, löytynyt arvo korvaa aiemman.</span>
+        <span className={styles.muted}>{t("req.mappingHelp")}</span>
         {draft.mappings.map((mapping, index) => (
           <div className={styles.row2} key={index}>
-            <input aria-label="JSON-polku" className={styles.mono} value={mapping.jsonPath} placeholder="$.holyDay.name" onChange={(e) => updateMapping(index, { jsonPath: e.target.value })} />
-            <input aria-label="Muuttujan nimi" className={styles.mono} value={mapping.variable} placeholder="muuttuja" onChange={(e) => updateMapping(index, { variable: e.target.value.trim() })} />
-            <button type="button" className={styles.icon} aria-label={`Poista kohdistus ${index + 1}`} onClick={() => set("mappings", draft.mappings.filter((_, i) => i !== index))}>
+            <input aria-label={t("req.jsonPath")} className={styles.mono} value={mapping.jsonPath} placeholder="$.holyDay.name" onChange={(e) => updateMapping(index, { jsonPath: e.target.value })} />
+            <input aria-label={t("req.variableName")} className={styles.mono} value={mapping.variable} placeholder={t("req.variablePlaceholder")} onChange={(e) => updateMapping(index, { variable: e.target.value.trim() })} />
+            <button type="button" className={styles.icon} aria-label={t("req.removeMapping", { n: index + 1 })} onClick={() => set("mappings", draft.mappings.filter((_, i) => i !== index))}>
               ×
             </button>
           </div>
         ))}
         <div className={styles.actions}>
           <button type="button" className={styles.button} onClick={() => set("mappings", [...draft.mappings, { jsonPath: "$", variable: "", skipIfNull: true }])}>
-            ＋ Lisää kohdistus
+            {t("req.addMapping")}
           </button>
         </div>
       </div>
       <div className={styles.actions}>
         <button type="button" className={`${styles.button} ${styles.primary}`} disabled={!dirty || busy} onClick={() => void save()}>
-          Tallenna pyyntö
+          {t("req.save")}
         </button>
         <button type="button" className={`${styles.button} ${styles.danger}`} disabled={busy} onClick={() => void remove()}>
-          Poista pyyntö
+          {t("req.delete")}
         </button>
       </div>
       <div className={styles.rows}>
-        <span className={styles.muted}>Kokeile pyyntöä{dirty ? " (tallenna ensin muutokset)" : ""}. Mitään ei tallenneta projektiin.</span>
+        <span className={styles.muted}>{t("req.testIntro", { note: dirty ? t("req.saveFirst") : "" })}</span>
         {placeholders.map((name) => (
           <label className={styles.field} key={name}>
             {`{{${name}}}`}
@@ -150,7 +152,7 @@ export default function RequestEditor({ connectorId, request, onSaved, onDeleted
         ))}
         <div className={styles.actions}>
           <button type="button" className={styles.button} disabled={busy || dirty} onClick={() => void test()}>
-            Kokeile
+            {t("req.test")}
           </button>
         </div>
         {testResult && <pre className={styles.result}>{testResult}</pre>}
