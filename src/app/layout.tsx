@@ -1,26 +1,30 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { cookies, headers } from "next/headers";
 import "./globals.css";
 import SidebarToggle from "@/components/SidebarToggle";
+import TopNav from "@/components/TopNav";
 import YouTubeConnection from "@/components/YouTubeConnection";
+import { I18nProvider } from "@/i18n/I18nProvider";
+import { LOCALE_COOKIE, isLocale, localeFromAcceptLanguage } from "@/i18n/locales";
 
 export const metadata: Metadata = {
   title: "SaarnaVideo",
   description: "Automated worship-service video composition",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // The chosen language is a cookie; without one the browser's Accept-Language decides (Finnish when unsupported).
+  const saved = (await cookies()).get(LOCALE_COOKIE)?.value;
+  const locale = isLocale(saved) ? saved : localeFromAcceptLanguage((await headers()).get("accept-language"));
   return (
-    <html lang="fi">
+    <html lang={locale}>
       <body>
-        <SidebarToggle />
-        <YouTubeConnection />
-        <nav style={{ position: "fixed", top: 12, right: 16, zIndex: 1000, display: "flex", gap: 8 }}>
-          {[["/assets", "Graphics library"], ["/settings", "Asetukset"]].map(([href, label]) => (
-            <Link key={href} href={href} style={{ background: "white", border: "1px solid #ccc", borderRadius: 8, padding: "8px 12px", textDecoration: "none", color: "inherit", boxShadow: "0 1px 4px #0002" }}>{label}</Link>
-          ))}
-        </nav>
-        {children}
+        <I18nProvider initialLocale={locale}>
+          <SidebarToggle />
+          <YouTubeConnection />
+          <TopNav />
+          {children}
+        </I18nProvider>
       </body>
     </html>
   );

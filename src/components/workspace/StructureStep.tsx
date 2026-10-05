@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "@/i18n/I18nProvider";
 import GraphicsEditor from "@/components/GraphicsEditor";
 import AssetPicker from "@/components/AssetPicker";
 import { formatTime, sourceLabel } from "@/components/format";
@@ -52,11 +53,12 @@ export default function StructureStep() {
     selectedGraphic,
     editorItem,
   } = useOpenWorkspace();
+  const t = useT();
   return (
     <div className="step-stack">
       <Panel
-        title="Osiot"
-        text="Osiot jäsentävät tallenteen. Jokainen osio valitsee lähteensä ja rajauksensa. Luo ensin luettelo ja sijoita se, kun lähteen kohta tiedetään."
+        title={t("str.sections.title")}
+        text={t("str.sections.text")}
       >
         <SectionManager
           scope="SOURCE"
@@ -68,7 +70,7 @@ export default function StructureStep() {
             <>
               {section.scope === "SOURCE" && !section.parentId && selected.sources.length > 1 && (
                 <select
-                  aria-label={`Lähde: ${section.label}`}
+                  aria-label={t("str.sourceOf", { label: section.label })}
                   className="inline-select"
                   value={section.sourceId ?? ""}
                   onChange={(e) => void changeSectionSource(section.id, e.target.value)}
@@ -82,9 +84,9 @@ export default function StructureStep() {
               )}
               {section.startSeconds !== undefined && (
                 <ReframeEditor
-                  title={`Osio “${section.label}”`}
+                  title={t("str.sectionReframe", { label: section.label })}
                   current={section.reframe}
-                  defaultLabel="Projektin oletus"
+                  defaultLabel={t("str.projectDefault")}
                   source={selected.sources.find((x) => x.id === section.sourceId)}
                   atSeconds={section.startSeconds}
                   outWidth={currentDefinition().template?.width ?? 1920}
@@ -107,47 +109,47 @@ export default function StructureStep() {
               <span>
                 <strong>{s.label}</strong>
                 <small>
-                  {sourceNames[s.sourceId ?? ""] ?? "lähde"} · {formatTime(s.startSeconds)} → {formatTime(s.endSeconds)}
+                  {sourceNames[s.sourceId ?? ""] ?? t("str.sourceFallback")} · {formatTime(s.startSeconds)} → {formatTime(s.endSeconds)}
                 </small>
               </span>
-              <button onClick={() => void removeSegment(s.id)}>Poista</button>
+              <button onClick={() => void removeSegment(s.id)}>{t("common.remove")}</button>
             </div>
           ))}
         </div>
       </Panel>
       <Panel
-        title="Grafiikat"
-        text="Uudelleenkäytettävät grafiikat. Aikajanalla päätetään, tuleeko grafiikasta oma välikuva vai kuvan päälle tuleva grafiikka. Tekstiin voi kirjoittaa projektin muuttujia, esim. {{saarnaaja}}."
+        title={t("str.graphics.title")}
+        text={t("str.graphics.text")}
       >
         <div className="form-grid four">
           <label>
-            Kuvatiedosto
+            {t("str.imageFile")}
             <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setAssetFile(e.target.files?.[0] ?? null)} />
           </label>
           <label>
-            Nimi
+            {t("str.name")}
             <input value={assetKey} onChange={(e) => setAssetKey(e.target.value)} placeholder="logo" />
           </label>
           <label>
-            Tyyppi
+            {t("str.type")}
             <select value={assetType} onChange={(e) => setAssetType(e.target.value)}>
-              <option value="OVERLAY">Päällyskuva</option>
-              <option value="BACKGROUND">Tausta</option>
-              <option value="LOGO">Logo</option>
+              <option value="OVERLAY">{t("str.type.overlay")}</option>
+              <option value="BACKGROUND">{t("str.type.background")}</option>
+              <option value="LOGO">{t("str.type.logo")}</option>
             </select>
           </label>
           <button onClick={() => void uploadAsset()} disabled={busy}>
-            Lataa kuva
+            {t("str.uploadImage")}
           </button>
         </div>
         <div className="button-row">
           <button data-testid="add-from-library" onClick={() => setLibraryOpen(true)}>
-            Lisää kirjastosta
+            {t("str.addFromLibrary")}
           </button>
           <button className="primary" onClick={() => void createGraphic()}>
-            ＋ Uusi grafiikka
+            {t("str.newGraphic")}
           </button>
-          <button onClick={() => void createCaptionStyle()}>＋ Uusi tekstitystyyli</button>
+          <button onClick={() => void createCaptionStyle()}>{t("pub.newCaptionStyle")}</button>
         </div>
         <div className="graphic-list">
           {(selected.definition?.graphics ?? []).map((g) => (
@@ -155,7 +157,7 @@ export default function StructureStep() {
               <strong>{g.name}</strong>
               <small>
                 {g.width} × {g.height}
-                {isCaptionStyleGraphic(g) ? " · tekstitystyyli" : ""}
+                {isCaptionStyleGraphic(g) ? t("str.captionStyleTag") : ""}
                 {graphicVariables(g).length
                   ? ` · ${graphicVariables(g)
                       .map((n) => `{{${n}}}`)
@@ -164,7 +166,7 @@ export default function StructureStep() {
               </small>
             </button>
           ))}
-          {!selected.definition?.graphics?.length && <p className="muted">Ei vielä grafiikoita.</p>}
+          {!selected.definition?.graphics?.length && <p className="muted">{t("str.noGraphics")}</p>}
         </div>
         {selectedGraphic && editorItem && (
           <>
@@ -178,16 +180,16 @@ export default function StructureStep() {
               <div className="graphic-editor-actions">
                 <button
                   className="icon-button"
-                  title="Monista grafiikka"
-                  aria-label="Monista grafiikka"
+                  title={t("str.duplicateGraphic")}
+                  aria-label={t("str.duplicateGraphic")}
                   onClick={() => void duplicateGraphic(selectedGraphic.id)}
                 >
                   ⧉
                 </button>
                 <button
                   className="icon-button danger-icon"
-                  title="Poista grafiikka"
-                  aria-label="Poista grafiikka"
+                  title={t("str.deleteGraphic")}
+                  aria-label={t("str.deleteGraphic")}
                   onClick={() => setConfirmDeleteGraphicId(selectedGraphic.id)}
                 >
                   🗑
@@ -211,10 +213,10 @@ export default function StructureStep() {
               <b>{a.type}</b>
               <strong>{a.assetKey}</strong>
               <small>
-                {a.type === "AUDIO" ? "Ääni" : `${a.width} × ${a.height}`} · {a.mimeType}
+                {a.type === "AUDIO" ? t("str.audioShort") : `${a.width} × ${a.height}`} · {a.mimeType}
               </small>
               <button data-testid="remove-asset" onClick={() => askRemoveAsset(a)} disabled={busy}>
-                Poista projektista
+                {t("str.removeFromProject")}
               </button>
             </article>
           ))}
@@ -222,20 +224,20 @@ export default function StructureStep() {
         {libraryOpen && (
           <AssetPicker
             projectId={selected.id}
-            title="Lisää kirjastosta"
+            title={t("str.addFromLibrary")}
             linkedIds={(selected.assets ?? []).map((a) => a.id)}
             pickLinked={false}
             onPick={async () => {
               await refreshAssets();
-              setMessage("Lisätty projektiin.");
+              setMessage(t("str.addedToProject"));
             }}
             onClose={() => setLibraryOpen(false)}
           />
         )}
       </Panel>
       <Panel
-        title="Ääni"
-        text="Äänitä spiikki selaimessa tai lataa äänitiedosto. Sen voi lisätä omaksi osiokseen tai miksata videon päälle."
+        title={t("str.audio.title")}
+        text={t("str.audio.text")}
       >
         <VoiceoverPanel
           projectId={selected.id}
@@ -248,8 +250,8 @@ export default function StructureStep() {
         />
       </Panel>
       <Panel
-        title="Aikajana"
-        text="Valmiin videon kuva, grafiikat ja ääni samalla aikajanalla. Työpöydällä vaakana, puhelimessa pystynä; suunnan voi vaihtaa."
+        title={t("str.timeline.title")}
+        text={t("str.timeline.text")}
       >
         {durationNotice}
         <TimelineView
@@ -259,18 +261,18 @@ export default function StructureStep() {
           sources={selected.sources}
           audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")}
         />
-        <h3 className="subhead">Muokkaa koostusta</h3>
+        <h3 className="subhead">{t("str.editComposition")}</h3>
         <CompositionEditor
           definition={currentDefinition()}
           sources={selected.sources}
           audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")}
           onChange={async (def) => {
             await saveDefinition(def as Definition);
-            setMessage("Koostus tallennettu.");
+            setMessage(t("str.compositionSaved"));
           }}
         />
         <details className="composition-sections">
-          <summary>Koostuksen omat osiot</summary>
+          <summary>{t("str.ownSections")}</summary>
           <SectionManager
             scope="COMPOSITION"
             sections={selected.definition?.sections ?? []}

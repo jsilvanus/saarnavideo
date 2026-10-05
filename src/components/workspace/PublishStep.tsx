@@ -1,10 +1,11 @@
 "use client";
 
+import { useT } from "@/i18n/I18nProvider";
 import PodcastPanel from "@/components/PodcastPanel";
 import PublishPanel from "@/components/PublishPanel";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
-import { outputLabel } from "./helpers";
+import { jobStatusLabel, outputLabel } from "./helpers";
 import type { CaptionMode, Definition } from "./types";
 
 export default function PublishStep() {
@@ -32,33 +33,34 @@ export default function PublishStep() {
     previewJob,
     latestPreview,
   } = useOpenWorkspace();
+  const t = useT();
   return (
     <div className="step-grid">
       <div className="step-main">
         <Panel
-          title="Tee video"
-          text="Lisää video työjonoon. Lyhyempi korvaava lähde ei koskaan muuta tallennettuja aikoja huomaamatta; katkaisu tiedoston loppuun vaatii vahvistuksen."
+          title={t("pub.make.title")}
+          text={t("pub.make.text")}
         >
           {durationNotice}
           <div className="job">
             <label className="muted">
-              Tekstitys{" "}
+              {t("captions.label")}{" "}
               <select value={captionMode} onChange={(e) => setCaptionMode(e.target.value as CaptionMode)}>
-                <option value="none">Ei tekstitystä</option>
-                <option value="soft">Valittava raita (sekä SRT/VTT-tiedostot)</option>
-                <option value="burn">Poltettu kuvaan</option>
-                <option value="both">Molemmat</option>
+                <option value="none">{t("captions.none")}</option>
+                <option value="soft">{t("captions.soft")}</option>
+                <option value="burn">{t("captions.burn")}</option>
+                <option value="both">{t("captions.both")}</option>
               </select>
             </label>
             {(captionMode === "burn" || captionMode === "both") && (
               <div className="caption-style-row">
                 <label className="muted">
-                  Tekstitystyyli{" "}
+                  {t("pub.captionStyle")}{" "}
                   <select
                     value={captionStyles.some((g) => g.id === captionStyleId) ? captionStyleId : ""}
                     onChange={(e) => setCaptionStyleId(e.target.value)}
                   >
-                    <option value="">Oletus (alhaalla keskellä, valkoinen tummalla)</option>
+                    <option value="">{t("pub.captionStyleDefault")}</option>
                     {captionStyles.map((g) => (
                       <option key={g.id} value={g.id}>
                         {g.name}
@@ -66,7 +68,7 @@ export default function PublishStep() {
                     ))}
                   </select>
                 </label>
-                <button onClick={() => void createCaptionStyle()}>＋ Uusi tekstitystyyli</button>
+                <button onClick={() => void createCaptionStyle()}>{t("pub.newCaptionStyle")}</button>
                 {captionStyles.some((g) => g.id === captionStyleId) && (
                   <button
                     onClick={() => {
@@ -74,75 +76,75 @@ export default function PublishStep() {
                       setSelectedGraphicId(captionStyleId);
                     }}
                   >
-                    Muokkaa tyyliä
+                    {t("pub.editStyle")}
                   </button>
                 )}
                 <small className="muted">
-                  Sijainti, koko, fontti ja tausta tulevat grafiikan tekstitystasolta. Esikatselu käyttää samaa asetusta.
+                  {t("pub.captionStyleHelp")}
                 </small>
               </div>
             )}
             <div className="button-row">
               <button disabled={previewBusy || busy} onClick={() => void previewRender()}>
-                {previewBusy ? "Esikatselu jonoon…" : "Nopea esikatselu (640 px)"}
+                {previewBusy ? t("project.previewQueued") : t("pub.quickPreview640")}
               </button>
               <button className="primary" disabled={busy} onClick={() => void generate()}>
-                Tee lopullinen video
+                {t("quick.finalVideo")}
               </button>
             </div>
             {selected.jobs?.map((j) => (
               <div key={j.id} className="job-row">
                 <strong>
-                  {j.preview ? "Esikatselu " : ""}
-                  {j.type === "PODCAST" ? "Podcast " : ""}
-                  {j.status}
+                  {j.preview ? t("pub.jobPreviewPrefix") : ""}
+                  {j.type === "PODCAST" ? t("pub.jobPodcastPrefix") : ""}
+                  {jobStatusLabel(t, j.status)}
                 </strong>
                 <span>{j.progress}%</span>
                 {j.errorMessage && <small>{j.errorMessage}</small>}
                 {["QUEUED", "ACQUIRING_SOURCE", "PROCESSING", "RENDERING"].includes(j.status) && (
                   <button className="stop-button" onClick={() => void stopJob(j)}>
-                    Pysäytä
+                    {t("common.stop")}
                   </button>
                 )}
               </div>
             ))}
-            {!selected.jobs?.length && <p className="muted">Ei vielä töitä.</p>}
-            {activeJob && <small className="muted">Käynnissä: {activeJob.progress}% · pysäytys on turvallinen.</small>}
+            {!selected.jobs?.length && <p className="muted">{t("pub.noJobs")}</p>}
+            {activeJob && <small className="muted">{t("pub.running", { progress: activeJob.progress })}</small>}
           </div>
         </Panel>
-        <Panel title="Esikatselu">
+        <Panel title={t("pub.preview.title")}>
           <div className="preview-panel">
             {latestPreview ? (
               <video controls preload="metadata" src={`/api/outputs/${latestPreview.id}`} />
             ) : (
               <div className="preview-empty">
-                <strong>Esikatselua ei ole vielä tehty.</strong>
-                <p>Tee nopea esikatselu, kun koostus on valmis.</p>
+                <strong>{t("pub.preview.none")}</strong>
+                <p>{t("pub.preview.hint")}</p>
               </div>
             )}
             {previewJob && (
               <span className="muted">
-                Esikatselu: {previewJob.status} · {previewJob.progress}%
+                {t("pub.preview.status", { status: jobStatusLabel(t, previewJob.status), progress: previewJob.progress })}
               </span>
             )}
           </div>
         </Panel>
-        <Panel title="Valmiit tiedostot">
+        <Panel title={t("pub.files.title")}>
           {selected.outputs?.length ? (
             <div className="downloads">
               {selected.outputs.map((o) => (
                 <a key={o.id} href={`/api/outputs/${o.id}`}>
-                  {outputLabel(o)} ↓
+                  {outputLabel(o, t)} ↓
                 </a>
               ))}
             </div>
           ) : (
-            <p className="muted">Ei vielä valmiita tiedostoja.</p>
+            <p className="muted">{t("pub.files.none")}</p>
           )}
         </Panel>
       </div>
       <aside className="step-aside">
-        <Panel title="Julkaise">
+        <Panel title={t("pub.publish.title")}>
           <PublishPanel
             projectId={selected.id}
             publications={selected.publications ?? []}
@@ -151,7 +153,7 @@ export default function PublishStep() {
             onPoll={() => void refreshPublications(selected.id)}
           />
         </Panel>
-        <Panel title="Podcast">
+        <Panel title={t("pub.podcast.title")}>
           <PodcastPanel
             projectId={selected.id}
             projectTitle={selected.title}

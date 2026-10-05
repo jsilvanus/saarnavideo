@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { errorMessage } from "@/components/api";
+import { useT } from "@/i18n/I18nProvider";
 
 export function ProjectTitle({ title, onSave }: { title: string; onSave: (title: string) => Promise<void> }) {
+  const t = useT();
   const [value, setValue] = useState(title);
   const [error, setError] = useState("");
   useEffect(() => setValue(title), [title]);
@@ -12,12 +14,12 @@ export function ProjectTitle({ title, onSave }: { title: string; onSave: (title:
       setError("");
       await onSave(next);
     } catch (e) {
-      setError(errorMessage(e, "Otsikkoa ei voitu tallentaa"));
+      setError(errorMessage(e, t("project.titleSaveFailed")));
     }
   };
   return (
     <label>
-      Otsikko
+      {t("project.title")}
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}

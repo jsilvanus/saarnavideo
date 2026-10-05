@@ -4,6 +4,7 @@ import type { Reframe } from "@/domain/reframe";
 import { type Publication } from "@/components/PublishPanel";
 import type { Section as SemanticSection } from "@/domain/sections";
 import type { Graphic } from "@/domain/graphics";
+import type { MessageKey } from "@/i18n/translate";
 
 export type Source = {
   id: string;
@@ -120,11 +121,11 @@ export type Project = {
   definition?: Definition;
 };
 export type Step = "quick" | "source" | "structure" | "publish";
-export const STEPS: Array<{ id: Step; title: string; sub: string }> = [
-  { id: "quick", title: "Pikajulkaisu", sub: "Lähde, tiedot, video ja julkaisu yhdellä sivulla" },
-  { id: "source", title: "Lähde", sub: "Tiedot, lähteet, litteroinnit, koko" },
-  { id: "structure", title: "Rakenne", sub: "Osiot, grafiikat, ääni, aikajana" },
-  { id: "publish", title: "Julkaisu", sub: "Video, tiedostot, kanavat, podcast" },
+export const STEPS: Array<{ id: Step; titleKey: MessageKey; subKey: MessageKey }> = [
+  { id: "quick", titleKey: "steps.quick", subKey: "steps.quick.sub" },
+  { id: "source", titleKey: "steps.source", subKey: "steps.source.sub" },
+  { id: "structure", titleKey: "steps.structure", subKey: "steps.structure.sub" },
+  { id: "publish", titleKey: "steps.publish", subKey: "steps.publish.sub" },
 ];
 export type DurationMismatch = {
   sourceId: string;

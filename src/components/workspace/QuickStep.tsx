@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "@/i18n/I18nProvider";
 import { useState } from "react";
 import FetchVariables from "@/components/FetchVariables";
 import PublishPanel from "@/components/PublishPanel";
@@ -8,7 +9,7 @@ import { formatTime, sourceLabel } from "@/components/format";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { ProjectTitle } from "./ProjectTitle";
-import { outputLabel } from "./helpers";
+import { jobStatusLabel, outputLabel } from "./helpers";
 import type { CaptionMode, Source } from "./types";
 
 const ACTIVE = ["QUEUED", "ACQUIRING_SOURCE", "PROCESSING", "RENDERING"];
@@ -46,6 +47,7 @@ export default function QuickStep() {
     durationNotice,
   } = useOpenWorkspace();
 
+  const t = useT();
   const [manualSeconds, setManualSeconds] = useState("");
   const definition = currentDefinition();
   const clips = definition.composition.items.filter((item) => item.type === "source-clip");
@@ -57,25 +59,25 @@ export default function QuickStep() {
   const video = selected.outputs?.find((o) => o.type === "VIDEO" && !o.preview);
   const failed = jobs.find((j) => j.status === "FAILED" && !j.preview);
   const wholeSource = () => {
-    if (firstSource && wholeSeconds) void addSegment(firstSource.id, "Koko tallenne", 0, Math.floor(wholeSeconds));
+    if (firstSource && wholeSeconds) void addSegment(firstSource.id, t("quick.wholeName"), 0, Math.floor(wholeSeconds));
   };
 
   return (
     <div className="quick-step">
-      <Panel title="1. Lähde" text="Lisää tallenne: YouTube-linkki tai tiedosto. YouTube-lähde noudetaan, kun video tehdään.">
+      <Panel title={t("quick.1.title")} text={t("quick.1.text")}>
         <div className="form-grid">
           <label>
-            YouTube-linkki
+            {t("src.youtubeLink")}
             <input value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} placeholder="https://youtube.com/watch?v=…" />
             <button onClick={() => void addYoutube()} disabled={busy || !youtubeUrl.trim()}>
-              Lisää YouTube-lähde
+              {t("src.addYoutube")}
             </button>
           </label>
           <label>
-            Tai videotiedosto
+            {t("quick.orFile")}
             <input type="file" accept="video/*" multiple onChange={(e) => setUploadFiles(Array.from(e.target.files ?? []))} />
             <button onClick={() => void addUploads()} disabled={busy || !uploadFiles.length}>
-              Lataa valitut
+              {t("src.uploadSelected")}
             </button>
           </label>
         </div>
@@ -85,86 +87,86 @@ export default function QuickStep() {
               <li key={s.id}>
                 {sourceLabel(s)}
                 {knownSeconds(s) !== null && <small className="muted"> · {formatTime(knownSeconds(s)!)}</small>}
-                {s.status === "PENDING" && <small className="muted"> · odottaa tiedostoa (Lähde-vaihe)</small>}
+                {s.status === "PENDING" && <small className="muted"> · {t("quick.pendingFile")}</small>}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="muted">Ei vielä lähteitä.</p>
+          <p className="muted">{t("src.none")}</p>
         )}
       </Panel>
 
-      <Panel title="2. Tiedot" text="Otsikko ja muuttujat, joita grafiikat käyttävät. Hae pyhäpäivä ja evankeliumi rajapinnasta tai kirjoita itse.">
+      <Panel title={t("quick.2.title")} text={t("quick.2.text")}>
         <ProjectTitle title={selected.title} onSave={saveTitle} />
         <FetchVariables projectId={selected.id} variables={definition.variables ?? []} onSave={saveVariables} />
         <VariablesEditor variables={definition.variables ?? []} graphics={definition.graphics} onSave={saveVariables} />
       </Panel>
 
-      <Panel title="3. Osiot" text="Mitä lähteestä otetaan mukaan.">
+      <Panel title={t("quick.3.title")} text={t("quick.3.text")}>
         {clips.length ? (
           <p>
-            {clips.length} {clips.length === 1 ? "osa" : "osaa"} koostuksessa.{" "}
+            {t("quick.clips", { count: clips.length })}{" "}
             <button className="link-button" onClick={() => setStep("structure")}>
-              Muokkaa osioita (Rakenne)
+              {t("quick.editSections")}
             </button>
           </p>
         ) : (
           <>
-            <p className="muted">Koostuksessa ei ole vielä osia.</p>
+            <p className="muted">{t("quick.noClips")}</p>
             <div className="button-row">
               <button disabled={busy || !wholeSeconds} onClick={wholeSource}>
-                Käytä koko tallennetta
+                {t("quick.useWhole")}
               </button>
-              <button onClick={() => setStep("structure")}>Valitse osiot (Rakenne)</button>
+              <button onClick={() => setStep("structure")}>{t("quick.chooseSections")}</button>
             </div>
             {firstSource && knownSeconds(firstSource) === null && (
               <label className="muted">
-                Tallenteen kesto sekunteina (kesto ei ole tiedossa)
-                <input inputMode="decimal" value={manualSeconds} onChange={(e) => setManualSeconds(e.target.value)} placeholder="esim. 2400" />
+                {t("quick.manualSeconds")}
+                <input inputMode="decimal" value={manualSeconds} onChange={(e) => setManualSeconds(e.target.value)} placeholder={t("quick.manualPlaceholder")} />
               </label>
             )}
-            {!firstSource && <small className="muted">Lisää ensin lähde.</small>}
+            {!firstSource && <small className="muted">{t("quick.addSourceFirst")}</small>}
           </>
         )}
       </Panel>
 
-      <Panel title="4. Tee video" text="Valinnainen tekstitys ja lopullinen video. Nopea esikatselu on 640 px leveä.">
+      <Panel title={t("quick.4.title")} text={t("quick.4.text")}>
         {durationNotice}
         <label className="muted">
-          Tekstitys{" "}
+          {t("captions.label")}{" "}
           <select value={captionMode} onChange={(e) => setCaptionMode(e.target.value as CaptionMode)}>
-            <option value="none">Ei tekstitystä</option>
-            <option value="soft">Valittava raita (sekä SRT/VTT-tiedostot)</option>
-            <option value="burn">Poltettu kuvaan</option>
-            <option value="both">Molemmat</option>
+            <option value="none">{t("captions.none")}</option>
+            <option value="soft">{t("captions.soft")}</option>
+            <option value="burn">{t("captions.burn")}</option>
+            <option value="both">{t("captions.both")}</option>
           </select>
         </label>
         <div className="button-row">
           <button disabled={previewBusy || busy || !clips.length} onClick={() => void previewRender()}>
-            {previewBusy ? "Esikatselu jonoon…" : "Nopea esikatselu"}
+            {previewBusy ? t("project.previewQueued") : t("quick.quickPreview")}
           </button>
           <button className="primary" disabled={busy || !clips.length} onClick={() => void generate()}>
-            Tee lopullinen video
+            {t("quick.finalVideo")}
           </button>
         </div>
         {activeJob && (
           <p className="job-row">
-            <strong>{activeJob.preview ? "Esikatselu" : "Video"} {activeJob.status}</strong> <span>{activeJob.progress}%</span>
+            <strong>{activeJob.preview ? t("quick.jobPreview") : t("quick.jobVideo")} {jobStatusLabel(t, activeJob.status)}</strong> <span>{activeJob.progress}%</span>
             <button className="stop-button" onClick={() => void stopJob(activeJob)}>
-              Pysäytä
+              {t("common.stop")}
             </button>
           </p>
         )}
-        {failed && !activeJob && <p className="error">Viimeisin työ epäonnistui{failed.errorMessage ? `: ${failed.errorMessage}` : "."}</p>}
+        {failed && !activeJob && <p className="error">{failed.errorMessage ? t("quick.lastFailedWith", { error: failed.errorMessage }) : t("quick.lastFailed")}</p>}
         {video && (
           <div className="downloads">
             <video controls preload="metadata" src={`/api/outputs/${video.id}`} />
-            <a href={`/api/outputs/${video.id}`}>{outputLabel(video)} ↓</a>
+            <a href={`/api/outputs/${video.id}`}>{outputLabel(video, t)} ↓</a>
           </div>
         )}
       </Panel>
 
-      <Panel title="5. Julkaise">
+      <Panel title={t("quick.5.title")}>
         <PublishPanel
           projectId={selected.id}
           publications={selected.publications ?? []}
@@ -173,7 +175,7 @@ export default function QuickStep() {
           onPoll={() => void refreshPublications(selected.id)}
         />
         <small className="muted">
-          Podcast, tekstitystyylit ja muut lisäasetukset ovat vaiheessa <button className="link-button" onClick={() => setStep("publish")}>Julkaisu</button>.
+          {t("quick.moreSettings")}<button className="link-button" onClick={() => setStep("publish")}>{t("steps.publish")}</button>.
         </small>
       </Panel>
     </div>

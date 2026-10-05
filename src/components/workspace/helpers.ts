@@ -1,21 +1,22 @@
 import { variableNames } from "@/domain/variables";
 import { findPreset, presetForSize } from "@/domain/output-presets";
 import type { Graphic } from "@/domain/graphics";
+import { MESSAGES, type MessageKey, type TFunction } from "@/i18n/translate";
 import type { Definition, Output } from "./types";
 
-export function outputLabel(o: Output) {
+export function outputLabel(o: Output, t: TFunction) {
   const kind =
     o.type === "VIDEO"
-      ? "Video"
+      ? t("output.video")
       : o.type === "AUDIO"
-        ? `Podcast (${o.mimeType === "audio/mp4" ? "M4A" : "MP3"})`
+        ? t("output.podcast", { format: o.mimeType === "audio/mp4" ? "M4A" : "MP3" })
         : o.type === "CAPTIONS_SRT"
-          ? "Captions (SRT)"
+          ? t("output.captionsSrt")
           : o.type === "CAPTIONS_VTT"
-            ? "Captions (VTT)"
+            ? t("output.captionsVtt")
             : o.type;
   const lang = o.type.startsWith("CAPTIONS_") && o.language && o.language !== "und" ? ` · ${o.language}` : "";
-  return `${o.preview ? "Preview " : ""}${kind}${lang}`;
+  return `${o.preview ? t("output.previewPrefix") : ""}${kind}${lang}`;
 }
 
 export function outputSizeLabel(template: Definition["template"]) {
@@ -27,4 +28,10 @@ export function outputSizeLabel(template: Definition["template"]) {
 
 export function graphicVariables(graphic: Graphic) {
   return [...new Set(graphic.layers.flatMap((layer) => variableNames(layer.text ?? "")))];
+}
+
+/** Localised name of a job status; an unknown status is shown as it is. */
+export function jobStatusLabel(t: TFunction, status: string): string {
+  const key = `jobStatus.${status}` as MessageKey;
+  return (MESSAGES.fi as Record<string, string>)[key] ? t(key) : status;
 }
