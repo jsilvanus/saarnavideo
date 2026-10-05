@@ -223,6 +223,22 @@ export class AuditorSttClient {
     return (await response.json()) as JobSubmitResponse;
   }
 
+  /**
+   * POST /v1/jobs with `source_url` — the service downloads the file itself (a presigned S3 URL, for example), so nothing is uploaded from here.
+   * The service accepts this only for hosts in its AUDITOR_STT_SOURCE_URL_HOSTS and answers after the download, hence the upload timeout.
+   */
+  async submitUrl(sourceUrl: string, options: SubmitJobOptions = {}): Promise<JobSubmitResponse> {
+    const fields = new URLSearchParams({ source_url: sourceUrl });
+    if (options.language !== undefined) fields.set("language", options.language);
+    if (options.chunkSeconds !== undefined) fields.set("chunk_seconds", String(options.chunkSeconds));
+    if (options.wordTimestamps !== undefined) fields.set("word_timestamps", String(options.wordTimestamps));
+    if (options.prompt !== undefined) fields.set("prompt", options.prompt);
+    if (options.clientRef !== undefined) fields.set("client_ref", options.clientRef);
+    const response = await this.request("/v1/jobs", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: fields.toString() }, this.uploadTimeoutMs);
+    if (response.status !== 202) throw new Error(`Auditor STT job submission failed (${response.status}): ${await safeText(response)}`);
+    return (await response.json()) as JobSubmitResponse;
+  }
+
   /** GET /v1/jobs/{id} */
   async getJobStatus(jobId: string): Promise<JobStatusResponse> {
     const response = await this.request(`/v1/jobs/${encodeURIComponent(jobId)}`, { method: "GET" }, this.requestTimeoutMs);

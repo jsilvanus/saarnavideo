@@ -65,6 +65,30 @@ describe("AuditorSttClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("submits a source_url as a form post without uploading anything", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("http://localhost:8090/v1/jobs");
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/x-www-form-urlencoded");
+      const form = new URLSearchParams(String(init?.body));
+      expect(form.get("source_url")).toBe("https://s3.example/b/k.wav?X-Amz-Signature=a%2Bb");
+      expect(form.get("language")).toBe("fi");
+      expect(form.get("chunk_seconds")).toBe("30");
+      return jsonResponse(202, { id: "abc123", status: "queued" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new AuditorSttClient({ baseUrl: "http://localhost:8090" });
+    const result = await client.submitUrl("https://s3.example/b/k.wav?X-Amz-Signature=a%2Bb", { language: "fi", chunkSeconds: 30 });
+    expect(result).toEqual({ id: "abc123", status: "queued" });
+  });
+
+  it("surfaces the service's refusal of a source_url", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(422, { detail: "source_url is not enabled (set AUDITOR_STT_SOURCE_URL_HOSTS)" })));
+    const client = new AuditorSttClient({ baseUrl: "http://localhost:8090" });
+    await expect(client.submitUrl("https://s3.example/k.wav")).rejects.toThrow(/422.*AUDITOR_STT_SOURCE_URL_HOSTS/);
+  });
+
   it("sends an Authorization header only when an API key is configured", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;
