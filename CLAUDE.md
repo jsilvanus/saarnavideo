@@ -30,7 +30,7 @@
 
 #### `/src/app` - Next.js Application Layer
 - **`layout.tsx`** - Root layout component
-- **`page.tsx`** - Main application page
+- **`page.tsx`** - Main application page: only wires `WorkspaceProvider`, `Sidebar`, `Workspace`, `Modals` and `WorkspaceStyles` together
 - **`globals.css`** - Global styles
 - **`/api`** - API route handlers
   - **`/projects`** - Project CRUD and orchestration
@@ -243,7 +243,7 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 - **Tests:** unit `reframe.test.ts`, `output-presets.test.ts`, `render-settings.test.ts`, `duration-report.test.ts`, `ffmpeg.test.ts`; `e2e/reframe.e2e.test.ts` (fixture `split.mp4`: left half red, right half green) checks the crop, fit, section/clip override and exact sizes by pixel colour and ffprobe.
 
 ### Project workspace UI (three steps)
-`src/app/page.tsx` groups the project into three steps (UI language Finnish; inner components such as SectionManager, TranscriptionEditor, CompositionEditor, OutputSettings, PublishPanel and VoiceoverPanel are still English):
+`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules) groups the project into three steps (UI language Finnish; inner components such as SectionManager, TranscriptionEditor, CompositionEditor, OutputSettings, PublishPanel and VoiceoverPanel are still English):
 - **Lähde:** sources (one or more), transcriptions, output size (OutputSettings) and project info: title plus **project variables**.
 - **Rakenne:** source sections (each root section has a source picker when the project has several sources, plus Reframe), graphics, voiceover audio, and the timeline: `TimelineView` (overview) above `CompositionEditor` (editing); composition sections are folded under "Koostuksen omat osiot".
 - **Julkaisu:** render (captions mode, preview, final), outputs, publishing and podcast.
