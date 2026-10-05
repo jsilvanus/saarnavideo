@@ -26,6 +26,7 @@ import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
+import { createTranscriptionStaging } from "@/worker/transcription-staging";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -51,6 +52,8 @@ function watchCancel(jobId: string, onCancel: () => void): () => boolean {
 const remoteExecutor = createRemoteExecutorFromEnv(process.env, message => console.log(`[remote-ffmpeg] ${message}`));
 /** DOWNLOAD_EXECUTOR=fffleet runs yt-dlp on an fffleet worker (job type "download") instead of here. */
 const remoteDownloader = createRemoteDownloaderFromEnv(process.env, message => console.log(`[remote-download] ${message}`));
+/** AUDITOR_STT_FETCH=s3 stages the audio in S3 and gives the transcription service a presigned URL instead of uploading the file. */
+const transcriptionStaging = createTranscriptionStaging(process.env);
 const progressTimers = new Map<string, NodeJS.Timeout>();
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -291,12 +294,13 @@ function serializeTranscribeParameters(params: TranscribeParameters): Record<str
 
 async function cleanupTempClip(tempClipPath: string | undefined) { if (!tempClipPath) return; await rm(tempClipPath, { force: true }).catch(() => undefined); }
 
-async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds: number, rangeEndSeconds: number): Promise<string> {
+async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds?: number, rangeEndSeconds?: number): Promise<string> {
   const tmpDir = path.join(MEDIA_ROOT, "tmp");
   await mkdir(tmpDir, { recursive: true });
   const tempClipPath = path.join(tmpDir, `${jobId}.wav`);
   // -ss/-to placed after -i so the cut is sample-accurate rather than keyframe-snapped.
-  await execFileAsync("ffmpeg", ["-y", "-i", sourceStoragePath, "-ss", String(rangeStartSeconds), "-to", String(rangeEndSeconds), "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", tempClipPath]);
+  const range = rangeStartSeconds !== undefined && rangeEndSeconds !== undefined ? ["-ss", String(rangeStartSeconds), "-to", String(rangeEndSeconds)] : [];
+  await execFileAsync("ffmpeg", ["-y", "-i", sourceStoragePath, ...range, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", tempClipPath]);
   return tempClipPath;
 }
 
@@ -328,15 +332,22 @@ async function processTranscription(job: MediaJobRow) {
     const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
     const isPartial = isPartialRange(params.rangeStartSeconds, params.rangeEndSeconds, durationSeconds);
     let filePath = source.storagePath;
-    if (isPartial) {
-      await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: "Extracting requested range", progress: 0 }, true);
-      const tempClipPath = await extractTranscriptionClip(job.id, source.storagePath, params.rangeStartSeconds, params.rangeEndSeconds);
+    // With S3 staging the whole source is reduced to 16 kHz mono audio first, so far less than the video goes to the bucket.
+    if (isPartial || transcriptionStaging) {
+      await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: isPartial ? "Extracting requested range" : "Extracting audio", progress: 0 }, true);
+      const tempClipPath = await extractTranscriptionClip(job.id, source.storagePath, isPartial ? params.rangeStartSeconds : undefined, isPartial ? params.rangeEndSeconds : undefined);
       params = { ...params, tempClipPath };
       await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
       filePath = tempClipPath;
     }
     await updateProgress(job.id, { phase: "SUBMITTING", message: "Submitting to transcription service", progress: 0 }, true);
-    const submission = await client.submitJob(filePath, { language: params.language });
+    let submission;
+    if (transcriptionStaging) {
+      const staged = await transcriptionStaging.stage(filePath, job.id);
+      try { submission = await client.submitUrl(staged.url, { language: params.language }); } finally { await staged.release(); }
+    } else {
+      submission = await client.submitJob(filePath, { language: params.language });
+    }
     params = { ...params, auditorJobId: submission.id };
     // Persisted before the first poll so a worker restart can resume watching this job (see "Resumability").
     await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
