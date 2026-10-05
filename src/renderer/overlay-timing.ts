@@ -1,5 +1,5 @@
 import type { ProjectDefinition, TimelineItem } from "@/domain/project";
-import { layoutTimeline } from "@/renderer/caption-timeline";
+import { layoutTimeline } from "@/domain/timeline";
 
 type Range = { startSeconds: number; endSeconds: number };
 type SectionLike = { id: string; scope?: string; sourceId?: string; startSeconds?: number; endSeconds?: number };

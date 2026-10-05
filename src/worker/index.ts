@@ -3,6 +3,7 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
+import { timelineDuration } from "@/domain/timeline";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
 import type { ProjectDefinition } from "@/domain/project";
 import { resolveSourcePaths } from "@/worker/source-resolution";
@@ -155,7 +156,7 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     plan.args[videoMapIndex] = "[preview]";
     plan.args.splice(plan.args.length - 1, 0, "-preset", "ultrafast", "-crf", "30");
   }
-  const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const totalMs = Math.max(1, Math.round((definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds) * 1000));
+  const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const outputSeconds = definition.composition.items.length ? timelineDuration(definition.composition.items) : definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds; const totalMs = Math.max(1, Math.round(outputSeconds * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
   const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };
   try { await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase, message, from: 0, to: 99, reportSpeed: true }, remote); }

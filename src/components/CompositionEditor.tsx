@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Section as SemanticSection } from "@/domain/sections";
 import type { Graphic } from "@/domain/graphics";
 import { isBaseItem, type TimelineItem } from "@/domain/project";
-import { layoutTimeline } from "@/renderer/caption-timeline";
+import { layoutTimeline } from "@/domain/timeline";
 import { formatTime, sourceLabel } from "./format";
 import ReframeEditor from "./ReframeEditor";
 import type { Reframe } from "@/domain/reframe";

@@ -4,16 +4,6 @@ Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (a
 
 ## Structural
 
-### 1. One timeline layout for video, podcast and captions
-- **Where:** `src/renderer/ffmpeg.ts` (`buildCompositionRenderPlan`, the base-item transition loop), `src/renderer/podcast.ts` (body loop with `startsBySlot`, `podcastTime`), `src/renderer/caption-timeline.ts` (`layoutTimeline`, whose doc comment says it must mirror the renderer).
-- **Cost:** the cut/fade/crossfade offset math exists three times. A change to transitions has to be made in all three, or captions, ducking and podcast mixes drift away from the picture. No test ties the copies together.
-- **Fix:**
-  - Move `layoutTimeline` to a neutral module (for example `src/domain/timeline.ts`) and make it the only source of offsets, returning `{ item, outputStart, duration, transition, overlap }`.
-  - Build the xfade/acrossfade/concat chains in both render plans from those slots.
-  - The podcast runs `layoutTimeline` on the items minus standalone slates, and maps a mix's `atSeconds` through the two layouts instead of the hand-written `startsBySlot`.
-  - The worker's progress `totalMs` in `src/worker/index.ts`, which uses `sourceEndSeconds - sourceStartSeconds`, and `compositionDurationSeconds` in `src/app/page.tsx` should use `timelineDuration` (currently used only by its test).
-- **Size:** medium, about 100 lines. Unit tests and the caption-alignment and ducking e2e tests cover it.
-
 ### 2. One rule for which assets a render may use
 - **Where:** `src/worker/index.ts` (`runFfmpegJob` asset map, `runPodcastJob`), `src/worker/podcast.ts` (`referencedAudioAssetIds`), `src/domain/asset-usage.ts` (`findAssetUsage`/`refersToAsset`).
 - **Cost:** images come only from assets linked to the project, keyed three ways, and an unlinked one is silently skipped. Audio comes from the whole library, by id. The reference forms and places are listed in three spots, so each new reference site needs a new special case in the worker.
@@ -41,11 +31,6 @@ Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (a
   - Better: render the body once to a temporary WAV or FLAC, then run the loudnorm measure and encode passes from that file.
 
 ## Consistency
-
-### 7. Leftovers from the retention removal
-- **Where:** `src/lib/prisma.ts` (the `$extends` block that clears `expiresAt` on write and strips it from filters).
-- **Cost:** nothing writes or filters `expiresAt` any more (the duplicate route no longer sets it), so the extension only hides the column.
-- **Fix:** remove the `$extends` block, and optionally null the column once and then drop it from both schemas.
 
 ### 8. Repeated e2e helpers
 - **Where:** `e2e/captions-burned.e2e.test.ts` (its own `generate`, which also downloads the video), `e2e/voiceover-podcast.e2e.test.ts` (`ffprobeJson`, which overlaps `probe()` in `e2e/helpers.ts` but reads more fields).

@@ -5,7 +5,8 @@ import { parseLayers } from "@/components/GraphicsEditor";
 import { findAssetUsage } from "@/domain/asset-usage";
 import { errorMessage, jsonInit, requestJson } from "@/components/api";
 import { sourceLabel } from "@/components/format";
-import { baseItemDuration, isBaseItem, type ProjectDefinition, type TimelineItem } from "@/domain/project";
+import type { ProjectDefinition, TimelineItem } from "@/domain/project";
+import { timelineDuration } from "@/domain/timeline";
 import { selectionFromValue } from "@/components/TemplatePicker";
 import { addSourceSection } from "@/domain/templates";
 import { type ProjectVariable } from "@/domain/variables";
@@ -366,9 +367,7 @@ export function useWorkspaceState() {
   }
   const durationNotice = selected ? <DurationNotice definition={currentDefinition()} assets={selected.assets} /> : null;
   function compositionDurationSeconds() {
-    return (currentDefinition().composition.items as TimelineItem[])
-      .filter(isBaseItem)
-      .reduce((total, item) => total + Math.max(0, baseItemDuration(item)), 0);
+    return timelineDuration(currentDefinition().composition.items as TimelineItem[]);
   }
   async function refreshAssets() {
     if (!selected) return;

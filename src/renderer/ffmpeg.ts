@@ -1,6 +1,7 @@
 import { DESIGN_CANVAS } from "@/domain/output-presets";
 import { resolveReframe, type Reframe } from "@/domain/reframe";
-import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem, type Transition } from "@/domain/project";
+import { layoutTimeline } from "@/domain/timeline";
+import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem } from "@/domain/project";
 
 export type CaptionTrackInput = { path: string; language: string };
 /** Burned-in captions: an ASS file rendered onto the picture with libass after overlays/slates (and before any preview downscale). */
@@ -30,10 +31,6 @@ function centeredText(input: string, output: string, text: string, color: string
   return `[${input}]drawtext=text='${escapeFilterText(text)}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=${y}${extra}[${output}]`;
 }
 
-export function transitionDuration(transition: Transition | undefined, duration: number): number {
-  if (!transition || transition.type === "cut" || transition.durationSeconds <= 0) return 0;
-  return Math.min(transition.durationSeconds, duration / 2);
-}
 const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
 
 /**
@@ -247,29 +244,27 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     filters.push(item.type === "audio-clip" ? audioClipFilter(audio, item, a) : `[${audio}:a]atrim=duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${a}]`);
   });
 
-  let currentVideo = "vn0", currentAudio = "a0", currentDuration = durations[0];
+  // Offsets come from the shared layout (src/domain/timeline.ts), so video, podcast and captions agree.
+  const slots = layoutTimeline(items);
+  let currentVideo = "vn0", currentAudio = "a0";
   for (let index = 1; index < baseItems.length; index++) {
-    const duration = durations[index];
-    const transition = baseItems[index].transitionIn;
-    const d = transitionDuration(transition, Math.min(currentDuration, duration));
+    const { outputStart, transition: d } = slots[index];
+    const type = baseItems[index].transitionIn?.type;
     const inVideo = `vn${index}`, inAudio = `a${index}`;
     const nextVideo = `vc${index}`, nextAudio = `ac${index}`;
-    if (transition?.type === "crossfade" && d > 0) {
-      filters.push(`[${currentVideo}][${inVideo}]xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(currentDuration - d)}[${nextVideo}]`);
+    if (type === "crossfade" && d > 0) {
+      filters.push(`[${currentVideo}][${inVideo}]xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(outputStart)}[${nextVideo}]`);
       filters.push(`[${currentAudio}][${inAudio}]acrossfade=d=${formatSeconds(d)}:curve1=tri:curve2=tri[${nextAudio}]`);
-      currentDuration += duration - d;
-    } else if (transition?.type === "fade" && d > 0) {
+    } else if (type === "fade" && d > 0) {
       const outV = `vfout${index}`, inV = `vfin${index}`, outA = `afout${index}`, inA = `afin${index}`;
-      const outStart = formatSeconds(currentDuration - d);
+      const outStart = formatSeconds(outputStart - d);
       filters.push(`[${currentVideo}]fade=t=out:st=${outStart}:d=${formatSeconds(d)}[${outV}]`);
       filters.push(`[${inVideo}]fade=t=in:st=0:d=${formatSeconds(d)}[${inV}]`);
       filters.push(`[${currentAudio}]afade=t=out:st=${outStart}:d=${formatSeconds(d)}[${outA}]`);
       filters.push(`[${inAudio}]afade=t=in:st=0:d=${formatSeconds(d)}[${inA}]`);
       filters.push(`[${outV}][${outA}][${inV}][${inA}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
-      currentDuration += duration;
     } else {
       filters.push(`[${currentVideo}][${currentAudio}][${inVideo}][${inAudio}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
-      currentDuration += duration;
     }
     currentVideo = nextVideo;
     currentAudio = nextAudio;

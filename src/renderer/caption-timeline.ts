@@ -1,43 +1,10 @@
-import { baseItemDuration, isBaseItem, type BaseItem, type TimelineItem } from "@/domain/project";
-import { transitionDuration } from "@/renderer/ffmpeg";
+import type { TimelineItem } from "@/domain/project";
+import { layoutTimeline } from "@/domain/timeline";
 import type { CaptionSegment } from "@/lib/captions";
 
 
 /** Cues shorter than this after clipping are noise from float rounding at clip edges and are dropped. */
 const MIN_CUE_SECONDS = 0.001;
-
-/** One entry of the output timeline, in the order the renderer concatenates them. */
-export type TimelineSlot = { item: BaseItem; outputStart: number; duration: number };
-
-/**
- * Lays the base items (source clips, standalone slates and standalone audio
- * clips; overlays, overlay slates and mixed audio clips take no timeline time) out on the output timeline exactly like
- * buildCompositionRenderPlan: a crossfade pulls the next item back by the
- * transition length, every other transition (cut, fade) simply concatenates.
- */
-export function layoutTimeline(items: TimelineItem[]): TimelineSlot[] {
-  const base = items.filter(isBaseItem);
-  const slots: TimelineSlot[] = [];
-  let total = 0;
-  base.forEach((item, index) => {
-    const duration = baseItemDuration(item);
-    if (index === 0) {
-      slots.push({ item, outputStart: 0, duration });
-      total = duration;
-      return;
-    }
-    const d = transitionDuration(item.transitionIn, Math.min(total, duration));
-    const overlap = item.transitionIn?.type === "crossfade" ? d : 0;
-    slots.push({ item, outputStart: total - overlap, duration });
-    total += duration - overlap;
-  });
-  return slots;
-}
-
-/** Total output length of the composition in seconds. */
-export function timelineDuration(items: TimelineItem[]): number {
-  return layoutTimeline(items).reduce((end, slot) => Math.max(end, slot.outputStart + slot.duration), 0);
-}
 
 /**
  * Maps each source's active transcript segments onto the rendered video's

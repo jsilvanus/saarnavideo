@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Graphic } from "@/domain/graphics";
 import type { Section } from "@/domain/sections";
 import type { TimelineItem } from "@/domain/project";
-import { layoutTimeline } from "@/renderer/caption-timeline";
+import { layoutTimeline } from "@/domain/timeline";
 import { overlayOutputRange } from "@/renderer/overlay-timing";
 import { formatTime, sourceLabel } from "./format";
 

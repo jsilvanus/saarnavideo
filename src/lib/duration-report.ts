@@ -1,6 +1,6 @@
 import { findPreset, presetForSize } from "@/domain/output-presets";
 import type { ProjectDefinition } from "@/domain/project";
-import { layoutTimeline, timelineDuration } from "@/renderer/caption-timeline";
+import { layoutTimeline, timelineDuration } from "@/domain/timeline";
 
 export type DurationWarning = { code: "over-platform-limit" | "off-target" | "podcast-differs" | "empty"; level: "warning" | "info"; message: string };
 export type DurationReport = {
