@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "@/i18n/I18nProvider";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { parseLayers } from "@/components/GraphicsEditor";
 import { findAssetUsage } from "@/domain/asset-usage";
@@ -32,6 +33,7 @@ import {
 } from "./types";
 
 export function useWorkspaceState() {
+  const t = useT();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -88,7 +90,7 @@ export function useWorkspaceState() {
       const data = await requestJson<{ publications: Publication[] }>(
         `/api/projects/${id}/publications`,
         { cache: "no-store" },
-        "Could not load publications",
+        t("ws.loadPublicationsFailed"),
       );
       setSelected((current) => (current && current.id === id ? { ...current, publications: data.publications } : current));
     } catch {
@@ -98,7 +100,7 @@ export function useWorkspaceState() {
   async function openProject(id: string) {
     const r = await fetch(`/api/projects/${id}`, { cache: "no-store" });
     if (!r.ok) {
-      setError("Could not load project");
+      setError(t("ws.loadProjectFailed"));
       return;
     }
     setSelected((await r.json()) as Project);
@@ -114,32 +116,32 @@ export function useWorkspaceState() {
   }, []);
   async function createProject(e: FormEvent) {
     e.preventDefault();
-    await withBusy("Project creation failed", async () => {
+    await withBusy(t("ws.createFailed"), async () => {
       setError("");
       const data = await requestJson<{ id: string }>(
         "/api/projects",
         jsonInit("POST", { title, ...selectionFromValue(templateValue) }),
-        "Project creation failed",
+        t("ws.createFailed"),
       );
       setCreating(false);
       setTitle("");
       await refreshProjects();
       await openProject(data.id);
       setStep("quick");
-      setMessage("Project created.");
+      setMessage(t("ws.created"));
     });
   }
   async function duplicateProject(project: Project) {
     setMenuId(null);
-    await withBusy("Could not duplicate project", async () => {
+    await withBusy(t("ws.duplicateFailed"), async () => {
       const data = await requestJson<{ id?: string; project?: { id: string } }>(
         `/api/projects/${project.id}/duplicate`,
         { method: "POST" },
-        "Could not duplicate project",
+        t("ws.duplicateFailed"),
       );
       await refreshProjects();
       await openProject((data.id ?? data.project?.id)!);
-      setMessage("Project duplicated.");
+      setMessage(t("ws.duplicated"));
     });
   }
   async function deleteProject() {
@@ -147,10 +149,10 @@ export function useWorkspaceState() {
     const p = confirmDelete;
     setConfirmDelete(null);
     setMenuId(null);
-    await withBusy("Could not delete project", async () => {
-      await requestJson(`/api/projects/${p.id}`, { method: "DELETE" }, "Could not delete project");
+    await withBusy(t("ws.deleteFailed"), async () => {
+      await requestJson(`/api/projects/${p.id}`, { method: "DELETE" }, t("ws.deleteFailed"));
       await refreshProjects();
-      setMessage("Project deleted.");
+      setMessage(t("ws.deleted"));
     });
   }
   async function getVideoDurationMs(file: File) {
@@ -179,41 +181,41 @@ export function useWorkspaceState() {
   }
   async function addUploads() {
     if (!selected || !uploadFiles.length) return;
-    await withBusy("Upload failed", async () => {
+    await withBusy(t("ws.uploadFailed"), async () => {
       for (const file of uploadFiles)
-        await requestJson(`/api/projects/${selected.id}/source`, { method: "POST", body: await sourceUploadForm(file) }, "Upload failed");
+        await requestJson(`/api/projects/${selected.id}/source`, { method: "POST", body: await sourceUploadForm(file) }, t("ws.uploadFailed"));
       setUploadFiles([]);
       await openProject(selected.id);
-      setMessage("Source(s) uploaded.");
+      setMessage(t("ws.sourcesUploaded"));
     });
   }
   async function addDeferredUploads() {
     if (!selected || !uploadFiles.length) return;
-    await withBusy("Could not add local source", async () => {
+    await withBusy(t("ws.addLocalFailed"), async () => {
       for (const file of uploadFiles) {
         const data = await requestJson<{ id: string }>(
           `/api/projects/${selected.id}/source`,
           jsonInit("POST", { localFileName: file.name }),
-          "Could not add local source",
+          t("ws.addLocalFailed"),
         );
         setPendingFiles((p) => ({ ...p, [data.id]: file }));
       }
       setUploadFiles([]);
       await openProject(selected.id);
-      setMessage("Pending local source added.");
+      setMessage(t("ws.pendingAdded"));
     });
   }
   async function uploadPendingSource(source: Source) {
     if (!selected) return false;
     const file = pendingFiles[source.id];
     if (!file) {
-      setError(`Choose the local file for “${source.originalName || source.id}” first.`);
+      setError(t("ws.chooseLocalFile", { name: source.originalName || source.id }));
       return false;
     }
     const r = await fetch(`/api/projects/${selected.id}/source/${source.id}`, { method: "PUT", body: await sourceUploadForm(file) });
     const data = await r.json();
     if (!r.ok) {
-      setError(data.error ?? "Upload failed");
+      setError(data.error ?? t("ws.uploadFailed"));
       return false;
     }
     setPendingFiles((p) => {
@@ -235,11 +237,11 @@ export function useWorkspaceState() {
   }
   async function addYoutube() {
     if (!selected || !youtubeUrl.trim()) return;
-    await withBusy("Could not add YouTube source", async () => {
-      await requestJson(`/api/projects/${selected.id}/source`, jsonInit("POST", { youtubeUrl }), "Could not add YouTube source");
+    await withBusy(t("ws.addYoutubeFailed"), async () => {
+      await requestJson(`/api/projects/${selected.id}/source`, jsonInit("POST", { youtubeUrl }), t("ws.addYoutubeFailed"));
       setYoutubeUrl("");
       await openProject(selected.id);
-      setMessage("YouTube source added.");
+      setMessage(t("ws.youtubeAdded"));
     });
   }
   function currentDefinition(): Definition {
@@ -266,25 +268,25 @@ export function useWorkspaceState() {
     const updated = await requestJson<Partial<Project>>(
       `/api/projects/${selected.id}`,
       jsonInit("PATCH", { definition }),
-      "Could not save project",
+      t("ws.saveFailed"),
     );
     setSelected((p) => (p ? { ...p, ...updated, definition: updated.definition ?? definition } : p));
   }
   async function addSegment(sourceId: string, label: string, start: number, end: number) {
     if (!selected || !(end > start)) {
-      setError("End must be greater than start.");
+      setError(t("ws.endAfterStart"));
       return;
     }
     // The template decides where the clip goes (before its ending slate) and whether the section gets an overlay.
     const next = addSourceSection(currentDefinition() as unknown as ProjectDefinition, {
       id: crypto.randomUUID(),
-      label: label || "Section",
+      label: label || t("ws.sectionDefault"),
       sourceId,
       startSeconds: start,
       endSeconds: end,
     });
     await saveDefinition(next as unknown as Definition);
-    setMessage("Section saved.");
+    setMessage(t("ws.sectionSaved"));
   }
   async function removeSegment(id: string) {
     const def = currentDefinition(),
@@ -314,14 +316,14 @@ export function useWorkspaceState() {
   }
   async function saveVariables(variables: ProjectVariable[]) {
     await saveDefinition({ ...currentDefinition(), variables });
-    setMessage("Muuttujat tallennettu.");
+    setMessage(t("ws.variablesSaved"));
   }
   async function saveTitle(title: string) {
     if (!selected) return;
     const updated = await requestJson<Partial<Project>>(
       `/api/projects/${selected.id}`,
       jsonInit("PATCH", { title }),
-      "Otsikkoa ei voitu tallentaa",
+      t("project.titleSaveFailed"),
     );
     setSelected((p) => (p ? { ...p, title: updated.title ?? title } : p));
     setProjects((list) => list.map((p) => (p.id === selected.id ? { ...p, title: updated.title ?? title } : p)));
@@ -346,14 +348,14 @@ export function useWorkspaceState() {
       semanticSegments: def.semanticSegments.map((x) => (ids.has(x.id) ? { ...x, sourceId } : x)),
       composition: { ...def.composition, items: def.composition.items.map((i) => (cutFrom(i) ? { ...i, sourceId } : i)) },
     });
-    setMessage(`Osio “${section.label}” käyttää nyt lähdettä ${sourceNames[sourceId] ?? sourceId}.`);
+    setMessage(t("ws.sectionSourceChanged", { label: section.label, source: sourceNames[sourceId] ?? sourceId }));
   }
   async function saveOutput(patch: Record<string, unknown>) {
     const def = currentDefinition(),
       next = { ...(def.template ?? currentDefinition().template!), ...patch } as Record<string, unknown>;
     for (const k of Object.keys(patch)) if (patch[k] === undefined) delete next[k];
     await saveDefinition({ ...def, template: next as Definition["template"] });
-    setMessage("Tulosteen asetukset tallennettu.");
+    setMessage(t("ws.outputSaved"));
   }
   async function saveSectionReframe(id: string, reframe: Reframe | undefined) {
     const def = currentDefinition();
@@ -365,7 +367,7 @@ export function useWorkspaceState() {
         return reframe ? { ...rest, reframe } : rest;
       }),
     });
-    setMessage("Rajaus tallennettu.");
+    setMessage(t("ws.reframeSaved"));
   }
   const durationNotice = selected ? <DurationNotice definition={currentDefinition()} assets={selected.assets} /> : null;
   function compositionDurationSeconds() {
@@ -385,22 +387,22 @@ export function useWorkspaceState() {
     if (!selected || !removeAsset) return;
     const { asset } = removeAsset;
     setRemoveAsset(null);
-    await withBusy("Could not remove the asset from the project", async () => {
+    await withBusy(t("ws.removeAssetFailed"), async () => {
       await requestJson(
         `/api/projects/${selected.id}/assets/${asset.id}?force=1`,
         { method: "DELETE" },
-        "Could not remove the asset from the project",
+        t("ws.removeAssetFailed"),
       );
       await refreshAssets();
-      setMessage(`“${asset.assetKey}” removed from this project. It is still in the library.`);
+      setMessage(t("ws.assetRemoved", { name: asset.assetKey }));
     });
   }
   async function uploadAsset() {
     if (!selected || !assetFile || !assetKey.trim()) {
-      setError("Choose an image and give it an asset key.");
+      setError(t("ws.chooseImage"));
       return;
     }
-    await withBusy("Asset upload failed", async () => {
+    await withBusy(t("ws.assetUploadFailed"), async () => {
       const form = new FormData();
       form.set("file", assetFile);
       form.set("assetKey", assetKey.trim());
@@ -408,15 +410,15 @@ export function useWorkspaceState() {
       const asset = await requestJson<{ assetKey: string; reused?: boolean; requestedKey?: string }>(
         `/api/projects/${selected.id}/assets`,
         { method: "POST", body: form },
-        "Asset upload failed",
+        t("ws.assetUploadFailed"),
       );
       setAssetFile(null);
       setAssetKey("");
       await openProject(selected.id);
       setMessage(
         asset.requestedKey
-          ? `Sama kuva oli jo kirjastossa nimellä "${asset.assetKey}". Käytä tätä nimeä; "${asset.requestedKey}" ei ole käytössä.`
-          : "Graphic asset uploaded.",
+          ? t("ws.assetReused", { name: asset.assetKey, requested: asset.requestedKey })
+          : t("ws.assetUploaded"),
       );
     });
   }
@@ -425,7 +427,7 @@ export function useWorkspaceState() {
     const def = currentDefinition();
     const graphic: Graphic = {
       id: crypto.randomUUID(),
-      name: `Graphic ${(def.graphics?.length ?? 0) + 1}`,
+      name: t("ws.graphicName", { n: (def.graphics?.length ?? 0) + 1 }),
       width: 1920,
       height: 1080,
       backgroundColor: "transparent",
@@ -445,7 +447,7 @@ export function useWorkspaceState() {
     };
     await saveDefinition({ ...def, graphics: [...(def.graphics ?? []), graphic] });
     setSelectedGraphicId(graphic.id);
-    setMessage("Graphic created.");
+    setMessage(t("ws.graphicCreated"));
   }
   const captionStyles = (selected?.definition?.graphics ?? []).filter(isCaptionStyleGraphic);
   function captionRequest(): CaptionRequest {
@@ -459,7 +461,7 @@ export function useWorkspaceState() {
     const def = currentDefinition();
     const graphic = createCaptionGraphic(
       crypto.randomUUID(),
-      `Caption style ${(def.graphics ?? []).filter(isCaptionStyleGraphic).length + 1}`,
+      t("ws.captionStyleName", { n: (def.graphics ?? []).filter(isCaptionStyleGraphic).length + 1 }),
       def.template?.width ?? 1920,
       def.template?.height ?? 1080,
     );
@@ -467,7 +469,7 @@ export function useWorkspaceState() {
     setStep("structure");
     setSelectedGraphicId(graphic.id);
     setCaptionStyleId(graphic.id);
-    setMessage("Caption style created. Move and style the caption box in the editor; it is used for burned-in captions.");
+    setMessage(t("ws.captionStyleCreated"));
   }
   async function duplicateGraphic(id: string) {
     const def = currentDefinition(),
@@ -476,12 +478,12 @@ export function useWorkspaceState() {
     const copy: Graphic = {
       ...source,
       id: crypto.randomUUID(),
-      name: `${source.name} copy`,
+      name: t("ws.graphicCopy", { name: source.name }),
       layers: source.layers.map((l) => ({ ...l, id: `${l.type}-${crypto.randomUUID()}` })),
     };
     await saveDefinition({ ...def, graphics: [...(def.graphics ?? []), copy] });
     setSelectedGraphicId(copy.id);
-    setMessage("Graphic duplicated.");
+    setMessage(t("ws.graphicDuplicated"));
   }
   async function updateGraphic(id: string, item: Item) {
     const def = currentDefinition();
@@ -493,7 +495,7 @@ export function useWorkspaceState() {
   async function deleteGraphic(id: string) {
     const def = currentDefinition();
     if ((def.composition.items ?? []).some((i) => i.graphicId === id)) {
-      setError("This graphic is used in the composition. Remove its uses there first.");
+      setError(t("ws.graphicInUse"));
       return;
     }
     await saveDefinition({ ...def, graphics: (def.graphics ?? []).filter((g) => g.id !== id) });
@@ -503,11 +505,11 @@ export function useWorkspaceState() {
   async function stopJob(job: Job) {
     if (!selected) return;
     try {
-      await requestJson(`/api/projects/${selected.id}/jobs/${job.id}/cancel`, { method: "POST" }, "Could not stop generation");
-      setMessage("Generation stop requested.");
+      await requestJson(`/api/projects/${selected.id}/jobs/${job.id}/cancel`, { method: "POST" }, t("ws.stopFailed"));
+      setMessage(t("ws.stopRequested"));
       await openProject(selected.id);
     } catch (e) {
-      setError(errorMessage(e, "Could not stop generation"));
+      setError(errorMessage(e, t("ws.stopFailed")));
     }
   }
   async function uploadPendingSources() {
@@ -544,16 +546,16 @@ export function useWorkspaceState() {
   }
   async function generate() {
     if (!selected) return;
-    await withBusy("Generation failed", async () => {
-      const data = await queueGeneration(false, "Could not queue generation", captionRequest());
+    await withBusy(t("ws.generationFailed"), async () => {
+      const data = await queueGeneration(false, t("ws.queueFailed"), captionRequest());
       if (!data) return;
       setAcceptedClamp(false);
       setStep((current) => (current === "quick" ? current : "publish"));
       setMessage(
         withWarnings(
           data.clamped
-            ? "Generation queued; affected sections will end at EOF as explicitly requested."
-            : `Generation queued (${data.id}).`,
+            ? t("ws.generationClamped")
+            : t("ws.generationQueued", { id: data.id }),
           data,
         ),
       );
@@ -564,12 +566,12 @@ export function useWorkspaceState() {
     if (!selected) return;
     setError("");
     await withBusy(
-      "Preview failed",
+      t("ws.previewFailed"),
       async () => {
-        const data = await queueGeneration(true, "Could not queue preview", captionRequest());
+        const data = await queueGeneration(true, t("ws.previewQueueFailed"), captionRequest());
         if (!data) return;
         setStep((current) => (current === "quick" ? current : "publish"));
-        setMessage(withWarnings(`Preview render queued (${data.id}).`, data));
+        setMessage(withWarnings(t("ws.previewQueuedMsg", { id: data.id }), data));
         await openProject(selected.id);
       },
       setPreviewBusy,

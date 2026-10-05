@@ -18,11 +18,11 @@ export function formatTargetLength(seconds: number | undefined): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Reads a width/height input; returns a message when it is not an even number in range. */
-export function checkDimension(text: string, min: number, max: number): { value?: number; error?: string } {
+/** Reads a width/height input; returns an error code when it is not an even whole number in range. */
+export function checkDimension(text: string, min: number, max: number): { value?: number; error?: "whole" | "range" | "even" } {
   const value = Number(text);
-  if (!text.trim() || !Number.isInteger(value)) return { error: "Enter a whole number" };
-  if (value < min || value > max) return { error: `Use ${min}-${max}` };
-  if (value % 2 !== 0) return { error: "Use an even number" };
+  if (!text.trim() || !Number.isInteger(value)) return { error: "whole" };
+  if (value < min || value > max) return { error: "range" };
+  if (value % 2 !== 0) return { error: "even" };
   return { value };
 }
