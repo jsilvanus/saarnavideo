@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { formatTime } from "./format";
 
 type PlayableSource = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; youtubeVideoId?: string | null };
@@ -79,12 +80,13 @@ export function SourcePlayer({ source, player, localFile, remoteSrc, onDuration,
   source: PlayableSource; player: SourcePlayerState; localFile?: File; remoteSrc: string;
   onDuration: (seconds: number) => void; children?: ReactNode;
 }) {
+  const t = useT();
   const { current, setCurrent, seek, videoRef, ytHostRef, localUrl } = player;
   return <>
     <div className="picker-player">
       {source.type === "YOUTUBE" && source.youtubeVideoId ? <div ref={ytHostRef} />
         : source.status === "PENDING" && localFile ? <video ref={videoRef} src={localUrl ?? undefined} controls onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} />
-        : source.status === "PENDING" ? <div className="muted">Choose the local file in Sources to preview it.</div>
+        : source.status === "PENDING" ? <div className="muted">{t("player.chooseLocal")}</div>
         : <video ref={videoRef} src={remoteSrc} controls preload="metadata" onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} onLoadedMetadata={e => { if (e.currentTarget.duration) onDuration(e.currentTarget.duration); }} />}
     </div>
     <div className="picker-time">
