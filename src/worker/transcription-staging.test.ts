@@ -31,4 +31,20 @@ describe("createTranscriptionStaging", () => {
     await release();
     expect(s3.deleteObject).toHaveBeenCalledWith("media", key);
   });
+
+  it("s3-source stages the original, reports its key and deletes by key", async () => {
+    const s3 = { putFile: vi.fn(async () => 123), deleteObject: vi.fn(async () => undefined) };
+    const staging = createTranscriptionStaging({ AUDITOR_STT_FETCH: "s3-source", FFFLEET_S3_BUCKET: "media" }, { s3, config })!;
+    expect(staging.mode).toBe("source");
+    const { key } = await staging.stage("/data/sources/p/talk.mp4", "job-9");
+    expect(key).toMatch(/^saarnavideo\/tmp\/job-9\/transcribe-[0-9a-f]{6}\.mp4$/);
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+    await staging.delete(key); // a restarted worker releases a key it read from the job's parameters
+    expect(s3.deleteObject).toHaveBeenCalledWith("media", key);
+  });
+
+  it("plain s3 mode stays in audio mode", () => {
+    const s3 = { putFile: vi.fn(), deleteObject: vi.fn() };
+    expect(createTranscriptionStaging({ AUDITOR_STT_FETCH: "s3", FFFLEET_S3_BUCKET: "media" }, { s3: s3 as never, config })!.mode).toBe("audio");
+  });
 });

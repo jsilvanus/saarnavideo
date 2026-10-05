@@ -297,6 +297,8 @@ type TranscribeParameters = {
   language: string;
   auditorJobId?: string;
   tempClipPath?: string;
+  /** S3 key of the staged original (AUDITOR_STT_FETCH=s3-source), deleted when the job ends. */
+  stagedKey?: string;
 };
 
 // See docs/transcription-editor-contract.md, "MediaJob.parameters shape for a TRANSCRIBE job".
@@ -305,17 +307,26 @@ function readTranscribeParameters(parameters: unknown): TranscribeParameters {
   if (typeof params.rangeStartSeconds !== "number" || typeof params.rangeEndSeconds !== "number" || typeof params.language !== "string") {
     throw new Error("TRANSCRIBE job is missing rangeStartSeconds/rangeEndSeconds/language parameters");
   }
-  return { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath };
+  return { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath, stagedKey: params.stagedKey };
 }
 
 function serializeTranscribeParameters(params: TranscribeParameters): Record<string, string | number> {
   const result: Record<string, string | number> = { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language };
   if (params.auditorJobId) result.auditorJobId = params.auditorJobId;
   if (params.tempClipPath) result.tempClipPath = params.tempClipPath;
+  if (params.stagedKey) result.stagedKey = params.stagedKey;
   return result;
 }
 
 async function cleanupTempClip(tempClipPath: string | undefined) { if (!tempClipPath) return; await rm(tempClipPath, { force: true }).catch(() => undefined); }
+
+/** Deletes the staged original of a transcription job (AUDITOR_STT_FETCH=s3-source), whatever process staged it. */
+async function releaseStagedSource(jobId: string) {
+  if (!transcriptionStaging) return;
+  const row = await prisma.mediaJob.findUnique({ where: { id: jobId }, select: { parameters: true } });
+  const key = row?.parameters && typeof row.parameters === "object" ? (row.parameters as Record<string, unknown>).stagedKey : undefined;
+  if (typeof key === "string") await transcriptionStaging.delete(key);
+}
 
 async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds?: number, rangeEndSeconds?: number): Promise<string> {
   const tmpDir = path.join(MEDIA_ROOT, "tmp");
@@ -335,6 +346,15 @@ async function extractTranscriptionClip(jobId: string, sourceStoragePath: string
  * cancellation, resumability).
  */
 async function processTranscription(job: MediaJobRow) {
+  try {
+    await processTranscriptionInner(job);
+  } catch (error) {
+    await releaseStagedSource(job.id).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function processTranscriptionInner(job: MediaJobRow) {
   if (!job.sourceId) throw new Error("TRANSCRIBE job has no source");
   const source = await prisma.source.findUnique({ where: { id: job.sourceId } });
   if (!source) throw new Error("Source not found");
@@ -347,6 +367,7 @@ async function processTranscription(job: MediaJobRow) {
   const preStart = await prisma.mediaJob.findUnique({ where: { id: job.id }, select: { cancelRequested: true } });
   if (preStart?.cancelRequested) {
     await cleanupTempClip(params.tempClipPath);
+    await releaseStagedSource(job.id);
     await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled before transcription started", completedAt: new Date() }, true);
     return;
   }
@@ -358,7 +379,9 @@ async function processTranscription(job: MediaJobRow) {
     const sourcePath = await resolveLocalFile(await getMediaStore(), MEDIA_ROOT, source.storagePath);
     let filePath = sourcePath;
     // With S3 staging the whole source is reduced to 16 kHz mono audio first, so far less than the video goes to the bucket.
-    if (isPartial || transcriptionStaging) {
+    // In s3-source mode a whole source is staged as it is and the service strips the audio on a fleet worker.
+    const stageSource = transcriptionStaging?.mode === "source" && !isPartial;
+    if (isPartial || (transcriptionStaging && !stageSource)) {
       await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: isPartial ? "Extracting requested range" : "Extracting audio", progress: 0 }, true);
       const tempClipPath = await extractTranscriptionClip(job.id, sourcePath, isPartial ? params.rangeStartSeconds : undefined, isPartial ? params.rangeEndSeconds : undefined);
       params = { ...params, tempClipPath };
@@ -369,7 +392,15 @@ async function processTranscription(job: MediaJobRow) {
     let submission;
     if (transcriptionStaging) {
       const staged = await transcriptionStaging.stage(filePath, job.id);
-      try { submission = await client.submitUrl(staged.url, { language: params.language }); } finally { await staged.release(); }
+      try {
+        submission = await client.submitUrl(staged.url, { language: params.language });
+      } catch (error) {
+        await staged.release();
+        throw error;
+      }
+      // The service has its own copy of staged audio right away; a staged original is fetched later, so it stays until the job ends.
+      if (stageSource) params = { ...params, stagedKey: staged.key };
+      else await staged.release();
     } else {
       submission = await client.submitJob(filePath, { language: params.language });
     }
@@ -386,6 +417,7 @@ async function processTranscription(job: MediaJobRow) {
     if (current?.cancelRequested) {
       await client.deleteJob(auditorJobId).catch(() => undefined);
       await cleanupTempClip(params.tempClipPath);
+      await releaseStagedSource(job.id);
       await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true);
       return;
     }
@@ -405,11 +437,13 @@ async function processTranscription(job: MediaJobRow) {
 
   if (finalStatus.status === "cancelled") {
     await cleanupTempClip(params.tempClipPath);
+    await releaseStagedSource(job.id);
     await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled", completedAt: new Date() }, true);
     return;
   }
   if (finalStatus.status === "failed") {
     await cleanupTempClip(params.tempClipPath);
+    await releaseStagedSource(job.id);
     throw new Error(finalStatus.error ?? "Auditor STT job failed");
   }
 
@@ -419,6 +453,7 @@ async function processTranscription(job: MediaJobRow) {
   await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, segments });
 
   await cleanupTempClip(params.tempClipPath);
+  await releaseStagedSource(job.id);
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Transcription complete", completedAt: new Date() }, true);
 }
 
