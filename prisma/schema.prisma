@@ -133,6 +133,8 @@ model MediaJob {
   parameters Json?
   error String?
   cancelRequested Boolean @default(false)
+  workerId String? // worker process that runs the job (see src/worker/job-recovery.ts)
+  heartbeatAt DateTime? // refreshed by that worker while the job is RUNNING
   createdAt DateTime @default(now())
   startedAt DateTime?
   completedAt DateTime?
