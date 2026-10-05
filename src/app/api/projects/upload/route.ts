@@ -1,8 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { getMediaStore } from "@/lib/media-store";
 import { createProjectDefinition } from "@/domain/project";
 import { jsonError } from "@/app/api/_lib/http";
 
@@ -23,12 +25,8 @@ export async function POST(request: Request) {
 
     const fields = fieldsSchema.parse({ title: form.get("title"), preacher: form.get("preacher") ?? "", gospelStart: form.get("gospelStart"), gospelEnd: form.get("gospelEnd"), sermonStart: form.get("sermonStart"), sermonEnd: form.get("sermonEnd") });
     const projectId = crypto.randomUUID();
-    const mediaRoot = process.env.MEDIA_ROOT ?? "/data/media";
-    const projectDir = path.join(mediaRoot, "sources", projectId);
-    await mkdir(projectDir, { recursive: true });
     const safeName = path.basename(file.name).replace(/[^a-zA-Z0-9._-]/g, "_");
-    const storagePath = path.join(projectDir, safeName || "source-video");
-    await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
+    const storagePath = await (await getMediaStore()).put(`sources/${projectId}/${safeName || "source-video"}`, Readable.fromWeb(file.stream() as unknown as NodeReadableStream), { mimeType: file.type || undefined });
 
     const segments = [
       { id: "gospel", label: "Gospel", startSeconds: fields.gospelStart, endSeconds: fields.gospelEnd },

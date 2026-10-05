@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -10,10 +10,14 @@ import { MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFil
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "./http";
 import { getMediaStore } from "@/lib/media-store";
-import { mediaRoot, rangedFileResponse } from "./files";
+import { rangedFileResponse, uploadScratchDir } from "./files";
 
 export const MAX_ASSET_SIZE = Number(process.env.MAX_ASSET_SIZE_BYTES ?? 10 * 1024 * 1024);
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
+function mimeForExtension(extension: string): string | undefined {
+  return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" }[extension.toLowerCase()];
+}
 
 export function sha256(data: Buffer) {
   return createHash("sha256").update(data).digest("hex");
@@ -64,11 +68,8 @@ export async function readImageUpload(file: File): Promise<ImageUpload | Respons
 
 /** Writes content-addressed bytes into the shared asset library (no-op if already present). */
 export async function storeLibraryFile(data: Buffer, contentHash: string, extension: string): Promise<string> {
-  const directory = path.join(mediaRoot(), "assets", "library");
-  await mkdir(directory, { recursive: true });
-  const storagePath = path.join(directory, `${contentHash}.${extension}`);
-  await writeFile(storagePath, data, { flag: "wx" }).catch(error => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
-  return storagePath;
+  const store = await getMediaStore();
+  return store.put(`assets/library/${contentHash}.${extension}`, data, { mimeType: mimeForExtension(extension) });
 }
 
 /** An audio upload already written to a temporary file under the library directory; the hash was taken while writing. */
@@ -90,7 +91,7 @@ export async function readAudioUpload(file: File): Promise<AudioUpload | Respons
   if (!mimeType) return jsonError("Audio must be MP3, M4A, WAV, OGG or WebM", 400);
   if (file.size <= 0) return jsonError("Audio file is empty", 400);
   if (file.size > MAX_AUDIO_ASSET_SIZE) return jsonError("Audio file is too large", 413);
-  const directory = path.join(mediaRoot(), "assets", "library");
+  const directory = uploadScratchDir();
   await mkdir(directory, { recursive: true });
   const tempPath = path.join(directory, `.upload-${randomUUID()}`);
   const hash = createHash("sha256");
@@ -110,13 +111,13 @@ export async function readAudioUpload(file: File): Promise<AudioUpload | Respons
  * no asset with this hash exists (the file could otherwise still be in use).
  */
 export async function storeAudioAsset(upload: AudioUpload): Promise<{ storagePath: string; durationMs: number } | Response> {
-  const storagePath = path.join(path.dirname(upload.tempPath), `${upload.contentHash}.${audioExtension(upload.mimeType)}`);
-  await rename(upload.tempPath, storagePath);
-  const probe = await probeAudioFile(storagePath);
+  const probe = await probeAudioFile(upload.tempPath);
   if (!probe) {
-    await rm(storagePath, { force: true }).catch(() => undefined);
+    await rm(upload.tempPath, { force: true }).catch(() => undefined);
     return jsonError("The file could not be read as audio", 400);
   }
+  const store = await getMediaStore();
+  const storagePath = await store.moveFile(`assets/library/${upload.contentHash}.${audioExtension(upload.mimeType)}`, upload.tempPath, { mimeType: upload.mimeType });
   return { storagePath, durationMs: probe.durationMs };
 }
 

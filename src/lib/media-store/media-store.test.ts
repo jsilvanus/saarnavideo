@@ -58,6 +58,15 @@ describe.each(backends)("%s backend contract", (_name, make) => {
     expect((await stat(source)).isFile()).toBe(true);
   });
 
+  it("moves a local file in and removes the source", async () => {
+    const { store } = make();
+    const source = path.join(dir, "scratch.tmp");
+    await writeFile(source, "moved");
+    const ref = await store.moveFile("assets/library/m.bin", source, { mimeType: "audio/mpeg" });
+    expect(await readAll(await store.stream(ref))).toBe("moved");
+    expect(await stat(source).then(() => true, () => false)).toBe(false);
+  });
+
   it("rejects keys that escape the root", async () => {
     const { store } = make();
     await expect(store.put("../evil", Buffer.from("x"))).rejects.toThrow(/Invalid storage key/);

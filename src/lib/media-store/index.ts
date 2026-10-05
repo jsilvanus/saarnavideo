@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { LocalBackend } from "./local";
@@ -33,6 +33,12 @@ export function createMediaStore(options: MediaStoreOptions): MediaStore {
     },
     async putFile(key, localPath, meta: PutMeta = {}) {
       return options.mode === "s3" ? requireS3().putFile(key, localPath, meta) : local.putFile(key, localPath);
+    },
+    async moveFile(key, localPath, meta: PutMeta = {}) {
+      if (options.mode === "local") return local.moveFile(key, localPath);
+      const ref = await requireS3().putFile(key, localPath, meta);
+      await rm(localPath, { force: true });
+      return ref;
     },
     async stat(ref) {
       const parsed = parseRef(ref);
