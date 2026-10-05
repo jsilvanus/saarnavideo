@@ -1,12 +1,14 @@
 # SaarnaVideo Deployment Guide
 
+For installing step by step see [INSTALL.md](INSTALL.md) (it also has the complete environment reference); how the parts fit is in [ARCHITECTURE.md](ARCHITECTURE.md); fffleet, S3 and the other services are in [INTEGRATIONS.md](INTEGRATIONS.md). This page keeps the production notes.
+
 ## System Requirements
 
-- **Node.js**: 18+
-- **PostgreSQL**: 14+
-- **FFmpeg**: 5.0+ with libfdk_aac codec support
-- **yt-dlp**: Latest version (for YouTube source download)
-- **Python**: 3.9+ (for transcription worker)
+- **Node.js**: 22+
+- **PostgreSQL**: 17+ (SQLite is for development only)
+- **FFmpeg + ffprobe**: current build with `libx264`, `libass` (burned captions), `drawtext` and `libmp3lame` (podcast). The worker image checks this at build time. Not needed on the host when rendering goes to an fffleet fleet
+- **yt-dlp**: latest (YouTube sources). Not needed on the host when downloads go to a fleet worker
+- **Speech-to-text**: a liturgos-auditor service for transcriptions (optional)
 
 ## Environment Variables
 
@@ -117,68 +119,17 @@ TRANSCRIBE jobs run on a liturgos-auditor-stt service (`AUDITOR_STT_URL`); the s
 
 ## Docker Deployment
 
-### 1. Build Docker Images
+The repository's `docker-compose.yml` is the reference stack: PostgreSQL 17, the app (`Dockerfile`), the worker (`Dockerfile.worker`: FFmpeg, libass, DejaVu fonts, yt-dlp) and the speech-to-text service. Both images are built for PostgreSQL. `docker-compose.s3.yml` is the override for S3 media storage. Steps, including the one-time `prisma db push`, are in [INSTALL.md](INSTALL.md#2-docker-compose).
+
+Build the images yourself with:
 
 ```bash
 docker build -t saarnavideo:latest .
-docker build -f transcription/Dockerfile -t saarnavideo-transcription:latest ./transcription
+docker build -f Dockerfile.worker -t saarnavideo-worker:latest .
+docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker:latest .   # only for fleet downloads
 ```
 
-### 2. Docker Compose
-
-```yaml
-version: "3.9"
-
-services:
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: saarnavideo
-      POSTGRES_USER: saarnavideo
-      POSTGRES_PASSWORD: your-secure-password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  app:
-    image: saarnavideo:latest
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://saarnavideo:your-secure-password@postgres:5432/saarnavideo
-      MEDIA_ROOT: /media
-      NEXT_PUBLIC_API_URL: https://saarnavideo.example.com
-      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID}
-      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET}
-    volumes:
-      - media_data:/media
-      - ./fonts:/app/public/fonts:ro
-    depends_on:
-      - postgres
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  worker:
-    image: saarnavideo:latest
-    command: npm run worker
-    environment:
-      DATABASE_URL: postgresql://saarnavideo:your-secure-password@postgres:5432/saarnavideo
-      MEDIA_ROOT: /media
-      WORKER_POLL_MS: 3000
-    volumes:
-      - media_data:/media
-    depends_on:
-      - postgres
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-  media_data:
-```
+Run several workers by scaling the `worker` service (`docker compose up -d --scale worker=3`): they share the database and the media store (a shared volume or S3), and a stale job from a stopped worker is recovered automatically.
 
 ## Production Setup Checklist
 
@@ -224,7 +175,7 @@ volumes:
 ### Monitoring & Logging
 - [ ] Logs aggregated (stdout → container engine or syslog)
 - [ ] Database job logs accessible via API
-- [ ] Disk space monitoring (cleanup happens automatically, but verify)
+- [ ] Disk space monitoring (nothing is cleaned up automatically)
 - [ ] FFmpeg process monitoring (check for hangs)
 
 ### Security

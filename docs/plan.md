@@ -1,5 +1,7 @@
 # SaarnaVideo Plan
 
+> **Historical document.** This is the original product plan. Parts of it have changed: media is persistent (the seven-day retention below is not implemented), the UI is three steps plus a quick-publish page, transcription runs on liturgos-auditor, and rendering can run on an fffleet fleet. For the current state read `README.md`, `docs/ARCHITECTURE.md` and `CLAUDE.md`.
+
 ## Purpose
 
 SaarnaVideo is a small, focused media composition tool for turning worship-service recordings into publishable sermon and liturgical videos with minimal manual work.

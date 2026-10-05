@@ -2,14 +2,16 @@
 
 ## Project Overview
 
-**SaarnaVideo** is a focused media composition tool for turning worship-service recordings into publishable videos with minimal manual editing. The application enables users to upload recordings, create compositions with overlays and slates, generate polished videos, and publish to YouTube.
+**SaarnaVideo** is a focused media composition tool for turning worship-service recordings into publishable videos with minimal manual editing. The application enables users to upload recordings (or give a YouTube link), create compositions with overlays, slates, captions and voiceovers, generate polished videos and podcast episodes, and publish to YouTube or a Facebook Page.
+
+**Read the docs by task:** `README.md` (overview, quick start), `docs/INSTALL.md` (install, every env variable), `docs/ARCHITECTURE.md` (how the parts fit), `docs/INTEGRATIONS.md` (fffleet, S3, connectors, speech-to-text, publishing), `docs/DEPLOYMENT.md` (production), `docs/API.md` (HTTP API). This file is the detailed behaviour reference; keep it and those documents consistent when you change something.
 
 ### Core Vision
 - Minimal manual editing required
 - Template-driven composition system
 - Multi-step video generation pipeline
 - Support for overlays, slates, transitions, and image assets
-- YouTube integration for source reference and publication
+- YouTube and Facebook publishing; optional render/download fleet (fffleet) and S3 media
 
 ---
 
@@ -17,19 +19,27 @@
 
 ### Root Configuration Files
 ```
-├── package.json              # Node.js dependencies and scripts
-├── pnpm-workspace.yaml       # pnpm workspace configuration
+├── package.json              # Node.js dependencies and scripts (npm is the only package manager; package-lock.json)
 ├── tsconfig.json             # TypeScript configuration
 ├── .eslintrc.json            # ESLint rules
-├── Dockerfile                # Container image definition
-├── docker-compose.yml        # PostgreSQL + app development setup
+├── next.config.mjs           # Next.js config (distDir override for e2e)
+├── Dockerfile                # App image (PostgreSQL client)
+├── Dockerfile.worker         # Worker image: ffmpeg, libass, fonts, yt-dlp
+├── Dockerfile.fleet-worker   # fffleet worker + yt-dlp + the download executor
+├── docker-compose.yml        # PostgreSQL + app + worker + speech-to-text
+├── docker-compose.s3.yml     # Compose override for S3 media storage
+├── fleet/                    # fffleet `download` executor (plain ESM)
+├── scripts/                  # media-migrate (local <-> S3)
+├── e2e/                      # End-to-end tests (real ffmpeg, fake S3/Google/Graph servers)
 └── .env.example              # Environment variable template
 ```
 
 ### Source Code Organization (`/src`)
 
 #### `/src/app` - Next.js Application Layer
-- **`layout.tsx`** - Root layout component
+- **`layout.tsx`** - Root layout component (language, navigation; leaves the navigation off `/login`)
+- **`login/page.tsx`** - Login page of the access gate (see "Access gate")
+- **`/assets`**, **`/settings`** - Graphics library page; connectors, YouTube cookies
 - **`page.tsx`** - Main application page: only wires `WorkspaceProvider`, `Sidebar`, `Workspace`, `Modals` and `WorkspaceStyles` together
 - **`globals.css`** - Global styles
 - **`/api`** - API route handlers
@@ -73,27 +83,37 @@ Core domain models using Zod for type-safe validation:
 - **`VariablesEditor.tsx`** - Project variables editor (`{{name}}` values for graphics)
 - **`api.ts`**, **`format.ts`** - Shared fetch and formatting helpers
 
+#### `src/middleware.ts` - Access gate (Edge), see "Access gate (shared secret)"
+
 #### `/src/integrations` - External Service Integration
-- **`youtube.ts`** - YouTube API client
-- **`youtube-oauth.ts`** - OAuth authentication flow
-- **`transcription.ts`** - Speech-to-text integration
-- **`image-assets.ts`** - Image asset handling
+- **`youtube.ts`**, **`youtube-oauth.ts`**, **`youtube-token-crypto.ts`** - YouTube API client, OAuth flow, token encryption
+- **`facebook.ts`** - Facebook Graph resumable video upload
+- **`auditorStt/`** - Client and provider for the liturgos-auditor speech-to-text service
+- **`transcription.ts`** - Speech-to-text integration (provider selection, older Python fallback)
+- **`image-assets.ts`**, **`audio-assets.ts`** - Library image and audio handling
+- **`ytdlp-cookies.ts`** - Stored yt-dlp cookies
 
 #### `/src/renderer` - Video Generation
 FFmpeg-based rendering pipeline:
 - **`ffmpeg.ts`** - FFmpeg command execution and parsing
 - **`composition.ts`** - Composition-to-FFmpeg translation
-- **`layers.ts`** - Video layer composition and filtering
+- **`podcast.ts`** - Audio-only podcast plan; **`ass.ts`**, **`caption-wrap.ts`**, **`caption-timeline.ts`** - Burned and soft captions; **`overlay-timing.ts`** - Section-anchored overlays
 - **`*.test.ts`** - Renderer tests with fixtures
 
 #### `/src/worker` - Async Job Processing
 - **`index.ts`** - Worker entry point for generating videos
 - **`source-resolution.ts`** - Download/acquire source media
-- **`sources.ts`** - Source file operations and cleanup
+- **`sources.ts`** - Source file operations
+- **`media-io.ts`** - Per-job file access (local or S3 cache); **`job-recovery.ts`** - heartbeats and stale-job recovery
+- **`remote-ffmpeg.ts`**, **`remote-download.ts`** - fffleet render and download executors; **`transcription-staging.ts`**, **`s3-presign.ts`** - S3 staging for transcription
+- **`captions.ts`**, **`caption-publish.ts`**, **`facebook-publish.ts`**, **`podcast.ts`** - caption options, publishing helpers, podcast job
 - **`*.test.ts`** - Worker logic tests
 
 #### `/src/lib` - Utilities
 - **`prisma.ts`** - Prisma client singleton
+- **`media-store/`** - Local and S3 storage behind `storagePath`
+- **`access-gate.ts`** - Shared-secret helpers (Web Crypto) used by the middleware and the login routes
+- **`asset-link.ts`**, **`duration-report.ts`**, **`transcript-text.ts`**, **`media-migrate.ts`** - asset auto-linking, duration notices, plain-text transcript, local/S3 migration
 
 #### `/src/types` - TypeScript Type Definitions
 - **`youtube.d.ts`** - YouTube API types
@@ -121,13 +141,15 @@ Enums:
 - PublicationStatus (QUEUED → UPLOADING → COMPLETED/FAILED)
 
 ### Documentation (`/docs`)
-- **`plan.md`** - High-level product roadmap
-- **`technical-phase-plan.md`** - Five-phase implementation strategy
+- **`INSTALL.md`** - Install guide and environment reference
+- **`ARCHITECTURE.md`** - Components, data flow, storage, security model, source map
+- **`INTEGRATIONS.md`** - fffleet, S3, connectors (varfetch), speech-to-text, YouTube, Facebook
+- **`DEPLOYMENT.md`** - Production notes, checklist, scaling, backups
 - **`API.md`** - API endpoint reference
-- **`DEPLOYMENT.md`** - Deployment and environment setup
-- **`YOUTUBE_OAUTH_SETUP.md`** - OAuth configuration guide
-- **`TEMPLATE_CREATION.md`** - Template system documentation
-- **`IMAGE_ASSETS_FEATURE_PLAN.md`** - Image asset feature details
+- **`YOUTUBE_OAUTH_SETUP.md`**, **`FACEBOOK_SETUP.md`** - Publishing setup
+- **`TEMPLATE_CREATION.md`**, **`GRAPHIC_PACKAGE.md`** - Templates and the `.svgraphic` format
+- **`transcription-editor-contract.md`**, **`KNOWN_BUGS.md`** - Transcript model; fixed bugs
+- **`plan.md`**, **`technical-phase-plan.md`**, **`IMAGE_ASSETS_FEATURE_PLAN.md`** - Original plans (historical: they still describe seven-day retention and other things that changed)
 
 ### Python Worker (`/transcription`)
 - **`transcribe.py`** - Speech-to-text processing script
@@ -149,14 +171,15 @@ Enums:
 - **Prisma 6.15** - ORM and migrations
 
 ### Media Processing
-- **FFmpeg** - Video rendering and composition
-- **Python (speech-to-text)** - Transcription pipeline
+- **FFmpeg** (with libass) - Video rendering and composition; **yt-dlp** - YouTube downloads
+- **fffleet** (`^2.2.0`) - optional render/download workers; **varfetch** (`^0.2.0`) - API connector engine
+- **liturgos-auditor** - speech-to-text service (the Python script in `transcription/` is an older fallback)
 
 ### Development & Testing
 - **Vitest 3.2** - Unit test runner
 - **ESLint 8.57** - Code linting
 - **tsx 4.20** - TypeScript execution
-- **pnpm** - Package manager
+- **npm** - Package manager (lockfile: `package-lock.json`; Dockerfiles and CI use `npm install`)
 
 ### Containerization
 - **Docker** - Application container
@@ -395,12 +418,12 @@ A `MediaJob` goes QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. While R
 # Install dependencies
 npm install
 
-# Initialize database
+# Initialize database (SQLite; DATABASE_URL="file:./dev.db")
 npx prisma generate
 npx prisma db push
 
-# Start PostgreSQL (if using containerized)
-docker compose up postgres
+# PostgreSQL instead: docker compose up -d postgres, then use --schema prisma/schema.postgresql.prisma
+# for generate and db push (the Docker images are built for PostgreSQL)
 ```
 
 ### Running Locally
@@ -408,7 +431,7 @@ docker compose up postgres
 # Development server
 npm run dev          # Next.js on http://localhost:3000
 
-# In another terminal: generation worker
+# In another terminal: generation worker (does not read .env itself: `set -a; . ./.env; set +a` first)
 npm run worker       # Processes queued jobs
 
 # Tests
@@ -462,7 +485,7 @@ Project media (sources, outputs, assets) is persistent; nothing expires and the 
 ---
 
 ## Open work
-See `Consider.md` (refactor backlog), `docs/plan.md` (roadmap) and the "not implemented" notes in the sections above.
+See `Consider.md` (refactor backlog) and the "not implemented" notes in the sections above. Known gaps: no per-user accounts (shared-secret gate only), API connector secrets not encrypted at rest, fleet/S3/Google/Facebook paths never run against the real services, PostgreSQL schema not exercised by the e2e suite, `WorkspaceStyles.tsx` global CSS not yet moved to modules. `docs/plan.md` is the original roadmap and is partly outdated.
 
 ---
 
@@ -496,15 +519,14 @@ See `Consider.md` (refactor backlog), `docs/plan.md` (roadmap) and the "not impl
 
 ## File Size Notes
 - Large media files are persistent; plan disk space accordingly
-- Sources, outputs and library assets live under `MEDIA_ROOT` (default `./data/media`)
+- Sources, outputs and library assets live under `MEDIA_ROOT` (code default `/data/media`, `.env.example` sets `./data/media`) or in S3
 - Asset images and audio are stored permanently as content-addressed files in the library
 
 ---
 
 ## Contact & Maintenance
-- See `docs/plan.md` for roadmap
-- See `docs/technical-phase-plan.md` for implementation strategy
-- Review `docs/API.md` for endpoint details
+- `docs/ARCHITECTURE.md` for how it fits together, `docs/API.md` for endpoints
+- `docs/plan.md` and `docs/technical-phase-plan.md` are the original (partly outdated) plans
 
 ---
 

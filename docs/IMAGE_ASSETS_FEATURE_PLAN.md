@@ -1,5 +1,7 @@
 # Image Assets Feature Plan
 
+> **Historical document.** Assets are now one global library shared by all projects, content-addressed, with no expiry (the per-project storage and 7-day retention below were replaced). See `CLAUDE.md`, "Asset Library".
+
 ## Overview
 Add support for image uploads (PNG, JPEG, WebP) for use in slates, overlays, and theme assets, with full transparency/alpha channel support.
 

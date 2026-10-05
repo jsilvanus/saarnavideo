@@ -1,5 +1,7 @@
 # SaarnaVideo Technical Phase Plan
 
+> **Historical document.** The phases below are the original implementation plan and are done or superseded; retention cleanup (seven days) was dropped. For the current state read `docs/ARCHITECTURE.md` and `CLAUDE.md`.
+
 The implementation is divided into five phases. Each phase should leave the repository in a usable, tested state and should avoid introducing infrastructure that is not yet needed.
 
 The core domain model is:

@@ -8,7 +8,8 @@ RUN npm install
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npx prisma generate && npm run build
+# The image is for PostgreSQL (docker-compose.yml): generate that client, not the SQLite one the postinstall step made.
+RUN npx prisma generate --schema prisma/schema.postgresql.prisma && npm run build
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
