@@ -27,6 +27,9 @@ import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
 import { getMediaStore } from "@/lib/media-store";
+import { HEARTBEAT_MS, heartbeat, recoverStaleJobs, type RecoveryDb } from "@/worker/job-recovery";
+import { randomUUID } from "node:crypto";
+import os from "node:os";
 import { openJobFiles, resolveLocalFile, type JobFiles } from "@/worker/media-io";
 import { createTranscriptionStaging } from "@/worker/transcription-staging";
 
@@ -56,6 +59,8 @@ const remoteExecutor = createRemoteExecutorFromEnv(process.env, message => conso
 const remoteDownloader = createRemoteDownloaderFromEnv(process.env, message => console.log(`[remote-download] ${message}`));
 /** AUDITOR_STT_FETCH=s3 stages the audio in S3 and gives the transcription service a presigned URL instead of uploading the file. */
 const transcriptionStaging = createTranscriptionStaging(process.env);
+/** Identifies this worker process on the jobs it runs (job heartbeats and recovery, see job-recovery.ts). */
+const WORKER_ID = `${os.hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
 const progressTimers = new Map<string, NodeJS.Timeout>();
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -66,7 +71,7 @@ async function claimJob() {
   const candidates = await prisma.mediaJob.findMany({ where: { status: "QUEUED" }, orderBy: [{ priority: "desc" }, { createdAt: "asc" }], take: 10 });
   for (const candidate of candidates) {
     if (candidate.dependsOnJobId) { const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } }); if (dependency && dependency.status !== "COMPLETED") { if (dependency.status === "FAILED" || dependency.status === "CANCELLED") await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", error: "Dependency did not complete" } }); continue; } }
-    const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
+    const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
     if (result.count === 1) return candidate;
   }
   return null;
@@ -418,23 +423,18 @@ async function processTranscription(job: MediaJobRow) {
 }
 
 /**
- * On worker startup, resume watching any TRANSCRIBE job left RUNNING by a
- * prior worker process that already persisted an auditorJobId - the
- * liturgos-auditor-stt job itself is durable, so there is nothing to redo,
- * only to resume polling. Runs once, before the claim loop starts. A RUNNING
- * job with no auditorJobId yet (crashed before submitting) is left as-is,
- * matching the pre-existing orphaning behavior for ffmpeg jobs.
+ * Takes over jobs left RUNNING by a worker that stopped refreshing its heartbeat. A TRANSCRIBE job that already
+ * has an auditorJobId is resumed (the auditor job is durable, only the polling is redone); any other stale job is
+ * failed, because a half-finished render cannot be resumed. The takeover is one atomic update, so with several workers
+ * only one resumes a job. Runs at startup and then periodically.
  */
-async function resumeInterruptedTranscriptions() {
-  const stuck = await prisma.mediaJob.findMany({ where: { type: "TRANSCRIBE", status: "RUNNING" } });
-  for (const job of stuck) {
-    const params = job.parameters && typeof job.parameters === "object" ? (job.parameters as Record<string, unknown>) : {};
-    if (typeof params.auditorJobId !== "string") continue;
-    try {
-      await processTranscription(job);
-    } catch (error) {
-      await failJob(job.id, error, "Resumed transcription job failed");
-    }
+async function recoverInterruptedJobs() {
+  const { resume, failed } = await recoverStaleJobs(prisma as unknown as RecoveryDb, WORKER_ID);
+  if (failed) console.warn(`Marked ${failed} stale job(s) as failed: their worker stopped`);
+  for (const { id } of resume) {
+    const job = await prisma.mediaJob.findUnique({ where: { id } });
+    if (!job) continue;
+    void processTranscription(job).catch(error => failJob(job.id, error, "Resumed transcription job failed"));
   }
 }
 
@@ -490,7 +490,9 @@ process.on("SIGTERM", async () => { for (const timer of progressTimers.values())
 /** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
 async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }
 async function main() {
-  await resumeInterruptedTranscriptions().catch(error => console.error("Failed to resume interrupted transcriptions:", error));
+  setInterval(() => { void heartbeat(prisma as unknown as RecoveryDb, WORKER_ID).catch(error => console.error("Heartbeat failed:", error)); }, HEARTBEAT_MS);
+  await recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error));
+  setInterval(() => { void recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error)); }, 30_000);
   void publicationLane();
   const running = new Set<Promise<void>>();
   while (true) {
