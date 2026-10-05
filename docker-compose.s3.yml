@@ -1,0 +1,52 @@
+# Media in an S3-compatible bucket instead of the shared media volume:
+#   docker compose -f docker-compose.yml -f docker-compose.s3.yml up                    (your own bucket: set MEDIA_S3_* and AWS_* in .env)
+#   docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile minio up    (local MinIO for trying it out)
+# Needs Docker Compose 2.24 or newer (`!reset`). See docs/DEPLOYMENT.md, "Media storage".
+x-media-s3: &media-s3
+  MEDIA_STORAGE: s3
+  MEDIA_S3_BUCKET: ${MEDIA_S3_BUCKET:-saarnavideo-media}
+  MEDIA_S3_PREFIX: ${MEDIA_S3_PREFIX:-media}
+  MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-http://minio:9000}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+
+services:
+  app:
+    environment:
+      <<: *media-s3
+    # No shared media volume: the app only needs scratch space for uploads in flight.
+    volumes: !reset []
+
+  worker:
+    environment:
+      <<: *media-s3
+    # The worker keeps a local scratch directory and download cache.
+    volumes: !override
+      - worker_scratch:/data/media
+
+  # Optional S3 server for local testing (profile "minio"); the bucket is created by minio-init.
+  minio:
+    profiles: ["minio"]
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    profiles: ["minio"]
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://minio:9000 ${AWS_ACCESS_KEY_ID:-minioadmin} ${AWS_SECRET_ACCESS_KEY:-minioadmin}; do sleep 1; done;
+      mc mb --ignore-existing local/${MEDIA_S3_BUCKET:-saarnavideo-media}"
+
+volumes:
+  worker_scratch:
+  minio_data:
