@@ -19,6 +19,10 @@ export type PodcastPlanOptions = {
   metadata?: PodcastMetadata;
   /** "measure" builds the analysis pass (loudnorm print_format=json, no output file); a measurement builds the linear second pass; undefined is single-pass dynamic loudnorm. */
   loudness?: "measure" | LoudnormMeasurement;
+  /** Render only the body (sources, voiceovers, mixes, range) to this lossless file: no intro/outro, no loudness, no tags. */
+  bodyOnly?: boolean;
+  /** A body rendered earlier with `bodyOnly`: the plan reads it as its only body input instead of decoding the sources again. */
+  bodyWav?: string;
 };
 export type PodcastPlan = FfmpegPlan & { /** Expected length of the audio file. */ durationSeconds: number };
 
@@ -77,6 +81,9 @@ export function podcastBodyRange(settings: { startSeconds?: number; endSeconds?:
  * mixed voiceovers are layered at their video-timeline position, moved earlier by the slate time removed before them.
  * Only `startSeconds..endSeconds` of that body is kept when set. Intro, body and outro are joined with a `crossfadeSeconds` crossfade (0 = plain concat), then the result is
  * downmixed, loudness-normalised (loudnorm, -16 LUFS / -1.5 dBTP) and encoded at 44.1 kHz.
+ *
+ * The body is the expensive part (it decodes the source video's audio). `bodyOnly` renders it once to a temporary WAV and
+ * `bodyWav` builds the measure and encode passes on that file, so the source is read once, not three times.
  */
 export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePaths: Map<string, string>, outputPath: string, assetPaths: Map<string, string>, options: PodcastPlanOptions): PodcastPlan {
   const items = definition.composition.items;
@@ -153,6 +160,19 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
     current = "body";
   }
 
+  const layout = options.settings.channels === "stereo" ? "stereo" : "mono";
+  if (options.bodyWav) {
+    // Replace everything built so far (the layout maths above stays) by the one input that holds the finished body.
+    args.length = 2; nextInput = 0; filters.length = 0;
+    filters.push(`[${addInput(options.bodyWav)}:a]anull[body]`);
+    current = "body";
+  }
+  if (options.bodyOnly) {
+    filters.push(`[${current}]aformat=channel_layouts=${layout},aresample=44100[podcast]`);
+    args.push("-filter_complex", filters.join(";"), "-map", "[podcast]", "-c:a", "pcm_s16le", outputPath);
+    return { sourcePaths, assetPaths, outputPath, args, durationSeconds: range.end - range.start };
+  }
+
   // Intro + body + outro.
   const crossfade = options.settings.crossfadeSeconds;
   let joined = current;
@@ -170,7 +190,6 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
   if (options.intro) join("intro", options.intro);
   if (options.outro) join("outro", options.outro);
 
-  const layout = options.settings.channels === "stereo" ? "stereo" : "mono";
   filters.push(`[${joined}]aformat=channel_layouts=${layout},${loudnormFilter(options.loudness)},aresample=44100[podcast]`);
 
   const measuring = options.loudness === "measure";

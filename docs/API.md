@@ -283,7 +283,8 @@ Response: 202 Accepted
   "progress": 0,
   "createdAt": "2024-08-20T12:00:00Z",
   "durationWarnings": [],              // length notices (platform limit, target); never block
-  "assetWarnings": []                  // image references that name no asset linked to the project; they render without it
+  "assetWarnings": [],                 // image references that match no library asset; they render without it
+  "autoLinkedAssets": []               // keys of library assets the definition refers to that were linked to the project now
 }
 ```
 

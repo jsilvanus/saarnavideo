@@ -19,6 +19,7 @@ import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
 import { PODCAST_TARGET_LUFS, buildPodcastRenderPlan, parseLoudnormMeasurement, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
 import { findUnresolvedImageRefs } from "@/domain/asset-usage";
+import { linkReferencedAssets } from "@/lib/asset-link";
 import { formatSrt, formatVtt } from "@/lib/captions";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
@@ -137,6 +138,7 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   if (!job) throw new Error("Missing job");
   const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true, assets: true } }); if (!project) throw new Error("Project not found");
   const definition = jobDefinition(job, project);
+  if (type !== "THUMBNAIL") for (const asset of await linkReferencedAssets(prisma, project.id, definition, project.assets, referencedAudioAssetIds(definition))) { project.assets.push(asset); await logJobEvent(job.id, "INFO", `Linked library asset "${asset.assetKey}" to the project because the composition uses it`); }
   await mkdir(MEDIA_ROOT, { recursive: true });
   if (type === "THUMBNAIL") {
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
@@ -214,18 +216,29 @@ async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
   const metadata = resolvePodcastMetadata(project, settings);
   const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.${settings.format}`);
   const planOptions = { settings, intro: pickTrack(settings.introAssetId), outro: pickTrack(settings.outroAssetId), coverPath, metadata };
-  const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: "measure" });
-  const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
-  await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 0, totalMs: BigInt(totalMs) }, true);
-  const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(coverPath ? [coverPath] : [])], outputPath };
-  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 0, to: 40 }, remote);
-  const measurement = parseLoudnormMeasurement(measureLog);
-  // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
-  if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
-  else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
-  const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: measurement ?? undefined });
-  await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 40 }, true);
-  await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 40, to: 100 }, remote);
+  // The body (source audio, voiceovers, mixes, range) is decoded once into a temporary WAV; the loudness measure and the
+  // encode pass read that file, so a multi-GB sermon video is not demuxed three times.
+  const bodyPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.body.wav`);
+  try {
+    const bodyPlan = buildPodcastRenderPlan(definition, sourcePaths, bodyPath, assetPaths, { ...planOptions, bodyOnly: true });
+    const bodyMs = Math.max(1, Math.round(bodyPlan.durationSeconds * 1000));
+    await updateProgress(job.id, { phase: "EXTRACTING_AUDIO", message: "Rendering the audio body", progress: 0, totalMs: BigInt(bodyMs) }, true);
+    await runFfmpegWithProgress(job.id, bodyPlan.args, bodyMs, { phase: "EXTRACTING_AUDIO", message: "Rendering the audio body", from: 0, to: 40 }, { files: [...sourcePaths.values(), ...assetPaths.values()], outputPath: bodyPath });
+    // Later passes need only the body file, the intro/outro and the cover.
+    const finalAssets = new Map([...assetPaths].filter(([id]) => id === settings.introAssetId || id === settings.outroAssetId));
+    const remote = { files: [bodyPath, ...finalAssets.values(), ...(coverPath ? [coverPath] : [])], outputPath };
+    const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, bodyWav: bodyPath, loudness: "measure" });
+    const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
+    await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 40, totalMs: BigInt(totalMs) }, true);
+    const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 40, to: 60 }, remote);
+    const measurement = parseLoudnormMeasurement(measureLog);
+    // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
+    if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
+    else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
+    const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, bodyWav: bodyPath, loudness: measurement ?? undefined });
+    await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 60 }, true);
+    await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 60, to: 100 }, remote);
+  } finally { await rm(bodyPath, { force: true }); }
   await createOutput(project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Podcast ready", completedAt: new Date() }, true);
 }

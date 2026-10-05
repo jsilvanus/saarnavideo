@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { findUnresolvedImageRefs } from "@/domain/asset-usage";
+import { linkReferencedAssets } from "@/lib/asset-link";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
 import { captionOptionsSchema, wantsBurnedCaptions } from "@/domain/captions";
@@ -60,6 +61,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const missingAudio = audioIds.filter(audioId => !found.some(asset => asset.id === audioId));
       if (missingAudio.length) return jsonError(`Audio asset not found in the library: ${missingAudio.join(", ")}`, 400);
     }
+    // Library assets the definition refers to are linked to the project, so the render finds them.
+    const autoLinked = await linkReferencedAssets(prisma, id, project.definition, project.assets, audioIds);
+    const linkedAssets = [...project.assets, ...autoLinked];
     const violations = findDurationViolations(project.definition, project.sources);
     if (violations.length && !body.allowClamping) return NextResponse.json({ error: "One or more sections extend beyond the selected source file.", code: "SOURCE_DURATION_MISMATCH", violations, message: "The source file is shorter than the recording used to define these sections. No timestamps are silently clamped." }, { status: 409 });
     let renderDefinition = project.definition;
@@ -75,6 +79,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const firstSourceId = [...referencedIds][0];
     const job = await prisma.mediaJob.create({ data: { projectId: id, type, priority: type === "PREVIEW" ? 80 : type === "THUMBNAIL" ? 60 : 50, dependsOnJobId: dependencyId, parameters: { renderDefinition, captions: type === "THUMBNAIL" || type === "PODCAST" ? undefined : captions.data, podcast: type === "PODCAST" ? podcast.data : undefined, thumbnailSourceId: type === "THUMBNAIL" ? firstSourceId : undefined } }, select: { id: true, type: true, status: true, progress: true } });
     if (type === "VIDEO") await prisma.mediaJob.create({ data: { projectId: id, type: "THUMBNAIL", priority: 60, dependsOnJobId: job.id, parameters: { renderDefinition } }, select: { id: true } });
-    return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0, durationWarnings: durationWarnings((renderDefinition ?? {}) as Parameters<typeof computeDurationReport>[0]), assetWarnings: findUnresolvedImageRefs(renderDefinition, project.assets) });
+    return NextResponse.json({ ...job, dependencyId, clamped: violations.length > 0, durationWarnings: durationWarnings((renderDefinition ?? {}) as Parameters<typeof computeDurationReport>[0]), assetWarnings: findUnresolvedImageRefs(renderDefinition, linkedAssets), autoLinkedAssets: autoLinked.map(asset => asset.assetKey) });
   } catch (error) { console.error("Media job queue error:", error); return jsonError(error instanceof Error ? error.message : "Could not queue media job", 500); }
 }

@@ -50,3 +50,18 @@ export function findUnresolvedImageRefs(definition: unknown, linked: readonly As
   });
   return missing.map(entry => `${entry}, which is not linked to this project and will be left out of the render`);
 }
+
+/** Every image reference of a definition (image layers of graphics, overlay `imageAsset`, slate/audio `backgroundImage`). */
+export function collectImageRefs(definition: unknown): string[] {
+  const def = (definition ?? {}) as LooseDefinition;
+  const refs = new Set<string>();
+  for (const graphic of def.graphics ?? []) for (const layer of graphic.layers ?? []) if (layer.type === "image" && typeof layer.src === "string" && layer.src) refs.add(layer.src);
+  for (const item of def.composition?.items ?? []) for (const field of ["imageAsset", "backgroundImage"] as const) { const value = item[field]; if (typeof value === "string" && value) refs.add(value); }
+  return [...refs];
+}
+
+/** Asset id inside a project asset URL (`/api/projects/<p>/assets/<id>`), else undefined. */
+export function assetIdFromRef(ref: string): string | undefined {
+  const match = /\/assets\/([^/?#]+)$/.exec(ref);
+  return match?.[1];
+}
