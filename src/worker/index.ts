@@ -24,6 +24,7 @@ import { formatSrt, formatVtt } from "@/lib/captions";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
+import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -47,6 +48,8 @@ function watchCancel(jobId: string, onCancel: () => void): () => boolean {
 }
 /** RENDER_EXECUTOR=fffleet sends ffmpeg commands to an fffleet fleet (staged through S3) instead of spawning them here. */
 const remoteExecutor = createRemoteExecutorFromEnv(process.env, message => console.log(`[remote-ffmpeg] ${message}`));
+/** DOWNLOAD_EXECUTOR=fffleet runs yt-dlp on an fffleet worker (job type "download") instead of here. */
+const remoteDownloader = createRemoteDownloaderFromEnv(process.env, message => console.log(`[remote-download] ${message}`));
 const progressTimers = new Map<string, NodeJS.Timeout>();
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -76,7 +79,13 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>) {
   if (source.type !== "YOUTUBE" || !source.youtubeUrl || !source.youtubeVideoId) throw new Error("Source is not a downloadable YouTube source");
   const storagePath = path.join(MEDIA_ROOT, "sources", job.projectId, `${source.youtubeVideoId}.mp4`);
   await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: 0 }, true);
-  await downloadYouTubeSource({ videoId: source.youtubeVideoId, url: source.youtubeUrl }, storagePath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); });
+  if (remoteDownloader) {
+    const stopWatching = watchCancel(job.id, () => void remoteDownloader.cancel(job.id));
+    try {
+      const { cookiesUpdated } = await remoteDownloader.run({ jobId: job.id, url: source.youtubeUrl, outputPath: storagePath, cookiesFile: process.env.YTDLP_COOKIES_FILE?.trim() || undefined, onProgress: percent => void updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(percent) }) });
+      if (cookiesUpdated) await logJobEvent(job.id, "INFO", "yt-dlp updated the cookie file; written back to YTDLP_COOKIES_FILE");
+    } catch (error) { throw stopWatching() ? new JobCancelled() : error; } finally { stopWatching(); }
+  } else await downloadYouTubeSource({ videoId: source.youtubeVideoId, url: source.youtubeUrl }, storagePath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); });
   const s = await stat(storagePath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(storagePath, { force: true }); throw new Error(validation.reason); }
   await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
@@ -440,7 +449,7 @@ async function processPublication() {
 }
 
 // No expiry cleanup: project media is persistent. The expiresAt columns are legacy and nothing reads or writes them.
-process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); process.exit(0); });
+process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); await remoteDownloader?.close(); process.exit(0); });
 /** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
 async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }
 async function main() {

@@ -21,12 +21,12 @@ export type RemoteConfig = {
   s3: NonNullable<ReturnType<typeof s3ConfigFromEnv>>;
 };
 
-/** Settings from the environment, or null when RENDER_EXECUTOR is not "fffleet". Throws when it is but the settings are incomplete. */
-export function readRemoteConfig(env: Record<string, string | undefined> = process.env): RemoteConfig | null {
-  if ((env.RENDER_EXECUTOR ?? "local") !== "fffleet") return null;
+/** Settings from the environment, or null when `flag` (RENDER_EXECUTOR, or DOWNLOAD_EXECUTOR for downloads) is not "fffleet". Throws when it is but the settings are incomplete. */
+export function readRemoteConfig(env: Record<string, string | undefined> = process.env, flag = "RENDER_EXECUTOR"): RemoteConfig | null {
+  if ((env[flag] ?? "local") !== "fffleet") return null;
   const s3 = s3ConfigFromEnv(env);
   const bucket = env.FFFLEET_S3_BUCKET;
-  if (!s3 || !bucket) throw new Error("RENDER_EXECUTOR=fffleet needs FFFLEET_S3_BUCKET and S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, optionally FFFLEET_S3_ENDPOINT)");
+  if (!s3 || !bucket) throw new Error(`${flag}=fffleet needs FFFLEET_S3_BUCKET and S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, optionally FFFLEET_S3_ENDPOINT)`);
   return {
     url: env.FFFLEET_URL || undefined,
     token: env.FFFLEET_TOKEN || undefined,
