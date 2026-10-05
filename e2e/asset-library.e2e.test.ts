@@ -1,13 +1,13 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { api, averageColor, baseUrl, createProject, frameRgb, isBlue, isGreen, mediaRoot, render, setComposition, uploadSource } from "./helpers";
+import { libraryRef, storedFileExists, api, averageColor, baseUrl, createProject, frameRgb, isBlue, isGreen, mediaRoot, render, setComposition, uploadSource } from "./helpers";
 
 const execFileAsync = promisify(execFile);
-const exists = (filePath: string) => access(filePath).then(() => true, () => false);
+const exists = storedFileExists;
 
 /** A solid blue PNG whose size makes its bytes (and content hash) unique to this test file. */
 async function bluePng(name: string) {
@@ -33,7 +33,7 @@ const rawStatus = async (route: string, method: string, json?: unknown) => {
 describe("asset library: link, render, unlink, rename, delete", () => {
   it("keeps library assets when a project unlinks them and only deletes them explicitly", async () => {
     const bytes = await bluePng("asset-library-blue.png");
-    const filePath = path.join(mediaRoot, "assets", "library", `${createHash("sha256").update(bytes).digest("hex")}.png`);
+    const filePath = libraryRef(`${createHash("sha256").update(bytes).digest("hex")}.png`);
 
     // Upload straight into the library; uploading identical bytes again reuses the row.
     const asset = await libraryUpload(bytes, "libblue", 201);

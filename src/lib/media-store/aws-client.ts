@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import type { ByteRange, ObjectClient, PutMeta } from "./types";
 
-export type S3Settings = { endpoint?: string; region?: string; forcePathStyle?: boolean };
+export type S3Settings = { endpoint?: string; region?: string; forcePathStyle?: boolean; credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string } };
 
 /** ObjectClient on the AWS SDK (works with any S3-compatible store). The SDK is imported lazily so local installs never load it. */
 export async function createAwsObjectClient(settings: S3Settings = {}): Promise<ObjectClient> {
@@ -11,6 +11,10 @@ export async function createAwsObjectClient(settings: S3Settings = {}): Promise<
     region: settings.region ?? "us-east-1",
     ...(settings.endpoint ? { endpoint: settings.endpoint } : {}),
     forcePathStyle: settings.forcePathStyle ?? Boolean(settings.endpoint),
+    ...(settings.credentials ? { credentials: settings.credentials } : {}),
+    // S3-compatible stores (Hetzner, MinIO, ...) often reject the SDK's default trailing-checksum uploads.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return {
     async head(bucket, key) {

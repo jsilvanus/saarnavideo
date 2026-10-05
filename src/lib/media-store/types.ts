@@ -29,6 +29,8 @@ export interface MediaStore {
   stream(ref: string, range?: ByteRange): Promise<Readable>;
   /** Deletes the file; a missing file is not an error. */
   remove(ref: string): Promise<void>;
+  /** Like materialize for an S3 reference, but into `dir` and reused while a file of `size` bytes is already there. */
+  materializeCached(ref: string, dir: string, size: number): Promise<string>;
   /** A path on local disk that ffmpeg/ffprobe/yt-dlp can read. Local refs return themselves; S3 refs are downloaded into `workDir`. */
   materialize(ref: string, workDir: string): Promise<string>;
 }

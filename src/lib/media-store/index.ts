@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { LocalBackend } from "./local";
@@ -56,6 +56,14 @@ export function createMediaStore(options: MediaStoreOptions): MediaStore {
       if (parsed.kind === "local") await local.remove(parsed.path);
       else await requireS3().remove(parsed.bucket, parsed.key);
     },
+    async materializeCached(ref, dir, size) {
+      const parsed = parseRef(ref);
+      if (parsed.kind === "local") return parsed.path;
+      const target = path.join(dir, path.basename(parsed.key));
+      const existing = await stat(target).then(info => info.size, () => -1);
+      if (existing !== size) await requireS3().download(parsed.bucket, parsed.key, target);
+      return target;
+    },
     async materialize(ref, workDir) {
       const parsed = parseRef(ref);
       if (parsed.kind === "local") return parsed.path;
@@ -85,7 +93,7 @@ export async function createMediaStoreFromEnv(env: Record<string, string | undef
     return createMediaStore({ mode, root });
   }
   const { createAwsObjectClient } = await import("./aws-client");
-  const client = await createAwsObjectClient({ endpoint: env.MEDIA_S3_ENDPOINT, region: env.AWS_REGION });
+  const client = await createAwsObjectClient({ endpoint: env.MEDIA_S3_ENDPOINT, region: env.AWS_REGION, credentials: env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY ? { accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY, sessionToken: env.AWS_SESSION_TOKEN } : undefined });
   return createMediaStore({ mode: mode as "local" | "s3", root, s3: { client, bucket: env.MEDIA_S3_BUCKET!, prefix: env.MEDIA_S3_PREFIX ?? "media" } });
 }
 

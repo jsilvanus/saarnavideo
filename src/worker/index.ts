@@ -26,6 +26,8 @@ import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
+import { getMediaStore } from "@/lib/media-store";
+import { openJobFiles, resolveLocalFile, type JobFiles } from "@/worker/media-io";
 import { createTranscriptionStaging } from "@/worker/transcription-staging";
 
 const execFileAsync = promisify(execFile);
@@ -70,29 +72,44 @@ async function claimJob() {
   return null;
 }
 
-async function createOutput(projectId: string, jobId: string, type: "VIDEO" | "THUMBNAIL" | "CAPTIONS_SRT" | "CAPTIONS_VTT" | "AUDIO", storagePath: string, mimeType: string, preview = false, language?: string) {
-  const sizeBytes = await stat(storagePath).then(s => s.size, () => undefined);
+/** Stores a finished local file (uploading it first when media lives in S3) and records it as an Output row. */
+async function createOutput(files: JobFiles, projectId: string, jobId: string, type: "VIDEO" | "THUMBNAIL" | "CAPTIONS_SRT" | "CAPTIONS_VTT" | "AUDIO", localPath: string, mimeType: string, preview = false, language?: string) {
+  const sizeBytes = await stat(localPath).then(s => s.size, () => undefined);
   const maxSize = type === "VIDEO" || type === "AUDIO" ? RESOURCE_LIMITS.maxOutputFileSizeBytes : 50 * 1024 * 1024;
   if (sizeBytes !== undefined && sizeBytes > maxSize) throw new Error(`${type} file size ${formatBytes(sizeBytes)} exceeds limit ${formatBytes(maxSize)}`);
+  const storagePath = await files.finalize(localPath, `outputs/${projectId}/${path.basename(localPath)}`, mimeType);
   return prisma.output.create({ data: { projectId, jobId, type, preview, storagePath, mimeType, language, sizeBytes } }); }
 
-async function processDownload(job: Awaited<ReturnType<typeof claimJob>>) {
+/** Replaces every stored reference in a path map by a local file path (downloading S3 files into the cache). */
+async function localizePaths(files: JobFiles, paths: Map<string, string>): Promise<Map<string, string>> {
+  const resolved = new Map<string, string>();
+  const byRef = new Map<string, Promise<string>>();
+  for (const ref of new Set(paths.values())) byRef.set(ref, files.local(ref));
+  for (const [key, ref] of paths) resolved.set(key, await byRef.get(ref)!);
+  return resolved;
+}
+
+async function processDownload(job: Awaited<ReturnType<typeof claimJob>>, files: JobFiles) {
+  const store = await getMediaStore();
   if (!job?.sourceId) throw new Error("DOWNLOAD job has no source");
   const source = await prisma.source.findUnique({ where: { id: job.sourceId } }); if (!source) throw new Error("Source not found");
-  if (source.storagePath) { try { const s = await stat(source.storagePath); if (validateSourceFile(s.size, RESOURCE_LIMITS).valid) { await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Source already available" }, true); return; } } catch { /* re-download */ } }
+  if (source.storagePath) { try { const s = await store.stat(source.storagePath); if (s && validateSourceFile(s.size, RESOURCE_LIMITS).valid) { await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Source already available" }, true); return; } } catch { /* re-download */ } }
   if (source.type !== "YOUTUBE" || !source.youtubeUrl || !source.youtubeVideoId) throw new Error("Source is not a downloadable YouTube source");
-  const storagePath = path.join(MEDIA_ROOT, "sources", job.projectId, `${source.youtubeVideoId}.mp4`);
+  // Downloaded next to the other sources for local storage; into the job's scratch directory (then uploaded) for S3.
+  const localPath = store.mode === "local" ? path.join(MEDIA_ROOT, "sources", job.projectId, `${source.youtubeVideoId}.mp4`) : path.join(files.scratchDir, `${source.youtubeVideoId}.mp4`);
+  await mkdir(path.dirname(localPath), { recursive: true });
   await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: 0 }, true);
   const { cookies } = await withDownloadCookies(async cookiesFile => {
     if (remoteDownloader) {
       const stopWatching = watchCancel(job.id, () => void remoteDownloader.cancel(job.id));
       try {
-        await remoteDownloader.run({ jobId: job.id, url: source.youtubeUrl!, outputPath: storagePath, cookiesFile, onProgress: percent => void updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(percent) }) });
+        await remoteDownloader.run({ jobId: job.id, url: source.youtubeUrl!, outputPath: localPath, cookiesFile, onProgress: percent => void updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(percent) }) });
       } catch (error) { throw stopWatching() ? new JobCancelled() : error; } finally { stopWatching(); }
-    } else await downloadYouTubeSource({ videoId: source.youtubeVideoId!, url: source.youtubeUrl! }, storagePath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); }, { cookiesFile });
+    } else await downloadYouTubeSource({ videoId: source.youtubeVideoId!, url: source.youtubeUrl! }, localPath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); }, { cookiesFile });
   });
   if (cookies) await logJobEvent(job.id, "INFO", cookies.source === "db" ? `Used the YouTube cookies from Settings${cookies.updated ? "; yt-dlp refreshed them and the stored copy was updated" : ""}` : "Used the cookie file from YTDLP_COOKIES_FILE");
-  const s = await stat(storagePath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(storagePath, { force: true }); throw new Error(validation.reason); }
+  const s = await stat(localPath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(localPath, { force: true }); throw new Error(validation.reason); }
+  const storagePath = await files.finalize(localPath, `sources/${job.projectId}/${source.youtubeVideoId}.mp4`, "video/mp4");
   await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
@@ -149,7 +166,7 @@ function jobDefinition(job: { parameters: unknown }, project: { definition: unkn
   return ("renderDefinition" in parameters ? parameters.renderDefinition : project.definition) as ProjectDefinition;
 }
 
-async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VIDEO" | "PREVIEW" | "THUMBNAIL") {
+async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VIDEO" | "PREVIEW" | "THUMBNAIL", files: JobFiles) {
   if (!job) throw new Error("Missing job");
   const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true, assets: true } }); if (!project) throw new Error("Project not found");
   const definition = jobDefinition(job, project);
@@ -157,21 +174,22 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   await mkdir(MEDIA_ROOT, { recursive: true });
   if (type === "THUMBNAIL") {
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
-    const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await runSimpleFfmpeg(job.id, ["-hide_banner", "-y", "-ss", "1", "-i", video.storagePath, "-frames:v", "1", "-q:v", "2", outputPath], { files: [video.storagePath], outputPath }); await createOutput(project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
+    const videoPath = await files.local(video.storagePath); const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await runSimpleFfmpeg(job.id, ["-hide_banner", "-y", "-ss", "1", "-i", videoPath, "-frames:v", "1", "-q:v", "2", outputPath], { files: [videoPath], outputPath }); await createOutput(files, project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
-  const sourcePaths = resolveSourcePaths(definition, project.sources); const assetPaths = new Map<string, string>(); for (const asset of project.assets) { assetPaths.set(asset.assetKey, asset.storagePath); assetPaths.set(asset.id, asset.storagePath); assetPaths.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
+  const sourcePaths = await localizePaths(files, resolveSourcePaths(definition, project.sources)); const assetRefs = new Map<string, string>(); for (const asset of project.assets) { assetRefs.set(asset.assetKey, asset.storagePath); assetRefs.set(asset.id, asset.storagePath); assetRefs.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
   for (const warning of findUnresolvedImageRefs(definition, project.assets)) await logJobEvent(job.id, "WARN", warning);
   // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
-  for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetPaths.set(asset.id, asset.storagePath);
-  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
+  for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetRefs.set(asset.id, asset.storagePath);
+  const assetPaths = await localizePaths(files, assetRefs);
+  const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
   const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined });
   const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const outputSeconds = definition.composition.items.length ? timelineDuration(definition.composition.items) : definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds; const totalMs = Math.max(1, Math.round(outputSeconds * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
   const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };
   try { await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase, message, from: 0, to: 99, reportSpeed: true }, remote); }
   finally { if (prepared?.burn) void rm(prepared.burn.assPath, { force: true }).catch(() => undefined); }
-  await createOutput(project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW", captionFiles?.language);
-  if (captionFiles) { await createOutput(project.id, job.id, "CAPTIONS_SRT", captionFiles.srtPath, CAPTION_MIME.srt, type === "PREVIEW", captionFiles.language); await createOutput(project.id, job.id, "CAPTIONS_VTT", captionFiles.vttPath, CAPTION_MIME.vtt, type === "PREVIEW", captionFiles.language); }
+  await createOutput(files, project.id, job.id, "VIDEO", outputPath, "video/mp4", type === "PREVIEW", captionFiles?.language);
+  if (captionFiles) { await createOutput(files, project.id, job.id, "CAPTIONS_SRT", captionFiles.srtPath, CAPTION_MIME.srt, type === "PREVIEW", captionFiles.language); await createOutput(files, project.id, job.id, "CAPTIONS_VTT", captionFiles.vttPath, CAPTION_MIME.vtt, type === "PREVIEW", captionFiles.language); }
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: `${type === "PREVIEW" ? "Preview" : "Video"} ready`, completedAt: new Date() }, true);
 }
 
@@ -213,27 +231,27 @@ async function runFfmpegWithProgress(jobId: string, args: string[], totalMs: num
 }
 
 /** PODCAST job: intro + composition audio + outro as one loudness-normalised MP3/M4A with tags and cover art (see buildPodcastRenderPlan). */
-async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
+async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>, files: JobFiles) {
   if (!job) throw new Error("Missing job");
   const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true } }); if (!project) throw new Error("Project not found");
   const definition = jobDefinition(job, project);
   const settings = readPodcastSettings(definition, job.parameters);
   await mkdir(MEDIA_ROOT, { recursive: true });
-  const sourcePaths = resolveSourcePaths(definition, project.sources);
+  const sourcePaths = await localizePaths(files, resolveSourcePaths(definition, project.sources));
   const audioIds = referencedAudioAssetIds(definition, settings);
   const audioAssets = new Map((await prisma.asset.findMany({ where: { id: { in: audioIds } } })).map(asset => [asset.id, asset]));
   const missing = audioIds.filter(id => !audioAssets.has(id)); if (missing.length) throw new Error(`Audio assets not found in the library: ${missing.join(", ")}`);
-  const assetPaths = new Map([...audioAssets].map(([id, asset]) => [id, asset.storagePath]));
-  const pickTrack = (assetId?: string) => { const asset = assetId ? audioAssets.get(assetId) : undefined; return asset ? { path: asset.storagePath, durationSeconds: asset.durationMs != null ? asset.durationMs / 1000 : undefined } : undefined; };
+  const assetPaths = await localizePaths(files, new Map([...audioAssets].map(([id, asset]) => [id, asset.storagePath])));
+  const pickTrack = (assetId?: string) => { const asset = assetId ? audioAssets.get(assetId) : undefined; return asset ? { path: assetPaths.get(asset.id)!, durationSeconds: asset.durationMs != null ? asset.durationMs / 1000 : undefined } : undefined; };
   const thumbnails = await prisma.output.findMany({ where: { projectId: project.id, type: "THUMBNAIL" }, orderBy: { createdAt: "desc" }, take: 5 });
-  let coverPath: string | undefined; for (const thumbnail of thumbnails) { if (await stat(thumbnail.storagePath).then(() => true, () => false)) { coverPath = thumbnail.storagePath; break; } }
+  let coverPath: string | undefined; for (const thumbnail of thumbnails) { const local = await files.local(thumbnail.storagePath).catch(() => undefined); if (local && await stat(local).then(() => true, () => false)) { coverPath = local; break; } }
   if (!coverPath) await logJobEvent(job.id, "INFO", "No thumbnail available yet; the podcast gets no cover art");
   const metadata = resolvePodcastMetadata(project, settings);
-  const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.${settings.format}`);
+  const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}.${settings.format}`);
   const planOptions = { settings, intro: pickTrack(settings.introAssetId), outro: pickTrack(settings.outroAssetId), coverPath, metadata };
   // The body (source audio, voiceovers, mixes, range) is decoded once into a temporary WAV; the loudness measure and the
   // encode pass read that file, so a multi-GB sermon video is not demuxed three times.
-  const bodyPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.body.wav`);
+  const bodyPath = path.join(files.scratchDir, `${project.id}-${job.id}.body.wav`);
   try {
     const bodyPlan = buildPodcastRenderPlan(definition, sourcePaths, bodyPath, assetPaths, { ...planOptions, bodyOnly: true });
     const bodyMs = Math.max(1, Math.round(bodyPlan.durationSeconds * 1000));
@@ -254,7 +272,7 @@ async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
     await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 60 }, true);
     await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 60, to: 100 }, remote);
   } finally { await rm(bodyPath, { force: true }); }
-  await createOutput(project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
+  await createOutput(files, project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Podcast ready", completedAt: new Date() }, true);
 }
 
@@ -331,11 +349,13 @@ async function processTranscription(job: MediaJobRow) {
   if (!params.auditorJobId) {
     const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
     const isPartial = isPartialRange(params.rangeStartSeconds, params.rangeEndSeconds, durationSeconds);
-    let filePath = source.storagePath;
+    // S3-stored sources are downloaded into the worker cache first (ffmpeg needs a real file).
+    const sourcePath = await resolveLocalFile(await getMediaStore(), MEDIA_ROOT, source.storagePath);
+    let filePath = sourcePath;
     // With S3 staging the whole source is reduced to 16 kHz mono audio first, so far less than the video goes to the bucket.
     if (isPartial || transcriptionStaging) {
       await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: isPartial ? "Extracting requested range" : "Extracting audio", progress: 0 }, true);
-      const tempClipPath = await extractTranscriptionClip(job.id, source.storagePath, isPartial ? params.rangeStartSeconds : undefined, isPartial ? params.rangeEndSeconds : undefined);
+      const tempClipPath = await extractTranscriptionClip(job.id, sourcePath, isPartial ? params.rangeStartSeconds : undefined, isPartial ? params.rangeEndSeconds : undefined);
       params = { ...params, tempClipPath };
       await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
       filePath = tempClipPath;
@@ -418,7 +438,7 @@ async function resumeInterruptedTranscriptions() {
   }
 }
 
-async function runClaimedJob(job: MediaJobRow) { try { if (job.type === "DOWNLOAD") await processDownload(job); else if (job.type === "TRANSCRIBE") await processTranscription(job); else if (job.type === "PODCAST") await runPodcastJob(job); else await runFfmpegJob(job, job.type); } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } }
+async function runClaimedJob(job: MediaJobRow) { let files: JobFiles | undefined; try { if (job.type === "TRANSCRIBE") await processTranscription(job); else { files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: job.id, cacheMaxBytes: process.env.MEDIA_CACHE_MAX_BYTES ? Number(process.env.MEDIA_CACHE_MAX_BYTES) : undefined }); if (job.type === "DOWNLOAD") await processDownload(job, files); else if (job.type === "PODCAST") await runPodcastJob(job, files); else await runFfmpegJob(job, job.type, files); } } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } finally { await files?.cleanup(); } }
 
 const captionPublishDeps: CaptionPublishDeps = {
   findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),
@@ -431,17 +451,17 @@ type PublicationRow = { id: string; projectId: string; privacy: string; project:
 type PublicationInputs = { thumbnailPath?: string; title: string; description?: string };
 
 /** Facebook Page upload: the token comes from the environment (never the database) and stays out of logs and errors. */
-async function runFacebookPublication(publication: PublicationRow, inputs: PublicationInputs) {
+async function runFacebookPublication(publication: PublicationRow, inputs: PublicationInputs, deps: CaptionPublishDeps) {
   const config = readFacebookConfig();
   if (!config) throw new Error("Facebook is not configured: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_ACCESS_TOKEN on the worker (see docs/FACEBOOK_SETUP.md)");
   const jobId = publication.output.jobId;
-  const sidecar = jobId ? await captionPublishDeps.findSidecar(jobId) : null;
+  const sidecar = jobId ? await deps.findSidecar(jobId) : null;
   const log = async (level: "INFO" | "WARN", message: string, data?: Record<string, unknown>) => { console.log(`[facebook] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); };
   const result = await publishVideoToFacebook({ filePath: publication.output.storagePath, ...inputs, published: publication.privacy === "PUBLIC", sidecar }, { config, log, client: { pollIntervalMs: Number(process.env.FACEBOOK_STATUS_POLL_MS ?? 5000), timeoutMs: Number(process.env.FACEBOOK_PROCESSING_TIMEOUT_MS ?? 30 * 60_000), retryDelayMs: Number(process.env.FACEBOOK_RETRY_DELAY_MS ?? 1000) } });
   return result.videoId;
 }
 
-async function runYouTubePublication(publication: PublicationRow, inputs: PublicationInputs) {
+async function runYouTubePublication(publication: PublicationRow, inputs: PublicationInputs, _deps: CaptionPublishDeps) {
   const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, ...inputs, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" });
   if (result.thumbnailError && publication.output.jobId) await logJobEvent(publication.output.jobId, "WARN", "YouTube thumbnail upload failed; the video itself was published", { videoId: result.videoId, error: result.thumbnailError });
   return result.videoId;
@@ -450,15 +470,18 @@ async function runYouTubePublication(publication: PublicationRow, inputs: Public
 async function processPublication() {
   const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false;
   const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false;
-  const row = { ...publication, output: publication.output };
+  // The uploaders read local files: with S3 media the video, thumbnail and caption sidecar are downloaded first.
+  const files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: `publication-${publication.id}` });
+  const deps: CaptionPublishDeps = { ...captionPublishDeps, findSidecar: async jobId => { const sidecar = await captionPublishDeps.findSidecar(jobId); return sidecar ? { ...sidecar, storagePath: await files.local(sidecar.storagePath) } : null; } };
   try {
+    const row = { ...publication, output: { ...publication.output, storagePath: await files.local(publication.output.storagePath) } };
     const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false }, orderBy: { createdAt: "desc" } });
-    const inputs: PublicationInputs = { thumbnailPath: thumbnail?.storagePath, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined };
-    const externalId = await (publication.provider === "FACEBOOK" ? runFacebookPublication : runYouTubePublication)(row, inputs);
+    const inputs: PublicationInputs = { thumbnailPath: thumbnail ? await files.local(thumbnail.storagePath).catch(() => undefined) : undefined, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined };
+    const externalId = await (publication.provider === "FACEBOOK" ? runFacebookPublication : runYouTubePublication)(row, inputs, deps);
     await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId, completedAt: new Date(), error: null } });
     // Facebook uploads its captions as part of publishVideoToFacebook; YouTube captions go up after the video.
-    if (publication.provider === "YOUTUBE") await uploadCaptionsAfterVideo({ videoId: externalId, videoOutput: publication.output }, captionPublishDeps);
-  } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); }
+    if (publication.provider === "YOUTUBE") await uploadCaptionsAfterVideo({ videoId: externalId, videoOutput: publication.output }, deps);
+  } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } finally { await files.cleanup(); }
   return true;
 }
 

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { inject } from "vitest";
@@ -8,6 +8,18 @@ const execFileAsync = promisify(execFile);
 
 export const baseUrl = inject("baseUrl");
 export const mediaRoot = inject("mediaRoot");
+export const storage = inject("storage");
+
+/** True when a stored reference (a local path, or s3://bucket/key in a fake-S3 run) still exists. */
+export async function storedFileExists(ref: string): Promise<boolean> {
+  if (!ref.startsWith("s3://")) return access(ref).then(() => true, () => false);
+  return (await fetch(`${inject("s3Url")}/${ref.slice("s3://".length)}`, { method: "HEAD" })).ok;
+}
+
+/** Reference of a file in the asset library, as stored for the current storage mode. */
+export function libraryRef(fileName: string): string {
+  return storage === "s3" ? `s3://e2e-media/media/assets/library/${fileName}` : path.join(mediaRoot, "assets", "library", fileName);
+}
 export const fixturesDir = inject("fixturesDir");
 export const fixture = (name: string) => path.join(fixturesDir, name);
 
