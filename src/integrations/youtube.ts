@@ -6,10 +6,10 @@ import { dirname } from "node:path";
 export type YouTubeSource = { videoId: string; url: string };
 export type DownloadProgress = { percent: number; bytesProcessed?: bigint; totalBytes?: bigint; speed?: string; etaSeconds?: number };
 
-export async function downloadYouTubeSource(source: YouTubeSource, outputPath: string, onProgress?: (progress: DownloadProgress) => Promise<void> | void): Promise<void> {
+export async function downloadYouTubeSource(source: YouTubeSource, outputPath: string, onProgress?: (progress: DownloadProgress) => Promise<void> | void, options: { cookiesFile?: string } = {}): Promise<void> {
   await mkdir(dirname(outputPath), { recursive: true });
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("yt-dlp", ["--no-playlist", "--format", "bv*+ba/b", "--merge-output-format", "mp4", "--newline", "--progress", "--output", outputPath, source.url], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("yt-dlp", [...(options.cookiesFile ? ["--cookies", options.cookiesFile] : []), "--no-playlist", "--format", "bv*+ba/b", "--merge-output-format", "mp4", "--newline", "--progress", "--output", outputPath, source.url], { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();

@@ -204,6 +204,16 @@ model YouTubeConnection {
   updatedAt DateTime @updatedAt
 }
 
+/// yt-dlp cookies for YouTube downloads (Netscape format), AES-256-GCM encrypted; singleton row. Never returned by the API.
+model YtDlpCookies {
+  id String @id @default(cuid())
+  provider String @unique @default("youtube")
+  encrypted String
+  cookieCount Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model AssetFolder {
   id String @id @default(cuid())
   name String

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import ConnectorsSettings from "@/components/connectors/ConnectorsSettings";
+import YouTubeCookiesSettings from "@/components/connectors/YouTubeCookiesSettings";
 import styles from "@/components/connectors/connectors.module.css";
 import { getServerLocale } from "@/i18n/server";
 import { makeT } from "@/i18n/translate";
@@ -16,6 +17,7 @@ export default async function SettingsPage() {
         <Link href="/">{t("settings.back")}</Link>
       </div>
       <h1>{t("settings.title")}</h1>
+      <YouTubeCookiesSettings />
       <ConnectorsSettings />
     </main>
   );

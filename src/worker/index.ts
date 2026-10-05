@@ -7,6 +7,7 @@ import { timelineDuration } from "@/domain/timeline";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
 import type { ProjectDefinition } from "@/domain/project";
 import { resolveSourcePaths } from "@/worker/source-resolution";
+import { withDownloadCookies } from "@/integrations/ytdlp-cookies";
 import { downloadYouTubeSource, uploadCaptionToYouTube, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
@@ -79,13 +80,15 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>) {
   if (source.type !== "YOUTUBE" || !source.youtubeUrl || !source.youtubeVideoId) throw new Error("Source is not a downloadable YouTube source");
   const storagePath = path.join(MEDIA_ROOT, "sources", job.projectId, `${source.youtubeVideoId}.mp4`);
   await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: 0 }, true);
-  if (remoteDownloader) {
-    const stopWatching = watchCancel(job.id, () => void remoteDownloader.cancel(job.id));
-    try {
-      const { cookiesUpdated } = await remoteDownloader.run({ jobId: job.id, url: source.youtubeUrl, outputPath: storagePath, cookiesFile: process.env.YTDLP_COOKIES_FILE?.trim() || undefined, onProgress: percent => void updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(percent) }) });
-      if (cookiesUpdated) await logJobEvent(job.id, "INFO", "yt-dlp updated the cookie file; written back to YTDLP_COOKIES_FILE");
-    } catch (error) { throw stopWatching() ? new JobCancelled() : error; } finally { stopWatching(); }
-  } else await downloadYouTubeSource({ videoId: source.youtubeVideoId, url: source.youtubeUrl }, storagePath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); });
+  const { cookies } = await withDownloadCookies(async cookiesFile => {
+    if (remoteDownloader) {
+      const stopWatching = watchCancel(job.id, () => void remoteDownloader.cancel(job.id));
+      try {
+        await remoteDownloader.run({ jobId: job.id, url: source.youtubeUrl!, outputPath: storagePath, cookiesFile, onProgress: percent => void updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(percent) }) });
+      } catch (error) { throw stopWatching() ? new JobCancelled() : error; } finally { stopWatching(); }
+    } else await downloadYouTubeSource({ videoId: source.youtubeVideoId!, url: source.youtubeUrl! }, storagePath, async p => { await updateProgress(job.id, { phase: "DOWNLOADING", message: "Downloading YouTube source", progress: Math.round(p.percent), bytesProcessed: p.bytesProcessed, totalBytes: p.totalBytes, speed: p.speed, etaSeconds: p.etaSeconds }); }, { cookiesFile });
+  });
+  if (cookies) await logJobEvent(job.id, "INFO", cookies.source === "db" ? `Used the YouTube cookies from Settings${cookies.updated ? "; yt-dlp refreshed them and the stored copy was updated" : ""}` : "Used the cookie file from YTDLP_COOKIES_FILE");
   const s = await stat(storagePath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(storagePath, { force: true }); throw new Error(validation.reason); }
   await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
