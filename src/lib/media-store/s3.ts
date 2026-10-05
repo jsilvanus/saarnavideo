@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -38,6 +38,13 @@ export class S3Backend {
 
   async download(bucket: string, key: string, target: string): Promise<void> {
     await mkdir(path.dirname(target), { recursive: true });
-    await pipeline(await this.client.get(bucket, key), createWriteStream(target));
+    const temp = `${target}.${process.pid}.${Date.now()}.part`;
+    try {
+      await pipeline(await this.client.get(bucket, key), createWriteStream(temp));
+      await rename(temp, target);
+    } catch (error) {
+      await rm(temp, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 }

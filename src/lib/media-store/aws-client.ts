@@ -11,6 +11,9 @@ export async function createAwsObjectClient(settings: S3Settings = {}): Promise<
     region: settings.region ?? "us-east-1",
     ...(settings.endpoint ? { endpoint: settings.endpoint } : {}),
     forcePathStyle: settings.forcePathStyle ?? Boolean(settings.endpoint),
+    // S3-compatible stores (Hetzner, MinIO, ...) often reject the SDK's default trailing-checksum uploads.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return {
     async head(bucket, key) {

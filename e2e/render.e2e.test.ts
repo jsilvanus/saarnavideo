@@ -1,9 +1,8 @@
 import { access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { api, averageColor, createProject, download, frameRgb, isBlack, isBlue, isGreen, isRed, mediaRoot, probe, render, setComposition, uploadAsset, uploadSource, waitForJob, whiteShare } from "./helpers";
+import { api, averageColor, createProject, download, frameRgb, isBlack, isBlue, isGreen, isRed, mediaRoot, probe, storedFileExists, render, setComposition, uploadAsset, uploadSource, waitForJob, whiteShare } from "./helpers";
 
 const CENTER = { x: 460, y: 440, w: 1000, h: 200 };
-const exists = (filePath: string) => access(filePath).then(() => true, () => false);
 
 describe("rendering through the real API and worker", () => {
   it("joins a 5 s green clip and a 5 s red clip with a text overlay across the cut", async () => {
@@ -195,11 +194,11 @@ describe("project lifecycle", () => {
     const copy = await api<{ id: string }>(`/api/projects/${project.id}/duplicate`, { method: "POST" });
 
     await api(`/api/projects/${project.id}`, { method: "DELETE" }, 204);
-    expect(await exists(storagePath)).toBe(true);
+    expect(await storedFileExists(storagePath)).toBe(true);
     await api(`/api/sources/${green.id}`, {}, 404);
 
     await api(`/api/projects/${copy.id}`, { method: "DELETE" }, 204);
-    expect(await exists(storagePath)).toBe(false);
+    expect(await storedFileExists(storagePath)).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+import { startFakeS3 } from "../src/lib/media-store/fake-s3-server";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -18,6 +19,10 @@ declare module "vitest" {
     facebookUrl: string;
     /** Base URL of the fake Google endpoints (OAuth token + YouTube Data API) the worker and server are configured against (see e2e/fake-youtube-server.ts). */
     youtubeUrl: string;
+    /** "s3" when the run uses a fake S3 bucket for media (E2E_STORAGE=s3), else "local". */
+    storage: "local" | "s3";
+    /** Base URL of the fake S3 server when storage is "s3", else "". */
+    s3Url: string;
   }
 }
 
@@ -123,6 +128,9 @@ export default async function setup(project: TestProject) {
   // Fake Google endpoints: OAuth token exchange/refresh and the YouTube upload API.
   const fakeYouTube = await startFakeYouTubeServer();
   Object.assign(env, { YOUTUBE_CLIENT_ID: "e2e-client", YOUTUBE_CLIENT_SECRET: "e2e-secret", YOUTUBE_REDIRECT_URI: "http://localhost/api/integrations/youtube/callback", YOUTUBE_TOKEN_ENCRYPTION_KEY: "a".repeat(64), YOUTUBE_API_BASE_URL: fakeYouTube.url, YOUTUBE_OAUTH_TOKEN_URL: `${fakeYouTube.url}/token` });
+  // E2E_STORAGE=s3 runs the same suite with media in a fake S3 bucket (see src/lib/media-store); tests that look at local files skip themselves.
+  const fakeS3 = process.env.E2E_STORAGE === "s3" ? await startFakeS3() : null;
+  if (fakeS3) Object.assign(env, { MEDIA_STORAGE: "s3", MEDIA_S3_BUCKET: "e2e-media", MEDIA_S3_ENDPOINT: fakeS3.url, AWS_ACCESS_KEY_ID: "e2e", AWS_SECRET_ACCESS_KEY: "e2e" });
   execFileSync(path.join(BIN, "prisma"), ["db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], { cwd: ROOT, env, stdio: "ignore" });
 
   const server = start(path.join(BIN, "next"), ["dev", "--port", String(port)], env, "next");
@@ -144,12 +152,15 @@ export default async function setup(project: TestProject) {
   project.provide("auditorSttUrl", auditorSttUrl);
   project.provide("facebookUrl", fakeGraph.url);
   project.provide("youtubeUrl", fakeYouTube.url);
+  project.provide("storage", fakeS3 ? "s3" : "local");
+  project.provide("s3Url", fakeS3?.url ?? "");
 
   return async () => {
     stop(server);
     stop(worker);
     await fakeGraph.close();
     await fakeYouTube.close();
+    await fakeS3?.close();
     if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true });
     await rm(path.join(ROOT, distDir), { recursive: true, force: true });
     await Promise.all(NEXT_TRACKED_FILES.map((file, index) => (trackedBefore[index] === undefined ? undefined : writeFile(file, trackedBefore[index]))));
