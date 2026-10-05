@@ -27,19 +27,9 @@ export async function openJobFiles({ store, mediaRoot, jobId, cacheMaxBytes = DE
   const s3 = store.mode === "s3";
   const scratchDir = s3 ? path.join(mediaRoot, "work", jobId) : mediaRoot;
   await mkdir(scratchDir, { recursive: true });
-  const cacheDir = path.join(mediaRoot, "cache");
   return {
     scratchDir,
-    async local(ref) {
-      if (!isS3Ref(ref)) return ref;
-      const info = await store.stat(ref);
-      if (!info) throw new Error(`Media file not found: ${ref}`);
-      const dir = path.join(cacheDir, createHash("sha1").update(ref).digest("hex"));
-      const cached = await store.materializeCached(ref, dir, info.size);
-      await utimes(cached, new Date(), new Date()).catch(() => undefined);
-      void pruneCache(cacheDir, cacheMaxBytes, cached);
-      return cached;
-    },
+    local: ref => resolveLocalFile(store, mediaRoot, ref, cacheMaxBytes),
     async finalize(localPath, key, mimeType) {
       return s3 ? store.moveFile(key, localPath, { mimeType }) : localPath;
     },
@@ -47,6 +37,18 @@ export async function openJobFiles({ store, mediaRoot, jobId, cacheMaxBytes = DE
       if (s3) await rm(scratchDir, { recursive: true, force: true }).catch(() => undefined);
     },
   };
+}
+
+/** A real local path for a stored reference: local paths as they are, S3 files downloaded into the size-capped cache under `mediaRoot/cache`. */
+export async function resolveLocalFile(store: MediaStore, mediaRoot: string, ref: string, cacheMaxBytes = DEFAULT_CACHE_MAX_BYTES): Promise<string> {
+  if (!isS3Ref(ref)) return ref;
+  const info = await store.stat(ref);
+  if (!info) throw new Error(`Media file not found: ${ref}`);
+  const cacheDir = path.join(mediaRoot, "cache");
+  const cached = await store.materializeCached(ref, path.join(cacheDir, createHash("sha1").update(ref).digest("hex")), info.size);
+  await utimes(cached, new Date(), new Date()).catch(() => undefined);
+  void pruneCache(cacheDir, cacheMaxBytes, cached);
+  return cached;
 }
 
 /** Deletes the least recently used cached files until the cache is under `maxBytes`; never touches `keep`. */
