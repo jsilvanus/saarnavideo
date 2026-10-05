@@ -12,6 +12,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:transcription": "vitest run --config vitest.e2e.config.ts e2e/transcription.e2e.test.ts",
     "worker": "tsx src/worker/index.ts",
+    "media:migrate": "tsx scripts/media-migrate.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:generate:postgres": "prisma generate --schema prisma/schema.postgresql.prisma",
