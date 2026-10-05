@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { validateAssetKey, validateAssetType, validateImageFile, type ImageMetadata } from "@/integrations/image-assets";
 import { MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFile } from "@/integrations/audio-assets";
 import { prisma } from "@/lib/prisma";
@@ -65,29 +68,47 @@ export async function storeLibraryFile(data: Buffer, contentHash: string, extens
   return storagePath;
 }
 
-export type AudioUpload = { buffer: Buffer; mimeType: string; contentHash: string };
+/** An audio upload already written to a temporary file under the library directory; the hash was taken while writing. */
+export type AudioUpload = { tempPath: string; size: number; mimeType: string; contentHash: string };
 
 /** True when the upload is one of the accepted audio formats (by declared MIME type, else by file extension). */
 export function isAudioUpload(file: File): boolean {
   return canonicalAudioType(file.type, file.name) !== null;
 }
 
-/** Size/type checks for an uploaded audio file; returns the decoded upload or an error response. */
+/**
+ * Size/type checks for an uploaded audio file. The bytes are streamed into a temporary file while a SHA-256 is
+ * computed, so the file is never copied into a second in-memory buffer. (`request.formData()` has already parsed the
+ * multipart body by then; removing that copy needs a streaming multipart parser, see Consider.md.) Returns the upload
+ * or an error response.
+ */
 export async function readAudioUpload(file: File): Promise<AudioUpload | Response> {
   const mimeType = canonicalAudioType(file.type, file.name);
   if (!mimeType) return jsonError("Audio must be MP3, M4A, WAV, OGG or WebM", 400);
   if (file.size <= 0) return jsonError("Audio file is empty", 400);
   if (file.size > MAX_AUDIO_ASSET_SIZE) return jsonError("Audio file is too large", 413);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  return { buffer, mimeType, contentHash: sha256(buffer) };
+  const directory = path.join(mediaRoot(), "assets", "library");
+  await mkdir(directory, { recursive: true });
+  const tempPath = path.join(directory, `.upload-${randomUUID()}`);
+  const hash = createHash("sha256");
+  try {
+    const hashing = new Transform({ transform(chunk, _encoding, done) { hash.update(chunk); done(null, chunk); } });
+    await pipeline(Readable.fromWeb(file.stream() as unknown as NodeReadableStream), hashing, createWriteStream(tempPath, { flags: "wx" }));
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  return { tempPath, size: file.size, mimeType, contentHash: hash.digest("hex") };
 }
 
 /**
- * Stores an audio upload in the library and probes it with ffprobe. A file that is not decodable audio is removed again
- * and answered with a 400. Call only when no asset with this hash exists (the file could otherwise still be in use).
+ * Moves the temporary upload to its content-addressed place in the library and probes it with ffprobe. A file that is
+ * not decodable audio is removed again and answered with a 400. The temporary file is consumed either way. Call only when
+ * no asset with this hash exists (the file could otherwise still be in use).
  */
 export async function storeAudioAsset(upload: AudioUpload): Promise<{ storagePath: string; durationMs: number } | Response> {
-  const storagePath = await storeLibraryFile(upload.buffer, upload.contentHash, audioExtension(upload.mimeType));
+  const storagePath = path.join(path.dirname(upload.tempPath), `${upload.contentHash}.${audioExtension(upload.mimeType)}`);
+  await rename(upload.tempPath, storagePath);
   const probe = await probeAudioFile(storagePath);
   if (!probe) {
     await rm(storagePath, { force: true }).catch(() => undefined);
@@ -98,17 +119,22 @@ export async function storeAudioAsset(upload: AudioUpload): Promise<{ storagePat
 
 /**
  * Reuses the library asset with the same audio bytes (moving it to `folderId` / linking `projectId` when given) or stores
- * and probes the upload as a new AUDIO asset. Returns an error response when the file is not decodable audio.
+ * and probes the upload as a new AUDIO asset. Returns an error response when the file is not decodable audio. Always
+ * consumes the upload's temporary file.
  */
 export async function findOrCreateAudioAsset(upload: AudioUpload, options: { assetKey: string; folderId?: string | null; projectId?: string }) {
   const link = options.projectId ? { projects: { connect: { id: options.projectId } } } : {};
-  const existing = await prisma.asset.findFirst({ where: { contentHash: upload.contentHash, mimeType: upload.mimeType, type: "AUDIO" } });
-  if (existing) {
-    const asset = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: options.folderId ?? existing.folderId, expiresAt: null, ...link } });
-    return { asset, created: false };
+  try {
+    const existing = await prisma.asset.findFirst({ where: { contentHash: upload.contentHash, mimeType: upload.mimeType, type: "AUDIO" } });
+    if (existing) {
+      const asset = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: options.folderId ?? existing.folderId, ...link } });
+      return { asset, created: false };
+    }
+    const stored = await storeAudioAsset(upload);
+    if (stored instanceof Response) return stored;
+    const asset = await prisma.asset.create({ data: { assetKey: options.assetKey, type: "AUDIO", storagePath: stored.storagePath, mimeType: upload.mimeType, durationMs: stored.durationMs, sizeBytes: BigInt(upload.size), contentHash: upload.contentHash, folderId: options.folderId ?? null, ...link } });
+    return { asset, created: true };
+  } finally {
+    await rm(upload.tempPath, { force: true }).catch(() => undefined);
   }
-  const stored = await storeAudioAsset(upload);
-  if (stored instanceof Response) return stored;
-  const asset = await prisma.asset.create({ data: { assetKey: options.assetKey, type: "AUDIO", storagePath: stored.storagePath, mimeType: upload.mimeType, durationMs: stored.durationMs, sizeBytes: BigInt(upload.buffer.length), contentHash: upload.contentHash, folderId: options.folderId ?? null, expiresAt: null, ...link } });
-  return { asset, created: true };
 }

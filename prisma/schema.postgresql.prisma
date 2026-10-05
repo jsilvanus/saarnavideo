@@ -86,7 +86,7 @@ model Project {
   definition Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  expiresAt DateTime?
+  expiresAt DateTime? // legacy: unused, media is persistent
   sources Source[]
   jobs MediaJob[]
   outputs Output[]
@@ -107,7 +107,7 @@ model Source {
   durationMs Int?
   referenceDurationMs Int?
   createdAt DateTime @default(now())
-  expiresAt DateTime?
+  expiresAt DateTime? // legacy: unused, media is persistent
   projects Project[]
   jobs MediaJob[]
   transcriptionRuns TranscriptionRun[]
@@ -160,7 +160,7 @@ model Output {
   language String?
   sizeBytes BigInt?
   createdAt DateTime @default(now())
-  expiresAt DateTime?
+  expiresAt DateTime? // legacy: unused, media is persistent
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   publications Publication[]
   @@index([projectId, createdAt])
@@ -230,7 +230,7 @@ model Asset {
   contentHash String?
   folderId String?
   folder AssetFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  expiresAt DateTime?
+  expiresAt DateTime? // legacy: unused, media is persistent
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   projects Project[]

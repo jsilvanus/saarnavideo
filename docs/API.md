@@ -140,8 +140,7 @@ Response: 201 Created
 {
   "id": "source-id",
   "originalName": "service.mp4",
-  "sizeBytes": 5368709120,
-  "expiresAt": "2024-08-27T12:00:00Z"
+  "sizeBytes": 5368709120
 }
 ```
 
@@ -187,7 +186,7 @@ Response: 201 Created
 - Max file size: 10 MB (configurable via `MAX_ASSET_SIZE_BYTES`)
 - Max dimensions: 4096x2160 (4K)
 - Min dimensions: 100x100
-- Retention: 7 days by default
+- Assets are kept in the global library until deleted explicitly
 
 #### List Project Assets
 
@@ -284,7 +283,8 @@ Response: 202 Accepted
   "progress": 0,
   "createdAt": "2024-08-20T12:00:00Z",
   "durationWarnings": [],              // length notices (platform limit, target); never block
-  "assetWarnings": []                  // image references that name no asset linked to the project; they render without it
+  "assetWarnings": [],                 // image references that match no library asset; they render without it
+  "autoLinkedAssets": []               // keys of library assets the definition refers to that were linked to the project now
 }
 ```
 

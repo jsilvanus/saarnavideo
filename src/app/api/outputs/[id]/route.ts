@@ -17,9 +17,6 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params;
   const output = await prisma.output.findUnique({ where: { id } });
   if (!output) return jsonError("Output not found", 404);
-  if (output.expiresAt && output.expiresAt < new Date()) {
-    return jsonError("Output expired", 410);
-  }
 
   try {
     // Players ask for byte ranges (and `?inline=1` marks a player's first request), so seeking does not restart the download.

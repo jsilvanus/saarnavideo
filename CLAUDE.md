@@ -59,6 +59,9 @@ Core domain models using Zod for type-safe validation:
 - **`validation.ts`** - Shared validation utilities
 - **`*.test.ts`** - Unit tests for domain logic
 
+#### `/src/i18n` - Interface language (fi, en, sv)
+- **`locales.ts`** (locale list, cookie name, `Accept-Language` parsing), **`translate.ts`** (`translate`, `makeT`, typed `MessageKey`), **`I18nProvider.tsx`** (`useT()`, `useLocale()`), **`server.ts`** (`getServerLocale()` for server components), **`messages/{fi,en,sv}.ts`**.
+
 #### `/src/components` - React UI Components
 - **`CompositionEditor.tsx`** - Interactive composition editor
 - **`GraphicsEditor.tsx`** - Scene graph editor
@@ -102,16 +105,18 @@ FFmpeg-based rendering pipeline:
 Models:
 - **Project** - Composition project with template reference
 - **Source** - Media input (upload or YouTube reference)
-- **GenerationJob** - Async video generation task
+- **MediaJob** - Async job (render, preview, thumbnail, podcast, download, transcribe) claimed by the worker
 - **Output** - Generated video or thumbnail artifact
-- **Publication** - YouTube upload record
+- **Publication** - YouTube or Facebook upload record
 - **Asset** - Library image or audio file (overlay, background, logo, font; audio for voiceovers and podcast intro/outro, with `durationMs`)
-- **JobLog** - Generation process logs
+- **JobLog** - Job process logs
+- **TranscriptionRun / TranscriptSegment**, **AssetFolder**, **UserTemplate**, **ApiConnector / ApiRequest**, **YouTubeConnection** - see the sections below
 
 Enums:
 - SourceType (UPLOAD, YOUTUBE)
 - OutputType (VIDEO, THUMBNAIL, CAPTIONS_SRT, CAPTIONS_VTT, AUDIO)
-- JobStatus (QUEUED → ACQUIRING_SOURCE → PROCESSING → RENDERING → COMPLETED/FAILED)
+- MediaJobType (DOWNLOAD, THUMBNAIL, PREVIEW, VIDEO, PODCAST, TRANSCRIBE)
+- MediaJobStatus (QUEUED → RUNNING → COMPLETED/FAILED/CANCELLED)
 - AssetType (OVERLAY, BACKGROUND, LOGO, FONT, AUDIO)
 - PublicationStatus (QUEUED → UPLOADING → COMPLETED/FAILED)
 
@@ -166,7 +171,7 @@ Enums:
 Project
   ├── Source (uploaded video or YouTube reference)
   ├── Composition (timeline of source clips, overlays, slates)
-  ├── GenerationJob (async rendering task)
+  ├── MediaJob (async rendering task)
   ├── Output (rendered video + thumbnail)
   ├── Publication (optional YouTube upload)
   └── Asset (image overlays, backgrounds, logos)
@@ -188,18 +193,18 @@ Project
 Image assets (PNG/JPEG/WebP, 100×100 to 4096×2160, max 10 MB; audio is described under "Voiceover and podcast") live in one global, deduplicated library shared by all projects. The UI is at `/assets` ("Graphics library" link in the root layout, `src/app/assets/page.tsx`).
 
 - **Storage:** content-addressed files at `MEDIA_ROOT/assets/library/<sha256>.<ext>`. `Asset.contentHash` deduplicates: uploading identical bytes again reuses the existing row (the new `assetKey` is ignored) instead of creating a copy.
-- **Lifetime:** library assets have `expiresAt = null` and are never removed by the expiry cleanup. Deleting a project only unlinks its assets. Project removal (`DELETE /api/projects/[id]/assets/[assetId]`) only unlinks (409 with `usage` while the project's definition still uses the asset, `?force=1` overrides). They are removed only explicitly through `DELETE /api/assets/[id]` (409 while linked to projects, `?force=1` overrides; the file is deleted only when no other row shares its `storagePath`). Renaming is `PATCH /api/assets/[id]` (validated with `validateAssetKey`, 409 if another asset has the name). The `/assets` page has Rename/Delete with confirmation and shows "used in N projects".
+- **Lifetime:** library assets are never removed automatically. Deleting a project only unlinks its assets. Project removal (`DELETE /api/projects/[id]/assets/[assetId]`) only unlinks (409 with `usage` while the project's definition still uses the asset, `?force=1` overrides). They are removed only explicitly through `DELETE /api/assets/[id]` (409 while linked to projects, `?force=1` overrides; the file is deleted only when no other row shares its `storagePath`). Renaming is `PATCH /api/assets/[id]` (validated with `validateAssetKey`, 409 if another asset has the name). The `/assets` page has Rename/Delete with confirmation and shows "used in N projects".
 - **Folders:** `AssetFolder` is a tree (`parentId`) used only for organisation. The library page supports drag-and-drop moves between folders and breadcrumbs.
 - **Project link:** `Asset.projects` is a many-to-many relation. Uploading from a project's Graphics tab (`POST /api/projects/[id]/assets`) stores the file in the library and links it. `AssetPicker` (`src/components/AssetPicker.tsx`) browses the whole library and links on pick (`POST /api/projects/[id]/assets/[assetId]`); it is used by "Add from library" (Graphics and Voiceover tabs) and by "Choose from library" in the graphics editor's image layer. The editor's quick list shows only **linked** assets, and it stores the image `src` as `/api/projects/<projectId>/assets/<assetId>`.
-- **Rendering:** the worker builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL. Overlay `imageAsset`, slate `backgroundImage` and rich-layer image `src` values resolve through this map. An asset that isn't linked to the project is skipped, but not silently any more: `findUnresolvedImageRefs` (`src/domain/asset-usage.ts`) lists such image references; `POST /generate` returns them as `assetWarnings` and the worker writes a WARN job log. Uploading bytes that are already in the library reuses that asset and its key; the response says `reused: true` and `requestedKey` when the name asked for was not applied.
+- **Rendering:** one link policy for every asset type: a library asset that the definition refers to (by `assetKey`, by `id` or by its project URL; image layers, overlay `imageAsset`, slate `backgroundImage`, audio clips, podcast intro/outro) is **linked to the project automatically** (`linkReferencedAssets`, `src/lib/asset-link.ts`). `POST /generate` does it before queuing and returns `autoLinkedAssets` (keys); the worker does it again at render time and writes an INFO job log, so definitions edited after queuing are covered too. The worker then builds `assetPaths` from the project's linked assets, keyed by `assetKey`, by `id` and by that project URL (audio is also read by id from the whole library). A reference that matches nothing in the library is still skipped, and reported: `findUnresolvedImageRefs` (`src/domain/asset-usage.ts`) feeds `assetWarnings` in the generate response and a WARN job log. Because a referenced asset is relinked on the next render, unlinking it from a project only sticks once the definition no longer uses it (`DELETE .../assets/[assetId]` already answers 409 with `usage` until then). Uploading bytes that are already in the library reuses that asset and its key; the response says `reused: true` and `requestedKey` when the name asked for was not applied.
 - **Types:** `OVERLAY | BACKGROUND | LOGO | FONT` is a label only; the renderer treats every type the same. `FONT` cannot actually be uploaded because uploads accept images and audio only. `AUDIO` is set automatically for audio files.
 
 ### Captions and export formats
 Captions come from the active `TranscriptSegment`s of each source (see `docs/transcription-editor-contract.md`). Source-level export is `GET /api/sources/[id]/captions.vtt|.srt`. Composition-level (soft) captions are a render option:
 
 - **Request:** `POST /api/projects/[id]/generate` accepts `captions: { mode: "none" | "soft" | "burn" | "both", language?, styleGraphicId? }` (Zod: `captionOptionsSchema` in `src/domain/captions.ts`; modes `none | soft | burn | both`, plus `styleGraphicId` for burned captions, see below). It is stored in `MediaJob.parameters.captions` and read by the worker (`readCaptionOptions`, `src/worker/captions.ts`). The UI selector is on the Generate panel.
-- **Timing:** `mapCaptionsToTimeline` (`src/renderer/caption-timeline.ts`, pure) puts each source's segments on the output timeline: per source-clip it keeps overlapping segments, clips them to the clip range and shifts by the clip's output start (`layoutTimeline` mirrors `buildCompositionRenderPlan`: crossfades pull the next item back by the transition, standalone slates take time and carry no cues, overlays take none). Output cues never overlap (an earlier cue is cut where the next starts), because mov_text cannot hold overlapping cues.
-- **Soft mode:** the worker writes `<output>.srt`/`.vtt`, passes the SRT to `buildCompositionRenderPlan(..., { captions: { path, language } })` (extra last `-i`, `-map N:0 -c:s mov_text -metadata:s:s:0 language=<iso639-2>` appended after the video/audio maps, so the preview rewrite of the first `-map` still works), and stores two extra `Output` rows of type `CAPTIONS_SRT` / `CAPTIONS_VTT` (with `Output.language`) beside the `VIDEO` row. Previews get them too (`preview = true`). No transcript in range = render without a track (WARN job log).
+- **Timing:** `mapCaptionsToTimeline` (`src/renderer/caption-timeline.ts`, pure) puts each source's segments on the output timeline: per source-clip it keeps overlapping segments, clips them to the clip range and shifts by the clip's output start (`layoutTimeline`, `src/domain/timeline.ts`, is the one layout that `buildCompositionRenderPlan` and `buildPodcastRenderPlan` also use: crossfades pull the next item back by the transition, standalone slates take time and carry no cues, overlays take none). Output cues never overlap (an earlier cue is cut where the next starts), because mov_text cannot hold overlapping cues.
+- **Soft mode:** the worker writes `<output>.srt`/`.vtt`, passes the SRT to `buildCompositionRenderPlan(..., { captions: { path, language } })` (extra last `-i`, `-map N:0 -c:s mov_text -metadata:s:s:0 language=<iso639-2>` appended after the video/audio maps), and stores two extra `Output` rows of type `CAPTIONS_SRT` / `CAPTIONS_VTT` (with `Output.language`) beside the `VIDEO` row. Previews get them too (`preview = true`). No transcript in range = render without a track (WARN job log).
 - **Downloads:** `GET /api/outputs/[id]` picks extension/mime from the output type (`outputExtension`, `CAPTION_MIME` in `src/domain/captions.ts`). A `Range` header or `?inline=1` returns a seekable `rangedFileResponse` (206, no attachment header); the podcast player uses `?inline=1`.
 - **YouTube:** after a successful video upload `processPublication` uploads the job's SRT sidecar with `captions.insert` (`uploadCaptionToYouTube`, `src/worker/caption-publish.ts`). Fails soft (WARN JobLog + console). Needs the `youtube.force-ssl` OAuth scope, which `youtube-oauth.ts` now requests; connections made earlier must be reconnected for caption upload to work (the video upload is unaffected). `captions.insert` costs 400 API quota units.
 - **Not covered:** captions in the legacy no-items render path.
@@ -208,7 +213,7 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Caption style = a graphic with a `caption` layer.** `graphicLayerSchema.type` gained `"caption"` (`src/domain/graphics.ts`): a placeholder text box (sample text `Esimerkkiteksti`) whose x/y/width/height (graphic coordinates, 1920x1080 by default) is the area captions are laid out in, and whose `style` map holds the look: `font-family`, `font-size`, `font-weight`, `color`, `text-align`, `vertical-align` (top|middle|bottom; text is anchored to that edge of the box), `background` (box colour, rgba ok), `padding`, `text-shadow` (2nd number = depth), `-webkit-text-stroke` (outline), `max-lines`, `opacity`. `src/domain/caption-style.ts` holds the helpers (`isCaptionStyleGraphic`, `createCaptionGraphic`, `captionStyleFromGraphic` which scales to the video size, and the built-in default: bottom centre, 56 px bold white on `rgba(0,0,0,0.6)`, 2 lines, DejaVu Sans). No schema migration: old graphics/packages are unchanged and a graphic without a caption layer is simply not a caption style. A caption layer inside a graphic that is used as a slate/overlay is ignored by the renderer.
 - **Reuse:** graphics stay project-local (`definition.graphics`), so a style is reused within a project by `styleGraphicId`, across projects with the existing graphic export/import routes (`.svgraphic`; import assigns a new id) and by project duplication. No new table or global library. Older SaarnaVideo versions reject packages containing a caption layer (their layer type enum does not know it).
 - **Editor:** "＋ Caption" in the graphics toolbar and "New caption style" (Graphics tab and the Generate panel) create a graphic pre-filled with a caption layer. The Generate panel lists caption styles in a picker (default = built-in style); fast previews use the same selection.
-- **Render:** the worker (`prepareCaptions`, `src/worker/index.ts`) maps transcript cues onto the output timeline (same `mapCaptionsToTimeline` as soft captions), wraps them (`src/renderer/caption-wrap.ts`: greedy word wrap by character budget, width estimated as `fontSize * 0.55` per character (`0.6` bold) - an approximation for DejaVu Sans, slightly conservative; a cue needing more than `max-lines` (also limited by box height) is split into consecutive pages whose times tile the cue in proportion to their length), writes `<output>.ass` (`src/renderer/ass.ts`, PlayRes = video size) and `buildCompositionRenderPlan(..., { burnedCaptions: { assPath, fontsDir } })` appends `ass=filename=...` after overlays and slates, before the preview downscale (the worker's `scale=640` is appended afterwards, so caption size scales with the picture). The ASS file is deleted after the render. libass is required (`ffmpeg -filters | grep ' ass '`; the Dockerfile.worker build checks it); there is no drawtext fallback. A background colour is one drawn rectangle (box width, height by line count, bottom/top anchored), not libass' per-line box.
+- **Render:** the worker (`prepareCaptions`, `src/worker/index.ts`) maps transcript cues onto the output timeline (same `mapCaptionsToTimeline` as soft captions), wraps them (`src/renderer/caption-wrap.ts`: greedy word wrap by character budget, width estimated as `fontSize * 0.55` per character (`0.6` bold) - an approximation for DejaVu Sans, slightly conservative; a cue needing more than `max-lines` (also limited by box height) is split into consecutive pages whose times tile the cue in proportion to their length), writes `<output>.ass` (`src/renderer/ass.ts`, PlayRes = video size) and `buildCompositionRenderPlan(..., { burnedCaptions: { assPath, fontsDir } })` appends `ass=filename=...` after overlays and slates, before the preview downscale (the `preview: { width: 640 }` render option appends the downscale afterwards, so caption size scales with the picture). The ASS file is deleted after the render. libass is required (`ffmpeg -filters | grep ' ass '`; the Dockerfile.worker build checks it); there is no drawtext fallback. A background colour is one drawn rectangle (box width, height by line count, bottom/top anchored), not libass' per-line box.
 - **Fonts:** the template `fontFile` is used when set (family name read with `fc-scan`, its directory passed as `fontsdir`); otherwise the style's first `font-family` resolved by fontconfig, default `DejaVu Sans` (installed by `fonts-dejavu-core`; Dockerfile.worker also installs `fontconfig`). ASS font size = CSS size x 1.16 because libass sizes the font cell, not the em. Finnish ä/ö/å render with DejaVu.
 - **Validation:** the generate route returns 400 when `styleGraphicId` (with burn/both) is not a graphic of the project or has no caption layer; at render time a missing style falls back to the default with a WARN job log. `mode: "both"` adds the soft track and SRT/VTT outputs to the burned picture.
 - **Tests:** unit tests in `src/renderer/caption-wrap.test.ts`, `ass.test.ts`, `src/domain/caption-style.test.ts`, `src/worker/captions.test.ts`; `e2e/captions-burned.e2e.test.ts` checks text pixels in the caption box only during cues, two box positions, wrapping/paging, Finnish glyphs, both mode and the scaled preview.
@@ -222,14 +227,14 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Upload:** `src/integrations/facebook.ts` (resumable start/transfer/finish with server-dictated chunk ranges, retries on 5xx/network, status polling, thumbnail, `video.<locale>.srt` captions, Graph error mapping such as code 190) and `src/worker/facebook-publish.ts` (orchestration: thumbnail and caption failures are WARN job logs, never fail the publication; upload/processing errors fail it with a readable `Publication.error`).
 - **Tests:** `e2e/fake-graph-server.ts` is a fake Graph API with chunk accounting and an admin API; `src/integrations/facebook.test.ts` (unit/integration) and `e2e/facebook.e2e.test.ts`. `e2e/global-setup.ts` starts the fake server and points the worker and Next server at it (`inject("facebookUrl")`). Never verified against the real Graph API; see `docs/FACEBOOK_SETUP.md`.
 - **YouTube e2e:** `e2e/fake-youtube-server.ts` fakes the Google token endpoint and the resumable video/caption/thumbnail uploads; the worker and server reach it through `YOUTUBE_API_BASE_URL` and `YOUTUBE_OAUTH_TOKEN_URL` (test-only overrides, defaults are Google). `e2e/youtube.e2e.test.ts` covers the OAuth round trip, token refresh, privacy mapping and the soft failure of thumbnail and caption uploads (the video is already on YouTube by then, so they never fail the publication). Never verified against real Google.
-- Output lookups (publish route, worker thumbnail/sidecar) do not filter on `expiresAt`: media is persistent and `src/lib/prisma.ts` clears expiry on write, so such a filter matched nothing.
+- Output lookups (publish route, worker thumbnail/sidecar) do not filter on `expiresAt`: media is persistent and `expiresAt` is unused, so such a filter matched nothing.
 
 ### Voiceover and podcast
 Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `Asset.durationMs` is probed with ffprobe on upload, `src/integrations/audio-assets.ts`: mp3/m4a/wav/ogg/webm, `MAX_AUDIO_ASSET_SIZE_BYTES` default 200 MB). `POST /api/assets` and `POST /api/projects/[id]/assets` detect audio by MIME/extension and force type AUDIO (`readAudioUpload`/`storeAudioAsset` in `src/app/api/_lib/assets.ts`). Browser recordings (`audio/webm;codecs=opus`, no duration in the header) get their duration by decoding once. The `/assets` page shows audio tiles with a player.
 
 - **Timeline item `audio-clip`** (`audioClipSchema`, `src/domain/project.ts`): `assetId`, trim `startSeconds`/`endSeconds` (of the audio file, so length is known without probing), `volume`, `mode`. `standalone` = a base item taking time in sequence (like a slate: `isBaseItem`/`baseItemDuration`; `layoutTimeline` and therefore soft/burned caption alignment include it, it carries no cues). `mix` = layered from `atSeconds` (video-timeline seconds), takes no time, `duckSourceVolume` lowers the source audio during it. Optional `graphicId`/`backgroundImage`/`data` give a standalone clip's video picture (built as a slate; default = template background colour). Definitions are stored without schema defaults, so the renderer applies them itself.
 - **Video render** (`buildCompositionRenderPlan`): standalone clip = slate-like picture + `audioClipFilter` (trim, pad/cut to exact length); mixes = `audioMixFilters` (`adelay` + `amix normalize=0`, ducking via `volume` with `eval=frame`) after the concat. Audio assets are found in `assetPaths` by **asset id** and, unlike images, are loaded from the whole library by the worker (`referencedAudioAssetIds`), not only project-linked assets.
-- **Podcast**: `definition.podcast` (`podcastSettingsSchema`: `introAssetId`, `outroAssetId`, `format` mp3|m4a, `channels`, `crossfadeSeconds`, tags) is saved with the project (optional, old definitions unchanged). `POST /generate {type:"PODCAST", podcast?}` creates a `MediaJob` of type `PODCAST` (no thumbnail job); the worker (`runPodcastJob`, `src/worker/index.ts`) runs `buildPodcastRenderPlan` (`src/renderer/podcast.ts`) twice: a loudnorm measure pass and a linear second pass to -16 LUFS / -1.5 dBTP, output `Output.type = AUDIO` (`audio/mpeg` or `audio/mp4`, extension via `outputExtension(type, mimeType)`). Body = base items in order minus standalone slates (silent, skipped); mixes are moved earlier by the slate time removed before them. Intro/outro are podcast-only: `[intro] acrossfade [body] acrossfade [outro]` (0 = concat), downmixed to mono (default) or stereo, 44.1 kHz, libmp3lame 96k/128k or AAC. Tags via `-metadata` with `-map_metadata -1` (title = project title, artist = preacher, comment = gospelRef, date = today, album from settings), cover art = latest THUMBNAIL output as attached picture (skipped, with an INFO log, when none exists yet). No RSS feed.
+- **Podcast**: `definition.podcast` (`podcastSettingsSchema`: `introAssetId`, `outroAssetId`, `format` mp3|m4a, `channels`, `crossfadeSeconds`, tags) is saved with the project (optional, old definitions unchanged). `POST /generate {type:"PODCAST", podcast?}` creates a `MediaJob` of type `PODCAST` (no thumbnail job); the worker (`runPodcastJob`, `src/worker/index.ts`) renders the body once to a temporary WAV (`buildPodcastRenderPlan` with `bodyOnly`, `src/renderer/podcast.ts`: sources, voiceovers, mixes and range, no intro/outro; deleted afterwards), then builds a loudnorm measure pass and a linear second pass to -16 LUFS / -1.5 dBTP on that file (`bodyWav`), so the source video is decoded once, output `Output.type = AUDIO` (`audio/mpeg` or `audio/mp4`, extension via `outputExtension(type, mimeType)`). Body = base items in order minus standalone slates (silent, skipped); mixes are moved earlier by the slate time removed before them. Intro/outro are podcast-only: `[intro] acrossfade [body] acrossfade [outro]` (0 = concat), downmixed to mono (default) or stereo, 44.1 kHz, libmp3lame 96k/128k or AAC. Tags via `-metadata` with `-map_metadata -1` (title = project title, artist = preacher, comment = gospelRef, date = today, album from settings), cover art = latest THUMBNAIL output as attached picture (skipped, with an INFO log, when none exists yet). No RSS feed.
 - **Range**: `podcast.startSeconds/endSeconds` are seconds of the podcast body (composition audio without slates, before intro/outro). `buildPodcastRenderPlan` trims the body (`atrim`) after the mixes and before intro/outro; `podcastBodyRange` clamps to the body and throws when nothing is left; `podcastBodySeconds`/`podcastDuration` (`src/lib/duration-report.ts`) account for it. The API keeps both optional (no range = whole body); the UI requires both before it queues a podcast, and intro/outro default to none.
 - **UI**: the "Ääni" panel of step Rakenne (`VoiceoverPanel.tsx`: MediaRecorder record/stop/preview/re-record/save, file upload, project audio list with "Add as section" / "Mix over video") and the "Podcast" panel of step Julkaisu (`PodcastPanel.tsx`: required start/end, optional intro/outro from the library, format, channels, crossfade, tags, generate, player + download). `CompositionEditor` shows audio in the resource bin: drop between sections = standalone clip, drop into a section = mix at that section's start.
 - **Tests**: unit `src/domain/audio-clip.test.ts`, `src/renderer/podcast.test.ts`, `caption-timeline.test.ts`, `ffmpeg.test.ts`, `src/worker/podcast.test.ts`, `src/integrations/audio-assets.test.ts`; `e2e/voiceover-podcast.e2e.test.ts` (sine-tone fixtures, segment order by Goertzel, duration, ID3 tags, cover art, ebur128 loudness, caption alignment, ducking).
@@ -243,7 +248,7 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 - **Tests:** unit `reframe.test.ts`, `output-presets.test.ts`, `render-settings.test.ts`, `duration-report.test.ts`, `ffmpeg.test.ts`; `e2e/reframe.e2e.test.ts` (fixture `split.mp4`: left half red, right half green) checks the crop, fit, section/clip override and exact sizes by pixel colour and ffprobe.
 
 ### Project workspace UI (quick publish and three steps)
-`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules) groups the project into three steps (UI language Finnish; inner components such as SectionManager, TranscriptionEditor, CompositionEditor, OutputSettings, PublishPanel and VoiceoverPanel are still English):
+`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules; self-contained pieces already use CSS modules: `TimelineView`, `VariablesEditor`, `FetchVariables` and the step bar of `OpenProject`, so new styles go into a `*.module.css` next to the component) groups the project into three steps (all interface text goes through `useT()`, see "Interface language"):
 - **Pikajulkaisu** (`QuickStep.tsx`, step `quick`, first in the step bar and the landing step of a newly created project; existing projects open on Lähde): one page with five cards using the same handlers as the detailed steps: source (YouTube link or file), title plus `FetchVariables` and the variables editor, sections ("Käytä koko tallennetta" adds the whole source as one section via `addSegment`, with a manual duration field when the duration is unknown; otherwise a link to Rakenne), caption mode with preview/final render and job progress, and `PublishPanel`. `generate`/`previewRender` keep the user on this step when it is active (otherwise they jump to Julkaisu).
 - **Lähde:** sources (one or more), transcriptions, output size (OutputSettings) and project info: title plus **project variables**.
 - **Rakenne:** source sections (each root section has a source picker when the project has several sources, plus Reframe), graphics, voiceover audio, and the timeline: `TimelineView` (overview) above `CompositionEditor` (editing); composition sections are folded under "Koostuksen omat osiot".
@@ -272,11 +277,8 @@ A template seeds a new project; afterwards the project is ordinary data and noth
 - **Section flow:** `addSourceSection` (`src/domain/templates.ts`) is what the Structure step calls when a section is added: it adds the section, its segment and clip (before `template.endingGraphicId` while that slate is still the last base item) and the template's overlay for that section name. `template.sectionNames` feeds the "Pohjan osiot" button of the section manager.
 - The renderer does not know templates; it only sees the definition they produced.
 
-### Generation Pipeline Phases
-1. **ACQUIRING_SOURCE** - Download/verify source media
-2. **PROCESSING** - Parse composition and build FFmpeg commands
-3. **RENDERING** - Execute FFmpeg, generate video and thumbnail
-4. **COMPLETED/FAILED** - Store outputs or log errors
+### Job lifecycle
+A `MediaJob` goes QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. While RUNNING the free-text `phase` and `progress` fields tell where it is (for example DOWNLOADING, EXTRACTING_RANGE, SUBMITTING, ANALYSING, ENCODING, COMPLETE); a render reports progress from ffmpeg's output. The worker claims QUEUED jobs, writes `JobLog` rows, stores `Output` rows on success and the error message on failure.
 
 ---
 
@@ -300,7 +302,7 @@ A template seeds a new project; afterwards the project is ordinary data and noth
 ✅ **Source Management**
 - Local file upload
 - YouTube URL reference (metadata stored)
-- Source expiration and cleanup
+- Sources and outputs are persistent (no expiry)
 
 ✅ **Media Assets**
 - Custom image upload (overlays, backgrounds) and audio upload/recording (voiceovers, jingles)
@@ -328,7 +330,7 @@ A template seeds a new project; afterwards the project is ordinary data and noth
 - `GET /api/projects` - List all projects
 - `POST /api/projects` - Create new project
 - `GET /api/projects/[id]` - Get project details
-- `PUT /api/projects/[id]` - Update project
+- `PATCH /api/projects/[id]` - Update project
 - `DELETE /api/projects/[id]` - Delete project
 - `POST /api/projects/[id]/duplicate` - Clone project
 - `POST /api/projects/[id]/generate` - Queue generation job (`type`: VIDEO, PREVIEW, THUMBNAIL or PODCAST)
@@ -430,13 +432,10 @@ export type Composition = z.infer<typeof compositionSchema>;
 - Prisma queries handle database errors
 - FFmpeg execution captures exit codes and stderr
 - Job logs record all processing steps
-- Errors stored in GenerationJob.error
+- Errors stored in MediaJob.error
 
-### File Expiration
-- NOTE: media is currently persistent (`src/lib/prisma.ts` clears `expiresAt`); the worker no longer runs an expiry cleanup (the old one deleted everything each minute, see git history). The retention bullets below describe the earlier design.
-- Sources expire after 7 days by default (configurable via PROJECT_EXPIRATION_DAYS)
-- Outputs expire after 7 days
-- Expired files auto-cleanup via worker background task
+### Media retention
+Project media (sources, outputs, assets) is persistent; nothing expires and the worker runs no cleanup. The `expiresAt` columns in the schema are legacy and unused; nothing reads or writes them. Files are removed only by explicit deletes (project, source, asset).
 
 ### Type Safety
 - Full TypeScript coverage (no `any` without reason)
@@ -445,22 +444,8 @@ export type Composition = z.infer<typeof compositionSchema>;
 
 ---
 
-## Next Implementation Phases
-
-**Phase 3** (In Progress)
-- Rich transcription integration
-- AI-powered timestamp suggestions
-- Enhanced overlay rendering system
-
-**Phase 4**
-- Advanced template customization UI
-- Preset management
-- Batch generation
-
-**Phase 5**
-- Analytics and metrics
-- Team collaboration
-- API v2 with GraphQL
+## Open work
+See `Consider.md` (refactor backlog), `docs/plan.md` (roadmap) and the "not implemented" notes in the sections above.
 
 ---
 
@@ -470,7 +455,7 @@ export type Composition = z.infer<typeof compositionSchema>;
 1. Check worker is running: `npm run worker`
 2. Verify database connection and environment variables
 3. Check job status: `GET /api/projects/[id]/jobs/[jobId]`
-4. Review job logs in database: `GenerationJob.logs`
+4. Review the job's `JobLog` rows
 
 ### FFmpeg Failures
 1. Verify FFmpeg installed: `which ffmpeg`
@@ -481,7 +466,7 @@ export type Composition = z.infer<typeof compositionSchema>;
 ### Media Upload Issues
 1. Check file permissions and disk space
 2. Verify MIME type is supported (video/audio)
-3. Review upload size limits in `src/app/api/projects/upload`
+3. Review upload size limits in the upload routes (`src/app/api/_lib/assets.ts`, `src/app/api/projects/[id]/source`)
 4. Check storage path configuration
 
 ### Database Issues
@@ -493,9 +478,8 @@ export type Composition = z.infer<typeof compositionSchema>;
 ---
 
 ## File Size Notes
-- Large media files are temporary by default (7-day retention)
-- Outputs stored in `MEDIA_OUTPUT_PATH` (usually `/tmp/saarnavideo-outputs`)
-- Sources cached during job processing, cleaned up after completion
+- Large media files are persistent; plan disk space accordingly
+- Sources, outputs and library assets live under `MEDIA_ROOT` (default `./data/media`)
 - Asset images and audio are stored permanently as content-addressed files in the library
 
 ---
@@ -504,3 +488,13 @@ export type Composition = z.infer<typeof compositionSchema>;
 - See `docs/plan.md` for roadmap
 - See `docs/technical-phase-plan.md` for implementation strategy
 - Review `docs/API.md` for endpoint details
+
+---
+
+## Interface language (fi, en, sv)
+The whole UI is available in Finnish (default), English and Swedish. The language is the `saarnavideo-lang` cookie set by the switcher in the top bar (`LanguageSwitcher`); without it the browser's `Accept-Language` decides, Finnish when unsupported. `layout.tsx` reads it (`getServerLocale`), sets `<html lang>` and wraps the app in `I18nProvider`; client components call `const t = useT()` and `t("area.key", { name })`; server components use `makeT(await getServerLocale())`.
+- **Messages:** `src/i18n/messages/fi.ts` is the source; `en.ts` and `sv.ts` are typed `Record<keyof typeof fi, string>`, so a missing key is a compile error. `MessageKey` is derived from `fi` (plural suffixes stripped). `{name}` placeholders are filled from the params; an unknown placeholder stays as written. Plurals: define `key_one` and `key_other` and pass `count`; the form comes from `Intl.PluralRules`. Missing text falls back to Finnish, then to the key.
+- **Adding text:** add the key to all three files (same placeholders), then use it. `src/i18n/i18n.test.ts` checks key parity, placeholder parity and plural pairs.
+- **Dynamic keys** (job status, publication status, animation names) are built as `` `jobStatus.${status}` `` and cast to `MessageKey`; check the key exists first when the value can be unknown (`jobStatusLabel`).
+- **Not translated:** error text returned by API routes (`error` fields), server-side warnings (`assetWarnings`), job logs and the docs. `computeDurationReport` warnings carry `params` so the UI renders them itself (`DurationNotice`), the `message` stays English for API clients. Church and template content (built-in templates, church-year variable names) is Finnish by design and is not part of the UI language.
+- **Output language is separate:** the language of captions/transcription is chosen per run (`tr.language`), not by the interface language.

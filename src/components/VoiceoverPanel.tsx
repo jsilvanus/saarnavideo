@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { errorMessage, requestJson } from "@/components/api";
 import { formatTime } from "@/components/format";
 import AssetPicker from "@/components/AssetPicker";
@@ -29,6 +30,7 @@ export function audioClipFor(asset: AudioAsset, mode: "standalone" | "mix"): Ite
 type Props = { projectId: string; assets: AudioAsset[]; definition: Definition; onSaveDefinition: (definition: Definition) => Promise<void>; onChanged: () => void | Promise<void> };
 
 export default function VoiceoverPanel({ projectId, assets, definition, onSaveDefinition, onChanged }: Props) {
+  const t = useT();
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [state, setState] = useState<"idle" | "recording" | "recorded">("idle");
   const [seconds, setSeconds] = useState(0);
@@ -49,7 +51,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
 
   async function start() {
     setError(""); setMessage("");
-    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) { setError("This browser cannot record audio. Upload an audio file instead."); return; }
+    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) { setError(t("vo.noRecording")); return; }
     try {
       const media = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.current = media;
@@ -69,7 +71,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
       const startedAt = Date.now();
       timer.current = setInterval(() => setSeconds((Date.now() - startedAt) / 1000), 200);
     } catch (e) {
-      setError(e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "SecurityError") ? "Microphone access was denied. Allow the microphone in the browser and try again." : errorMessage(e, "Could not start recording"));
+      setError(e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "SecurityError") ? t("vo.micDenied") : errorMessage(e, t("vo.startFailed")));
     }
   }
   function stop() { if (recorder.current?.state === "recording") recorder.current.stop(); }
@@ -82,11 +84,11 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
       form.set("file", source, uploadName);
       form.set("assetKey", sanitizeAssetKey(key.trim()) || defaultVoiceoverName());
       form.set("type", "AUDIO");
-      const asset = await requestJson<AudioAsset>(`/api/projects/${projectId}/assets`, { method: "POST", body: form }, "Upload failed");
-      setMessage(`Saved “${asset.assetKey}” to the library and this project.`);
+      const asset = await requestJson<AudioAsset>(`/api/projects/${projectId}/assets`, { method: "POST", body: form }, t("vo.uploadFailed"));
+      setMessage(t("vo.saved", { name: asset.assetKey }));
       await onChanged();
       return true;
-    } catch (e) { setError(errorMessage(e, "Upload failed")); return false; } finally { setBusy(false); }
+    } catch (e) { setError(errorMessage(e, t("vo.uploadFailed"))); return false; } finally { setBusy(false); }
   }
   async function saveRecording() {
     if (!blob) return;
@@ -99,45 +101,45 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
   }
   async function addToComposition(asset: AudioAsset, mode: "standalone" | "mix") {
     setError(""); setMessage("");
-    try { await onSaveDefinition({ ...definition, composition: { ...definition.composition, items: [...definition.composition.items, audioClipFor(asset, mode)] } }); setMessage(mode === "standalone" ? "Added as a section at the end of the composition." : "Added as a mix over the start of the video; adjust its position in Composition."); }
-    catch (e) { setError(errorMessage(e, "Could not update the composition")); }
+    try { await onSaveDefinition({ ...definition, composition: { ...definition.composition, items: [...definition.composition.items, audioClipFor(asset, mode)] } }); setMessage(mode === "standalone" ? t("vo.addedSection") : t("vo.addedMix")); }
+    catch (e) { setError(errorMessage(e, t("vo.updateFailed"))); }
   }
   const usage = (assetId: string) => definition.composition.items.filter(item => item.type === "audio-clip" && item.assetId === assetId).length;
 
   return <div className="voiceover-panel" style={{ display: "grid", gap: 18 }}>
     <div style={{ display: "grid", gap: 10, padding: 14, border: "1px solid #e5e7eb", borderRadius: 10 }}>
-      <strong>Record a voiceover</strong>
-      <label>Name<input aria-label="Recording name" value={name} onChange={e => setName(e.target.value)} disabled={state === "recording"} /></label>
+      <strong>{t("vo.recordTitle")}</strong>
+      <label>{t("vo.name")}<input aria-label={t("vo.recordingName")} value={name} onChange={e => setName(e.target.value)} disabled={state === "recording"} /></label>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        {state === "idle" && <button data-testid="record-start" className="primary" onClick={() => void start()}>● Record</button>}
-        {state === "recording" && <><button data-testid="record-stop" className="dangerButton" onClick={stop}>■ Stop</button><span data-testid="record-time" role="timer">Recording {formatTime(seconds)}</span></>}
-        {state === "recorded" && <><button data-testid="record-save" className="primary" disabled={busy} onClick={() => void saveRecording()}>Save to project</button><button data-testid="record-again" disabled={busy} onClick={() => { discard(); void start(); }}>Re-record</button><button disabled={busy} onClick={discard}>Discard</button></>}
+        {state === "idle" && <button data-testid="record-start" className="primary" onClick={() => void start()}>{t("vo.record")}</button>}
+        {state === "recording" && <><button data-testid="record-stop" className="dangerButton" onClick={stop}>{t("vo.stop")}</button><span data-testid="record-time" role="timer">{t("vo.recording", { time: formatTime(seconds) })}</span></>}
+        {state === "recorded" && <><button data-testid="record-save" className="primary" disabled={busy} onClick={() => void saveRecording()}>{t("vo.saveToProject")}</button><button data-testid="record-again" disabled={busy} onClick={() => { discard(); void start(); }}>{t("vo.reRecord")}</button><button disabled={busy} onClick={discard}>{t("vo.discard")}</button></>}
       </div>
       {state === "recorded" && previewUrl && <audio data-testid="record-preview" controls src={previewUrl} style={{ width: "100%" }} />}
-      <small className="muted">The browser asks for microphone permission. Recordings are saved in the audio library and linked to this project.</small>
+      <small className="muted">{t("vo.micNote")}</small>
     </div>
 
     <div style={{ display: "grid", gap: 10, padding: 14, border: "1px solid #e5e7eb", borderRadius: 10 }}>
-      <strong>Upload an audio file</strong>
+      <strong>{t("vo.uploadTitle")}</strong>
       <div className="form-grid">
-        <label>Audio file (MP3, M4A, WAV, OGG, WebM)<input data-testid="audio-file" type="file" accept={AUDIO_ACCEPT} onChange={e => { const f = e.target.files?.[0] ?? null; setFile(f); if (f) setFileName(f.name.replace(/\.[^.]+$/, "")); }} /></label>
-        <label>Name<input value={fileName} onChange={e => setFileName(e.target.value)} placeholder="intro-jingle" /></label>
+        <label>{t("vo.audioFile")}<input data-testid="audio-file" type="file" accept={AUDIO_ACCEPT} onChange={e => { const f = e.target.files?.[0] ?? null; setFile(f); if (f) setFileName(f.name.replace(/\.[^.]+$/, "")); }} /></label>
+        <label>{t("vo.name")}<input value={fileName} onChange={e => setFileName(e.target.value)} placeholder={t("vo.uploadPlaceholder")} /></label>
       </div>
-      <div><button data-testid="audio-upload" disabled={busy || !file} onClick={() => void saveFile()}>Upload audio</button></div>
+      <div><button data-testid="audio-upload" disabled={busy || !file} onClick={() => void saveFile()}>{t("vo.upload")}</button></div>
     </div>
 
     {message && <p className="success">{message}</p>}{error && <p className="error">{error}</p>}
 
     <div>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><strong>Project audio</strong><button data-testid="audio-from-library" onClick={() => setLibraryOpen(true)}>Add from library</button></div>
-      {libraryOpen && <AssetPicker projectId={projectId} kind="audio" title="Add audio from the library" linkedIds={assets.map(a => a.id)} pickLinked={false} onPick={async () => { await onChanged(); setMessage("Audio added to this project."); }} onClose={() => setLibraryOpen(false)} />}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><strong>{t("vo.projectAudio")}</strong><button data-testid="audio-from-library" onClick={() => setLibraryOpen(true)}>{t("vo.fromLibrary")}</button></div>
+      {libraryOpen && <AssetPicker projectId={projectId} kind="audio" title={t("vo.pickerTitle")} linkedIds={assets.map(a => a.id)} pickLinked={false} onPick={async () => { await onChanged(); setMessage(t("vo.pickerAdded")); }} onClose={() => setLibraryOpen(false)} />}
       <div className="list" style={{ marginTop: 8 }}>
         {assets.map(asset => <div className="row" key={asset.id} style={{ flexWrap: "wrap", gap: 10 }}>
-          <span><strong>{asset.assetKey}</strong><small style={{ display: "block" }}>{asset.durationMs ? formatTime(asset.durationMs / 1000) : "unknown length"}{usage(asset.id) ? ` · used ${usage(asset.id)}×` : ""}</small></span>
+          <span><strong>{asset.assetKey}</strong><small style={{ display: "block" }}>{asset.durationMs ? formatTime(asset.durationMs / 1000) : t("vo.unknownLength")}{usage(asset.id) ? t("vo.usedTimes", { count: usage(asset.id) }) : ""}</small></span>
           <audio controls preload="none" src={`/api/projects/${projectId}/assets/${asset.id}`} style={{ height: 34 }} />
-          <span style={{ display: "flex", gap: 6 }}><button onClick={() => void addToComposition(asset, "standalone")} title="A section in sequence: voice-only in the podcast, over the template background in the video">Add as section</button><button onClick={() => void addToComposition(asset, "mix")} title="Layered over the video; the source audio is lowered while it plays">Mix over video</button></span>
+          <span style={{ display: "flex", gap: 6 }}><button onClick={() => void addToComposition(asset, "standalone")} title={t("vo.addSectionTitle")}>{t("vo.addSection")}</button><button onClick={() => void addToComposition(asset, "mix")} title={t("vo.mixTitle")}>{t("vo.mix")}</button></span>
         </div>)}
-        {!assets.length && <p className="muted">No audio yet. Record or upload a voiceover above.</p>}
+        {!assets.length && <p className="muted">{t("vo.none")}</p>}
       </div>
     </div>
   </div>;

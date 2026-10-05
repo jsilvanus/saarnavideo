@@ -1,16 +1,21 @@
 import Link from "next/link";
 import ConnectorsSettings from "@/components/connectors/ConnectorsSettings";
 import styles from "@/components/connectors/connectors.module.css";
+import { getServerLocale } from "@/i18n/server";
+import { makeT } from "@/i18n/translate";
 
-export const metadata = { title: "Asetukset · SaarnaVideo" };
+export async function generateMetadata() {
+  return { title: `${makeT(await getServerLocale())("settings.title")} · SaarnaVideo` };
+}
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const t = makeT(await getServerLocale());
   return (
     <main className={styles.page}>
       <div>
-        <Link href="/">← Projektit</Link>
+        <Link href="/">{t("settings.back")}</Link>
       </div>
-      <h1>Asetukset</h1>
+      <h1>{t("settings.title")}</h1>
       <ConnectorsSettings />
     </main>
   );

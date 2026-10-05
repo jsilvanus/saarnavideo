@@ -1,6 +1,6 @@
 import { baseItemDuration, isBaseItem, type AudioClipItem, type PodcastSettings, type ProjectDefinition } from "@/domain/project";
-import { layoutTimeline } from "@/renderer/caption-timeline";
-import { AUDIO_NORMALIZE, audioAssetPath, audioClipFilter, audioMixFilters, formatSeconds, sourceAudioFilter, transitionDuration, type FfmpegPlan } from "@/renderer/ffmpeg";
+import { layoutTimeline, timelineDuration } from "@/domain/timeline";
+import { AUDIO_NORMALIZE, audioAssetPath, audioClipFilter, audioMixFilters, formatSeconds, sourceAudioFilter, type FfmpegPlan } from "@/renderer/ffmpeg";
 
 /** Integrated loudness target for spoken word, in LUFS. */
 export const PODCAST_TARGET_LUFS = -16;
@@ -19,6 +19,10 @@ export type PodcastPlanOptions = {
   metadata?: PodcastMetadata;
   /** "measure" builds the analysis pass (loudnorm print_format=json, no output file); a measurement builds the linear second pass; undefined is single-pass dynamic loudnorm. */
   loudness?: "measure" | LoudnormMeasurement;
+  /** Render only the body (sources, voiceovers, mixes, range) to this lossless file: no intro/outro, no loudness, no tags. */
+  bodyOnly?: boolean;
+  /** A body rendered earlier with `bodyOnly`: the plan reads it as its only body input instead of decoding the sources again. */
+  bodyWav?: string;
 };
 export type PodcastPlan = FfmpegPlan & { /** Expected length of the audio file. */ durationSeconds: number };
 
@@ -77,6 +81,9 @@ export function podcastBodyRange(settings: { startSeconds?: number; endSeconds?:
  * mixed voiceovers are layered at their video-timeline position, moved earlier by the slate time removed before them.
  * Only `startSeconds..endSeconds` of that body is kept when set. Intro, body and outro are joined with a `crossfadeSeconds` crossfade (0 = plain concat), then the result is
  * downmixed, loudness-normalised (loudnorm, -16 LUFS / -1.5 dBTP) and encoded at 44.1 kHz.
+ *
+ * The body is the expensive part (it decodes the source video's audio). `bodyOnly` renders it once to a temporary WAV and
+ * `bodyWav` builds the measure and encode passes on that file, so the source is read once, not three times.
  */
 export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePaths: Map<string, string>, outputPath: string, assetPaths: Map<string, string>, options: PodcastPlanOptions): PodcastPlan {
   const items = definition.composition.items;
@@ -92,9 +99,10 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
   const sourceInputs = new Map<string, number>();
 
   const filters: string[] = [];
+  // The body is the base items minus standalone slates, laid out by the same function as the video (src/domain/timeline.ts).
+  const bodySlot = new Map(layoutTimeline(included).map((slot) => [slot.item, slot]));
   const startsBySlot = new Map<number, number>();
   let current = "";
-  let currentDuration = 0;
   baseItems.forEach((item, slotIndex) => {
     if (item.type === "slate") return;
     const duration = baseItemDuration(item);
@@ -109,32 +117,25 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
     } else {
       filters.push(audioClipFilter(addInput(audioAssetPath(assetPaths, item.assetId)), item, label));
     }
+    const { outputStart, transition: d } = bodySlot.get(item)!;
+    startsBySlot.set(slotIndex, outputStart);
     if (!current) {
       current = label;
-      currentDuration = duration;
-      startsBySlot.set(slotIndex, 0);
       return;
     }
-    const transition = item.transitionIn;
-    const d = transitionDuration(transition, Math.min(currentDuration, duration));
+    const type = item.transitionIn?.type;
     const next = `pc${slotIndex}`;
-    if (transition?.type === "crossfade" && d > 0) {
+    if (type === "crossfade" && d > 0) {
       filters.push(`[${current}][${label}]acrossfade=d=${formatSeconds(d)}:curve1=tri:curve2=tri[${next}]`);
-      startsBySlot.set(slotIndex, currentDuration - d);
-      currentDuration += duration - d;
-    } else if (transition?.type === "fade" && d > 0) {
-      const at = formatSeconds(currentDuration - d);
+    } else if (type === "fade" && d > 0) {
+      const at = formatSeconds(outputStart - d);
       filters.push(`[${current}]afade=t=out:st=${at}:d=${formatSeconds(d)}[${next}o]`, `[${label}]afade=t=in:st=0:d=${formatSeconds(d)}[${next}i]`, `[${next}o][${next}i]concat=n=2:v=0:a=1[${next}]`);
-      startsBySlot.set(slotIndex, currentDuration);
-      currentDuration += duration;
     } else {
       filters.push(`[${current}][${label}]concat=n=2:v=0:a=1[${next}]`);
-      startsBySlot.set(slotIndex, currentDuration);
-      currentDuration += duration;
     }
     current = next;
   });
-  const bodyDuration = currentDuration;
+  const bodyDuration = timelineDuration(included);
 
   // Video-timeline seconds -> podcast-timeline seconds: skipped slates collapse to the point where the next audio starts.
   const podcastTime = (videoSeconds: number): number => {
@@ -159,6 +160,19 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
     current = "body";
   }
 
+  const layout = options.settings.channels === "stereo" ? "stereo" : "mono";
+  if (options.bodyWav) {
+    // Replace everything built so far (the layout maths above stays) by the one input that holds the finished body.
+    args.length = 2; nextInput = 0; filters.length = 0;
+    filters.push(`[${addInput(options.bodyWav)}:a]anull[body]`);
+    current = "body";
+  }
+  if (options.bodyOnly) {
+    filters.push(`[${current}]aformat=channel_layouts=${layout},aresample=44100[podcast]`);
+    args.push("-filter_complex", filters.join(";"), "-map", "[podcast]", "-c:a", "pcm_s16le", outputPath);
+    return { sourcePaths, assetPaths, outputPath, args, durationSeconds: range.end - range.start };
+  }
+
   // Intro + body + outro.
   const crossfade = options.settings.crossfadeSeconds;
   let joined = current;
@@ -176,7 +190,6 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
   if (options.intro) join("intro", options.intro);
   if (options.outro) join("outro", options.outro);
 
-  const layout = options.settings.channels === "stereo" ? "stereo" : "mono";
   filters.push(`[${joined}]aformat=channel_layouts=${layout},${loudnormFilter(options.loudness)},aresample=44100[podcast]`);
 
   const measuring = options.loudness === "measure";

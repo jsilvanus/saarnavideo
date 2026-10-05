@@ -2,6 +2,7 @@
 
 import { formatTime } from "@/components/format";
 import { TemplatePicker } from "@/components/TemplatePicker";
+import { useT } from "@/i18n/I18nProvider";
 import { useWorkspace } from "./useWorkspace";
 
 export default function Modals() {
@@ -28,23 +29,24 @@ export default function Modals() {
     confirmRemoveAsset,
     deleteGraphic,
   } = useWorkspace();
+  const t = useT();
   return (
     <>
       {creating && (
         <div className="backdrop">
           <form className="modal" onSubmit={createProject}>
-            <h2>Uusi projekti</h2>
+            <h2>{t("modal.newProject")}</h2>
             <label>
-              Otsikko
+              {t("project.title")}
               <input value={title} onChange={(e) => setTitle(e.target.value)} required />
             </label>
             <TemplatePicker value={templateValue} onChange={setTemplateValue} />
             <div className="actions">
               <button type="button" onClick={() => setCreating(false)}>
-                Peruuta
+                {t("common.cancel")}
               </button>
               <button className="primary" disabled={busy}>
-                Luo projekti
+                {t("modal.createProject")}
               </button>
             </div>
             {error && <p className="error">{error}</p>}
@@ -53,16 +55,16 @@ export default function Modals() {
       )}
       {removeAsset && (
         <div className="backdrop">
-          <div className="modal" role="dialog" aria-label="Remove asset from project">
-            <h2>Remove “{removeAsset.asset.assetKey}” from this project?</h2>
+          <div className="modal" role="dialog" aria-label={t("modal.removeAsset.aria")}>
+            <h2>{t("modal.removeAsset.title", { name: removeAsset.asset.assetKey })}</h2>
             {removeAsset.usage.length > 0 && (
-              <p className="error">It is still used by {removeAsset.usage.join(", ")}. Those will render without it.</p>
+              <p className="error">{t("modal.removeAsset.used", { usage: removeAsset.usage.join(", ") })}</p>
             )}
-            <p className="muted">The asset stays in the graphics library and in other projects.</p>
+            <p className="muted">{t("modal.removeAsset.note")}</p>
             <div className="actions">
-              <button onClick={() => setRemoveAsset(null)}>Cancel</button>
+              <button onClick={() => setRemoveAsset(null)}>{t("common.cancel")}</button>
               <button className="dangerButton" data-testid="confirm-remove-asset" onClick={() => void confirmRemoveAsset()}>
-                Remove from project
+                {t("modal.removeAsset.confirm")}
               </button>
             </div>
           </div>
@@ -71,12 +73,12 @@ export default function Modals() {
       {confirmDelete && (
         <div className="backdrop">
           <div className="modal">
-            <h2>Delete “{confirmDelete.title}”?</h2>
-            <p className="muted">The project is deleted. Shared sources/assets are retained when referenced elsewhere.</p>
+            <h2>{t("modal.deleteProject.title", { title: confirmDelete.title })}</h2>
+            <p className="muted">{t("modal.deleteProject.note")}</p>
             <div className="actions">
-              <button onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button onClick={() => setConfirmDelete(null)}>{t("common.cancel")}</button>
               <button className="dangerButton" onClick={() => void deleteProject()}>
-                Delete project
+                {t("modal.deleteProject.confirm")}
               </button>
             </div>
           </div>
@@ -85,12 +87,12 @@ export default function Modals() {
       {confirmDeleteGraphicId && (
         <div className="backdrop">
           <div className="modal">
-            <h2>Delete graphic?</h2>
-            <p className="muted">This cannot be undone. A graphic that is already used in Composition will be protected.</p>
+            <h2>{t("modal.deleteGraphic.title")}</h2>
+            <p className="muted">{t("modal.deleteGraphic.note")}</p>
             <div className="actions">
-              <button onClick={() => setConfirmDeleteGraphicId(null)}>Cancel</button>
+              <button onClick={() => setConfirmDeleteGraphicId(null)}>{t("common.cancel")}</button>
               <button className="dangerButton" onClick={() => void deleteGraphic(confirmDeleteGraphicId)}>
-                Delete graphic
+                {t("modal.deleteGraphic.confirm")}
               </button>
             </div>
           </div>
@@ -99,26 +101,26 @@ export default function Modals() {
       {durationMismatch && (
         <div className="backdrop">
           <div className="modal">
-            <h2>Source duration differs</h2>
-            <p>The selected file differs from the recording used to define these sections.</p>
+            <h2>{t("modal.duration.title")}</h2>
+            <p>{t("modal.duration.text")}</p>
             <p>
-              <strong>Reference:</strong>{" "}
-              {durationMismatch.referenceDurationMs != null ? formatTime(durationMismatch.referenceDurationMs / 1000) : "unknown"}
+              <strong>{t("modal.duration.reference")}</strong>{" "}
+              {durationMismatch.referenceDurationMs != null ? formatTime(durationMismatch.referenceDurationMs / 1000) : t("common.unknown")}
               <br />
-              <strong>Selected:</strong>{" "}
-              {durationMismatch.actualDurationMs != null ? formatTime(durationMismatch.actualDurationMs / 1000) : "unknown"}
+              <strong>{t("modal.duration.selected")}</strong>{" "}
+              {durationMismatch.actualDurationMs != null ? formatTime(durationMismatch.actualDurationMs / 1000) : t("common.unknown")}
             </p>
             {durationMismatch.violations?.length && (
               <div className="warning-list">
                 {durationMismatch.violations.map((v) => (
                   <div key={`${v.label}-${v.endSeconds}`}>
-                    <strong>{v.label}</strong>: ends at {formatTime(v.endSeconds)}, file ends at {formatTime(v.durationSeconds)}
+                    {t("modal.duration.violation", { label: v.label, end: formatTime(v.endSeconds), fileEnd: formatTime(v.durationSeconds) })}
                   </div>
                 ))}
               </div>
             )}
             <div className="actions">
-              <button onClick={() => setDurationMismatch(null)}>Choose another file</button>
+              <button onClick={() => setDurationMismatch(null)}>{t("modal.duration.chooseOther")}</button>
               <button
                 className="primary"
                 onClick={() => {
@@ -126,7 +128,7 @@ export default function Modals() {
                   setDurationMismatch(null);
                 }}
               >
-                Continue and clamp at EOF
+                {t("modal.duration.clamp")}
               </button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { errorMessage, requestJson } from "./api";
 import { formatTime } from "./format";
 
@@ -25,10 +26,12 @@ const fmtDuration = (ms?: number | null) => ms ? formatTime(ms / 1000) : "?";
  * calls `onPick`. `pickLinked` controls whether already linked assets can be chosen again (true for "use this image in
  * the layer", false for a plain "Add from library" where a linked asset has nothing left to do).
  */
-export default function AssetPicker({ projectId, kind = "all", linkedIds, pickLinked = true, title = "Asset library", onPick, onClose }: {
+export default function AssetPicker({ projectId, kind = "all", linkedIds, pickLinked = true, title, onPick, onClose }: {
   projectId: string; kind?: AssetKind; linkedIds: string[]; pickLinked?: boolean; title?: string;
   onPick: (asset: LibraryAsset) => void | Promise<void>; onClose: () => void;
 }) {
+  const t = useT();
+  const heading = title ?? t("picker.title");
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -41,10 +44,11 @@ export default function AssetPicker({ projectId, kind = "all", linkedIds, pickLi
 
   useEffect(() => {
     let alive = true;
-    requestJson<{ assets: LibraryAsset[]; folders: Folder[] }>("/api/assets", { cache: "no-store" }, "Could not load the asset library")
+    requestJson<{ assets: LibraryAsset[]; folders: Folder[] }>("/api/assets", { cache: "no-store" }, t("picker.loadFailed"))
       .then(d => { if (alive) { setAssets(d.assets ?? []); setFolders(d.folders ?? []); setLoaded(true); } })
-      .catch(e => { if (alive) { setError(errorMessage(e, "Could not load the asset library")); setLoaded(true); } });
+      .catch(e => { if (alive) { setError(errorMessage(e, t("picker.loadFailed"))); setLoaded(true); } });
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, []);
 
   const searching = query.trim().length > 0;
@@ -56,28 +60,28 @@ export default function AssetPicker({ projectId, kind = "all", linkedIds, pickLi
   }, [assets, query, currentId, filter]);
   const visibleFolders = useMemo(() => searching ? [] : folders.filter(f => f.parentId === currentId).sort((a, b) => a.name.localeCompare(b.name)), [folders, currentId, searching]);
   const path = useMemo(() => folderPath(folders, currentId), [folders, currentId]);
-  const folderName = (id: string | null) => id ? folderPath(folders, id).map(f => f.name).join(" / ") : "Root";
+  const folderName = (id: string | null) => id ? folderPath(folders, id).map(f => f.name).join(" / ") : t("picker.root");
 
   async function choose(asset: LibraryAsset) {
     setBusyId(asset.id); setError("");
     try {
       if (!linked.has(asset.id)) {
-        await requestJson(`/api/projects/${projectId}/assets/${asset.id}`, { method: "POST" }, "Could not add the asset to the project");
+        await requestJson(`/api/projects/${projectId}/assets/${asset.id}`, { method: "POST" }, t("picker.addFailed"));
         setLinked(prev => new Set(prev).add(asset.id));
       }
       await onPick(asset);
-    } catch (e) { setError(errorMessage(e, "Could not add the asset to the project")); }
+    } catch (e) { setError(errorMessage(e, t("picker.addFailed"))); }
     finally { setBusyId(null); }
   }
 
-  return <div role="dialog" aria-modal="true" aria-label={title} data-testid="asset-picker" onClick={e => { if (e.target === e.currentTarget) onClose(); }} style={{ position: "fixed", inset: 0, background: "#0009", display: "grid", placeItems: "center", zIndex: 1000, padding: 12 }}>
+  return <div role="dialog" aria-modal="true" aria-label={heading} data-testid="asset-picker" onClick={e => { if (e.target === e.currentTarget) onClose(); }} style={{ position: "fixed", inset: 0, background: "#0009", display: "grid", placeItems: "center", zIndex: 1000, padding: 12 }}>
     <div style={{ background: "#fff", color: "#18202a", borderRadius: 10, width: "min(860px, 100%)", maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 18, gap: 10, fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}><h2 style={{ margin: 0, flex: 1, fontSize: 20 }}>{title}</h2><button onClick={onClose} aria-label="Close">✕</button></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}><h2 style={{ margin: 0, flex: 1, fontSize: 20 }}>{heading}</h2><button onClick={onClose} aria-label={t("picker.close")}>✕</button></div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <input data-testid="asset-picker-search" placeholder="Search by name" value={query} onChange={e => setQuery(e.target.value)} style={{ flex: 1, minWidth: 160, padding: 7 }} />
-        <select aria-label="Kind" data-testid="asset-picker-kind" value={filter} onChange={e => setFilter(e.target.value as AssetKind)} style={{ padding: 7 }}><option value="all">Images and audio</option><option value="image">Images</option><option value="audio">Audio</option></select>
+        <input data-testid="asset-picker-search" placeholder={t("picker.search")} value={query} onChange={e => setQuery(e.target.value)} style={{ flex: 1, minWidth: 160, padding: 7 }} />
+        <select aria-label={t("picker.kind")} data-testid="asset-picker-kind" value={filter} onChange={e => setFilter(e.target.value as AssetKind)} style={{ padding: 7 }}><option value="all">{t("picker.kindAll")}</option><option value="image">{t("picker.kindImage")}</option><option value="audio">{t("picker.kindAudio")}</option></select>
       </div>
-      {!searching && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 14 }}><button onClick={() => setCurrentId(null)} style={{ fontWeight: currentId ? 400 : 700 }}>Root</button>{path.map(f => <span key={f.id}>/ <button onClick={() => setCurrentId(f.id)}>{f.name}</button></span>)}</div>}
+      {!searching && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 14 }}><button onClick={() => setCurrentId(null)} style={{ fontWeight: currentId ? 400 : 700 }}>{t("picker.root")}</button>{path.map(f => <span key={f.id}>/ <button onClick={() => setCurrentId(f.id)}>{f.name}</button></span>)}</div>}
       {error && <div role="alert" style={{ padding: 8, background: "#fee" }}>{error}</div>}
       <div style={{ overflow: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 12, alignContent: "start", minHeight: 200 }}>
         {visibleFolders.map(f => <button key={f.id} data-testid="asset-picker-folder" onClick={() => setCurrentId(f.id)} style={{ padding: 14, textAlign: "left", border: "1px solid #ccc", borderRadius: 8, background: "#fff" }}><span style={{ fontSize: 28 }}>📁</span><br /><strong>{f.name}</strong></button>)}
@@ -91,14 +95,14 @@ export default function AssetPicker({ projectId, kind = "all", linkedIds, pickLi
             </div>
             <div style={{ padding: 8, display: "grid", gap: 4, flex: 1 }}>
               <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={a.assetKey}>{a.assetKey}</strong>
-              <small style={{ color: "#666" }}>{isAudio(a) ? `Audio · ${fmtDuration(a.durationMs)}` : `${a.width ?? "?"} × ${a.height ?? "?"}`}{searching ? ` · ${folderName(a.folderId)}` : ""}</small>
-              {inProject && <small data-testid="asset-picker-linked" style={{ color: "#166534", fontWeight: 600 }}>✓ In this project</small>}
-              <button disabled={disabled} onClick={() => void choose(a)} style={{ marginTop: "auto" }}>{busyId === a.id ? "Adding…" : inProject ? (pickLinked ? "Use" : "Added") : pickLinked ? "Add and use" : "Add to project"}</button>
+              <small style={{ color: "#666" }}>{isAudio(a) ? t("picker.audio", { duration: fmtDuration(a.durationMs) }) : `${a.width ?? "?"} × ${a.height ?? "?"}`}{searching ? ` · ${folderName(a.folderId)}` : ""}</small>
+              {inProject && <small data-testid="asset-picker-linked" style={{ color: "#166534", fontWeight: 600 }}>{t("picker.inProject")}</small>}
+              <button disabled={disabled} onClick={() => void choose(a)} style={{ marginTop: "auto" }}>{busyId === a.id ? t("picker.adding") : inProject ? (pickLinked ? t("picker.use") : t("picker.added")) : pickLinked ? t("picker.addUse") : t("picker.addProject")}</button>
             </div>
           </div>;
         })}
-        {loaded && !visibleFolders.length && !visibleAssets.length && <div style={{ gridColumn: "1 / -1", padding: 30, textAlign: "center", color: "#777" }}>{searching ? "No assets match the search." : "Nothing here."}</div>}
-        {!loaded && <div style={{ gridColumn: "1 / -1", padding: 30, textAlign: "center", color: "#777" }}>Loading…</div>}
+        {loaded && !visibleFolders.length && !visibleAssets.length && <div style={{ gridColumn: "1 / -1", padding: 30, textAlign: "center", color: "#777" }}>{searching ? t("picker.noMatch") : t("picker.empty")}</div>}
+        {!loaded && <div style={{ gridColumn: "1 / -1", padding: 30, textAlign: "center", color: "#777" }}>{t("picker.loading")}</div>}
       </div>
     </div>
   </div>;

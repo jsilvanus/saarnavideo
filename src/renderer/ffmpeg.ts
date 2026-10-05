@@ -1,11 +1,12 @@
 import { DESIGN_CANVAS } from "@/domain/output-presets";
 import { resolveReframe, type Reframe } from "@/domain/reframe";
-import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem, type Transition } from "@/domain/project";
+import { layoutTimeline } from "@/domain/timeline";
+import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem } from "@/domain/project";
 
 export type CaptionTrackInput = { path: string; language: string };
 /** Burned-in captions: an ASS file rendered onto the picture with libass after overlays/slates (and before any preview downscale). */
 export type BurnedCaptionInput = { assPath: string; /** Directory libass searches for font files (the template font's directory). */ fontsDir?: string };
-export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput };
+export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput; /** Low-cost preview: the picture is downscaled to `width` (aspect kept) after overlays and burned captions, and encoded fast. */ preview?: { width: number } };
 export type FfmpegPlan = { sourcePaths: Map<string, string>; assetPaths?: Map<string, string>; outputPath: string; args: string[] };
 
 type SourceClipItem = Extract<TimelineItem, { type: "source-clip" }>;
@@ -14,6 +15,7 @@ type SlateItem = Extract<TimelineItem, { type: "slate" }>;
 type RichLayer = { id?: string; type?: string; x?: number; y?: number; width?: number; height?: number; rotation?: number; text?: string; src?: string; animation?: string; style?: Record<string, string | number> };
 type TimeRange = { start: number; end: number };
 
+const PREVIEW_ENCODE_ARGS = ["-preset", "ultrafast", "-crf", "30"];
 const ENCODE_ARGS = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart"];
 export const AUDIO_NORMALIZE = "asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
@@ -30,10 +32,6 @@ function centeredText(input: string, output: string, text: string, color: string
   return `[${input}]drawtext=text='${escapeFilterText(text)}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=${y}${extra}[${output}]`;
 }
 
-export function transitionDuration(transition: Transition | undefined, duration: number): number {
-  if (!transition || transition.type === "cut" || transition.durationSeconds <= 0) return 0;
-  return Math.min(transition.durationSeconds, duration / 2);
-}
 const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
 
 /**
@@ -247,29 +245,27 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     filters.push(item.type === "audio-clip" ? audioClipFilter(audio, item, a) : `[${audio}:a]atrim=duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${a}]`);
   });
 
-  let currentVideo = "vn0", currentAudio = "a0", currentDuration = durations[0];
+  // Offsets come from the shared layout (src/domain/timeline.ts), so video, podcast and captions agree.
+  const slots = layoutTimeline(items);
+  let currentVideo = "vn0", currentAudio = "a0";
   for (let index = 1; index < baseItems.length; index++) {
-    const duration = durations[index];
-    const transition = baseItems[index].transitionIn;
-    const d = transitionDuration(transition, Math.min(currentDuration, duration));
+    const { outputStart, transition: d } = slots[index];
+    const type = baseItems[index].transitionIn?.type;
     const inVideo = `vn${index}`, inAudio = `a${index}`;
     const nextVideo = `vc${index}`, nextAudio = `ac${index}`;
-    if (transition?.type === "crossfade" && d > 0) {
-      filters.push(`[${currentVideo}][${inVideo}]xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(currentDuration - d)}[${nextVideo}]`);
+    if (type === "crossfade" && d > 0) {
+      filters.push(`[${currentVideo}][${inVideo}]xfade=transition=fade:duration=${formatSeconds(d)}:offset=${formatSeconds(outputStart)}[${nextVideo}]`);
       filters.push(`[${currentAudio}][${inAudio}]acrossfade=d=${formatSeconds(d)}:curve1=tri:curve2=tri[${nextAudio}]`);
-      currentDuration += duration - d;
-    } else if (transition?.type === "fade" && d > 0) {
+    } else if (type === "fade" && d > 0) {
       const outV = `vfout${index}`, inV = `vfin${index}`, outA = `afout${index}`, inA = `afin${index}`;
-      const outStart = formatSeconds(currentDuration - d);
+      const outStart = formatSeconds(outputStart - d);
       filters.push(`[${currentVideo}]fade=t=out:st=${outStart}:d=${formatSeconds(d)}[${outV}]`);
       filters.push(`[${inVideo}]fade=t=in:st=0:d=${formatSeconds(d)}[${inV}]`);
       filters.push(`[${currentAudio}]afade=t=out:st=${outStart}:d=${formatSeconds(d)}[${outA}]`);
       filters.push(`[${inAudio}]afade=t=in:st=0:d=${formatSeconds(d)}[${inA}]`);
       filters.push(`[${outV}][${outA}][${inV}][${inA}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
-      currentDuration += duration;
     } else {
       filters.push(`[${currentVideo}][${currentAudio}][${inVideo}][${inAudio}]concat=n=2:v=1:a=1[${nextVideo}][${nextAudio}]`);
-      currentDuration += duration;
     }
     currentVideo = nextVideo;
     currentAudio = nextAudio;
@@ -341,7 +337,12 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     outputVideo = "burned";
   }
 
-  args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS);
+  if (options.preview) {
+    filters.push(`[${outputVideo}]scale=${options.preview.width}:-2[preview]`);
+    outputVideo = "preview";
+  }
+
+  args.push("-filter_complex", filters.join(";"), "-map", `[${outputVideo}]`, "-map", `[${currentAudio}]`, ...ENCODE_ARGS, ...(options.preview ? PREVIEW_ENCODE_ARGS : []));
   if (options.captions) {
     // Added after the video/audio maps so callers that patch the first -map (previews) keep working.
     args.splice(args.indexOf("-filter_complex"), 0, "-i", options.captions.path);

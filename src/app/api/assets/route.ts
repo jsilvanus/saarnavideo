@@ -42,9 +42,9 @@ export async function POST(request: Request) {
     if (upload instanceof Response) return upload;
     const { buffer, mimeType, metadata: image, contentHash } = upload;
     const existing = await prisma.asset.findFirst({ where: { contentHash, mimeType } });
-    if (existing) { const updated = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: metadata.data.folderId ?? existing.folderId, expiresAt: null } }); return NextResponse.json(withReuse(serialize(updated), false, metadata.data.assetKey)); }
+    if (existing) { const updated = await prisma.asset.update({ where: { id: existing.id }, data: { folderId: metadata.data.folderId ?? existing.folderId } }); return NextResponse.json(withReuse(serialize(updated), false, metadata.data.assetKey)); }
     const storagePath = await storeLibraryFile(buffer, contentHash, getExtensionFromMimeType(mimeType));
-    const asset = await prisma.asset.create({ data: { assetKey: metadata.data.assetKey, type: metadata.data.type, storagePath, mimeType, width: image.width, height: image.height, hasAlpha: image.hasAlpha, sizeBytes: BigInt(buffer.length), contentHash, folderId: metadata.data.folderId ?? null, expiresAt: null } });
+    const asset = await prisma.asset.create({ data: { assetKey: metadata.data.assetKey, type: metadata.data.type, storagePath, mimeType, width: image.width, height: image.height, hasAlpha: image.hasAlpha, sizeBytes: BigInt(buffer.length), contentHash, folderId: metadata.data.folderId ?? null } });
     return NextResponse.json(serialize(asset), { status: 201 });
   } catch (error) { console.error("Asset library upload error:", error); return jsonError("Asset upload failed", 500); }
 }

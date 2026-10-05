@@ -1,8 +1,10 @@
 import { findPreset, presetForSize } from "@/domain/output-presets";
 import type { ProjectDefinition } from "@/domain/project";
-import { layoutTimeline, timelineDuration } from "@/renderer/caption-timeline";
+import { layoutTimeline, timelineDuration } from "@/domain/timeline";
 
-export type DurationWarning = { code: "over-platform-limit" | "off-target" | "podcast-differs" | "empty"; level: "warning" | "info"; message: string };
+export type DurationWarning = { code: "over-platform-limit" | "off-target" | "podcast-differs" | "empty"; level: "warning" | "info"; message: string;
+  /** Values behind `message`, so the UI can render the warning in its own language. */
+  params?: Record<string, string | number | boolean> };
 export type DurationReport = {
   videoSeconds: number;
   /** Length of the podcast body plus intro/outro; undefined when the project has no audio to export. */
@@ -61,14 +63,14 @@ export function computeDurationReport(definition: ProjectDefinition, assetDurati
   if (videoSeconds <= 0) warnings.push({ code: "empty", level: "info", message: "The composition has no video yet." });
 
   if (chosen?.maxSeconds && videoSeconds > chosen.maxSeconds + 0.5) {
-    warnings.push({ code: "over-platform-limit", level: "warning", message: `Video is ${formatDuration(videoSeconds)}, ${formatDuration(videoSeconds - chosen.maxSeconds)} over the ${formatDuration(chosen.maxSeconds)} limit for ${chosen.label}.` });
+    warnings.push({ code: "over-platform-limit", level: "warning", message: `Video is ${formatDuration(videoSeconds)}, ${formatDuration(videoSeconds - chosen.maxSeconds)} over the ${formatDuration(chosen.maxSeconds)} limit for ${chosen.label}.`, params: { video: formatDuration(videoSeconds), over: formatDuration(videoSeconds - chosen.maxSeconds), limit: formatDuration(chosen.maxSeconds), label: chosen.label } });
   }
   const target = template?.targetSeconds;
   if (target && videoSeconds > 0 && Math.abs(videoSeconds - target) > Math.max(TARGET_TOLERANCE_MIN, target * TARGET_TOLERANCE_RATIO)) {
-    warnings.push({ code: "off-target", level: "warning", message: `Video is ${formatDuration(videoSeconds)}, target was ${formatDuration(target)} (${videoSeconds > target ? "+" : "-"}${formatDuration(Math.abs(videoSeconds - target))}).` });
+    warnings.push({ code: "off-target", level: "warning", message: `Video is ${formatDuration(videoSeconds)}, target was ${formatDuration(target)} (${videoSeconds > target ? "+" : "-"}${formatDuration(Math.abs(videoSeconds - target))}).`, params: { video: formatDuration(videoSeconds), target: formatDuration(target), diff: `${videoSeconds > target ? "+" : "-"}${formatDuration(Math.abs(videoSeconds - target))}` } });
   }
   if (podcastSeconds !== undefined && videoSeconds > 0 && Math.abs(podcastSeconds - videoSeconds) > PODCAST_DIFFERENCE) {
-    warnings.push({ code: "podcast-differs", level: "info", message: `Podcast is ${formatDuration(podcastSeconds)} and video ${formatDuration(videoSeconds)}: ${definition.podcast?.startSeconds !== undefined || definition.podcast?.endSeconds !== undefined ? "the podcast uses only its chosen start–end, " : ""}standalone slates are left out of the podcast and intro/outro are added.` });
+    warnings.push({ code: "podcast-differs", level: "info", message: `Podcast is ${formatDuration(podcastSeconds)} and video ${formatDuration(videoSeconds)}: ${definition.podcast?.startSeconds !== undefined || definition.podcast?.endSeconds !== undefined ? "the podcast uses only its chosen start–end, " : ""}standalone slates are left out of the podcast and intro/outro are added.`, params: { podcast: formatDuration(podcastSeconds), video: formatDuration(videoSeconds), ranged: definition.podcast?.startSeconds !== undefined || definition.podcast?.endSeconds !== undefined } });
   }
   return { videoSeconds, podcastSeconds, targetSeconds: target, limitSeconds: chosen?.maxSeconds, limitLabel: chosen?.label, warnings };
 }

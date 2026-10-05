@@ -1,9 +1,11 @@
 "use client";
 
+import { useT } from "@/i18n/I18nProvider";
 import { useMemo, useState, type ReactNode } from "react";
 import { SECTION_TEMPLATES, instantiateSectionTemplate } from "@/domain/section-templates";
 import type { Section } from "@/domain/sections";
 import { formatTime, sourceLabel } from "./format";
+import type { MessageKey } from "@/i18n/translate";
 
 type Source = { id: string; originalName?: string | null; youtubeUrl?: string | null; durationMs?: number | null; referenceDurationMs?: number | null };
 type Props = {
@@ -19,7 +21,9 @@ type Props = {
 };
 
 export default function SectionManager({ scope, sections, sources = [], durationSeconds, suggestedNames, onChange, renderActions }: Props) {
-  const templates = [...SECTION_TEMPLATES, ...(suggestedNames?.length ? [{ key: "project-template", label: "Pohjan osiot", sections: suggestedNames }] : [])];
+  const t = useT();
+  const localizedTemplates = SECTION_TEMPLATES.map(item => ({ ...item, label: t(`sectionTemplate.${item.key}` as MessageKey), sections: t(`sectionTemplate.${item.key}.sections` as MessageKey).split("|") }));
+  const templates = [...localizedTemplates, ...(suggestedNames?.length ? [{ key: "project-template", label: t("sec.templateOwn"), sections: suggestedNames }] : [])];
   const [lines, setLines] = useState("");
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
   const [parentId, setParentId] = useState("");
@@ -78,22 +82,22 @@ export default function SectionManager({ scope, sections, sources = [], duration
   const canPlace = rangeEnd > rangeStart;
   return <div className="section-manager">
     <div className="form-grid">
-      {scope === "SOURCE" && <label>Source<select value={sourceId} onChange={e => setSourceId(e.target.value)}>{sources.map(source => <option key={source.id} value={source.id}>{sourceLabel(source)}</option>)}</select></label>}
-      <label>Section level<select value={parentId} onChange={e => setParentId(e.target.value)}><option value="">Top level</option>{roots.map(section => <option key={section.id} value={section.id}>Inside: {section.label}</option>)}</select></label>
+      {scope === "SOURCE" && <label>{t("sec.source")}<select value={sourceId} onChange={e => setSourceId(e.target.value)}>{sources.map(source => <option key={source.id} value={source.id}>{sourceLabel(source)}</option>)}</select></label>}
+      <label>{t("sec.level")}<select value={parentId} onChange={e => setParentId(e.target.value)}><option value="">{t("sec.topLevel")}</option>{roots.map(section => <option key={section.id} value={section.id}>{t("sec.inside", { label: section.label })}</option>)}</select></label>
     </div>
-    <label>Sections, one per line<textarea rows={6} value={lines} onChange={e => setLines(e.target.value)} placeholder={"Opening\nPsalm\nGospel\nSermon\nPrayers\nClosing"} /></label>
+    <label>{t("sec.linesLabel")}<textarea rows={6} value={lines} onChange={e => setLines(e.target.value)} placeholder={t("sec.linesPlaceholder")} /></label>
     <div className="button-row">
-      <button onClick={() => void addLines()} disabled={!lines.trim() || (scope === "SOURCE" && !sourceId)}>Place evenly</button>
+      <button onClick={() => void addLines()} disabled={!lines.trim() || (scope === "SOURCE" && !sourceId)}>{t("sec.placeEvenly")}</button>
       {templates.map(template => <button key={template.key} onClick={() => void applyTemplate(template.key)} disabled={!canPlace && scope === "SOURCE"}>{template.label}</button>)}
-      <button disabled title="AI section placement will consume transcript/audio analysis once the assisted transcription service is connected.">Suggest positions with AI</button>
+      <button disabled title={t("sec.aiHint")}>{t("sec.aiButton")}</button>
     </div>
-    <p className="muted">{canPlace ? "New sections are evenly placed from " + formatTime(rangeStart) + " to " + formatTime(rangeEnd) + ". AI assistance can later refine those boundaries." : "Sections can be created without timestamps; choose a source/range when you want automatic placement."}</p>
+    <p className="muted">{canPlace ? t("sec.placed", { start: formatTime(rangeStart), end: formatTime(rangeEnd) }) : t("sec.notPlaced")}</p>
     <div className="list">
       {visible.map(section => <div className="row" key={section.id}>
-        <span><strong>{section.label}</strong><small>{section.startSeconds !== undefined ? formatTime(section.startSeconds) + " → " + formatTime(section.endSeconds ?? section.startSeconds) : "No position yet"} · {section.origin.toLowerCase()}</small></span>
-        <span className="button-row">{renderActions?.(section)}<button onClick={() => setParentId(section.id)}>Section inside…</button><button onClick={() => void removeSection(section.id)}>Remove</button></span>
+        <span><strong>{section.label}</strong><small>{section.startSeconds !== undefined ? formatTime(section.startSeconds) + " → " + formatTime(section.endSeconds ?? section.startSeconds) : t("sec.noPosition")} · {t(`sec.origin.${section.origin}` as MessageKey)}</small></span>
+        <span className="button-row">{renderActions?.(section)}<button onClick={() => setParentId(section.id)}>{t("sec.inside.button")}</button><button onClick={() => void removeSection(section.id)}>{t("common.remove")}</button></span>
       </div>)}
-      {!visible.length && <p className="muted">{parentId ? "No subsections yet." : "No sections yet."}</p>}
+      {!visible.length && <p className="muted">{parentId ? t("sec.noSub") : t("sec.none")}</p>}
     </div>
   </div>;
 }

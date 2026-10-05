@@ -76,9 +76,17 @@ describe("asset library: link, render, unlink, rename, delete", () => {
     expect((await fetch(`${baseUrl}/api/assets/${asset.id}`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/projects/${project.id}/assets/${asset.id}`)).status).toBe(404);
 
-    // The render now skips the unlinked overlay image gracefully: the source stays visible.
+    // A render of a definition that still refers to the asset links it again: one policy, referenced library assets are auto-linked.
+    const relinked = await render(project.id);
+    expect(isBlue(averageColor(await frameRgb(relinked.filePath, 2, { x: 150, y: 150, w: 100, h: 100 })))).toBe(true);
+    expect((await api<{ assets: Array<{ id: string; projectCount: number }> }>("/api/assets")).assets.find(a => a.id === asset.id)?.projectCount).toBe(1);
+
+    // Once the reference is gone the project can unlink it for good, and the render no longer needs it.
+    await setComposition(project.id, [{ type: "source-clip", sourceId: green.id, startSeconds: 0, endSeconds: 5 }], 5);
+    expect((await rawStatus(`/api/projects/${project.id}/assets/${asset.id}`, "DELETE")).status).toBe(204);
     const without = await render(project.id);
     expect(isGreen(averageColor(await frameRgb(without.filePath, 2, { x: 150, y: 150, w: 100, h: 100 })))).toBe(true);
+    expect((await api<{ assets: Array<{ id: string; projectCount: number }> }>("/api/assets")).assets.find(a => a.id === asset.id)?.projectCount).toBe(0);
 
     // Rename validation.
     expect((await rawStatus(`/api/assets/${asset.id}`, "PATCH", { assetKey: "bad key!" })).status).toBe(400);
@@ -136,5 +144,18 @@ describe("asset keys shared between projects", () => {
     ], 5);
     const clean = await api<{ assetWarnings: string[] }>(`/api/projects/${b.id}/generate`, { method: "POST", json: { preview: true } });
     expect(clean.assetWarnings).toEqual([]);
+
+    // A library asset that a project refers to but never linked is linked automatically when it renders.
+    const c = await createProject("Auto link");
+    const greenC = await uploadSource(c.id, "green.mp4");
+    await setComposition(c.id, [
+      { type: "source-clip", sourceId: greenC.id, startSeconds: 0, endSeconds: 5 },
+      { type: "overlay", kind: "image", imageAsset: "kcblue", startSeconds: 0, endSeconds: 3 },
+    ], 5);
+    expect((await api<{ assets: Array<{ id: string }> }>(`/api/projects/${c.id}/assets`)).assets).toHaveLength(0);
+    const linked = await api<{ assetWarnings: string[]; autoLinkedAssets: string[] }>(`/api/projects/${c.id}/generate`, { method: "POST", json: { preview: true } });
+    expect(linked.assetWarnings).toEqual([]);
+    expect(linked.autoLinkedAssets).toEqual(["kcblue"]);
+    expect((await api<{ assets: Array<{ id: string }> }>(`/api/projects/${c.id}/assets`)).assets.map(x => x.id)).toEqual([first.id]);
   });
 });

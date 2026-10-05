@@ -7,40 +7,43 @@ import StructureStep from "./StructureStep";
 import PublishStep from "./PublishStep";
 import { outputSizeLabel } from "./helpers";
 import { STEPS } from "./types";
+import styles from "./OpenProject.module.css";
+import { useT } from "@/i18n/I18nProvider";
 
 export default function OpenProject() {
   const { selected, step, setStep, message, error, busy, previewBusy, currentDefinition, generate, previewRender } = useOpenWorkspace();
+  const t = useT();
   return (
     <>
       <header>
         <div>
           <h1>{selected.title}</h1>
           <p className="muted">
-            {selected.sources.length} {selected.sources.length === 1 ? "lähde" : "lähdettä"} ·{" "}
+            {t("project.sources", { count: selected.sources.length })} ·{" "}
             {outputSizeLabel(currentDefinition().template)}
           </p>
         </div>
         <div className="header-actions">
           <button disabled={previewBusy || busy} onClick={() => void previewRender()}>
-            {previewBusy ? "Esikatselu jonoon…" : "Esikatselu"}
+            {previewBusy ? t("project.previewQueued") : t("project.preview")}
           </button>
           <button className="primary" disabled={busy} onClick={() => void generate()}>
-            Tee video
+            {t("project.makeVideo")}
           </button>
         </div>
       </header>
-      <nav className="stepper" aria-label="Työvaiheet">
+      <nav className={styles["stepper"]} aria-label={t("steps.label")}>
         {STEPS.map((s, index) => (
           <button
             key={s.id}
-            className={step === s.id ? "active" : ""}
+            className={step === s.id ? `active ${styles.active}` : ""}
             aria-current={step === s.id ? "step" : undefined}
             onClick={() => setStep(s.id)}
           >
-            <span className="step-badge">{index + 1}</span>
-            <span className="step-text">
-              <strong>{s.title}</strong>
-              <small>{s.sub}</small>
+            <span className={styles["step-badge"]}>{index + 1}</span>
+            <span className={styles["step-text"]}>
+              <strong>{t(s.titleKey)}</strong>
+              <small>{t(s.subKey)}</small>
             </span>
           </button>
         ))}

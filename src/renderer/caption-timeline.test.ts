@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineItem } from "@/domain/project";
-import { layoutTimeline, mapCaptionsToTimeline, timelineDuration } from "@/renderer/caption-timeline";
+import { layoutTimeline, timelineDuration } from "@/domain/timeline";
+import { mapCaptionsToTimeline } from "@/renderer/caption-timeline";
 
 const clip = (sourceId: string, startSeconds: number, endSeconds: number, transitionIn?: Extract<TimelineItem, { type: "source-clip" }>["transitionIn"]): TimelineItem => ({ type: "source-clip", sourceId, startSeconds, endSeconds, transitionIn });
 const slate = (durationSeconds: number, extra: Record<string, unknown> = {}) => ({ type: "slate", template: "rich", mode: "standalone", durationSeconds, data: {}, ...extra }) as TimelineItem;

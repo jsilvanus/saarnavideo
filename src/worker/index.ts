@@ -3,6 +3,7 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
+import { timelineDuration } from "@/domain/timeline";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
 import type { ProjectDefinition } from "@/domain/project";
 import { resolveSourcePaths } from "@/worker/source-resolution";
@@ -18,6 +19,7 @@ import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
 import { PODCAST_TARGET_LUFS, buildPodcastRenderPlan, parseLoudnormMeasurement, podcastMimeType, resolvePodcastMetadata } from "@/renderer/podcast";
 import { uploadCaptionsAfterVideo, type CaptionPublishDeps } from "@/worker/caption-publish";
 import { findUnresolvedImageRefs } from "@/domain/asset-usage";
+import { linkReferencedAssets } from "@/lib/asset-link";
 import { formatSrt, formatVtt } from "@/lib/captions";
 import { readFacebookConfig } from "@/integrations/facebook";
 import { publishVideoToFacebook } from "@/worker/facebook-publish";
@@ -136,6 +138,7 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   if (!job) throw new Error("Missing job");
   const project = await prisma.project.findUnique({ where: { id: job.projectId }, include: { sources: true, assets: true } }); if (!project) throw new Error("Project not found");
   const definition = jobDefinition(job, project);
+  if (type !== "THUMBNAIL") for (const asset of await linkReferencedAssets(prisma, project.id, definition, project.assets, referencedAudioAssetIds(definition))) { project.assets.push(asset); await logJobEvent(job.id, "INFO", `Linked library asset "${asset.assetKey}" to the project because the composition uses it`); }
   await mkdir(MEDIA_ROOT, { recursive: true });
   if (type === "THUMBNAIL") {
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
@@ -146,16 +149,8 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
   for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetPaths.set(asset.id, asset.storagePath);
   const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
-  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined });
-  if (type === "PREVIEW") {
-    // -vf cannot be combined with a -filter_complex output, so the downscale is appended to the graph.
-    const graphIndex = plan.args.indexOf("-filter_complex") + 1;
-    const videoMapIndex = plan.args.indexOf("-map", graphIndex) + 1;
-    plan.args[graphIndex] += `;${plan.args[videoMapIndex]}scale=640:-2[preview]`;
-    plan.args[videoMapIndex] = "[preview]";
-    plan.args.splice(plan.args.length - 1, 0, "-preset", "ultrafast", "-crf", "30");
-  }
-  const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const totalMs = Math.max(1, Math.round((definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds) * 1000));
+  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined });
+  const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const outputSeconds = definition.composition.items.length ? timelineDuration(definition.composition.items) : definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds; const totalMs = Math.max(1, Math.round(outputSeconds * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
   const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };
   try { await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase, message, from: 0, to: 99, reportSpeed: true }, remote); }
@@ -221,18 +216,29 @@ async function runPodcastJob(job: Awaited<ReturnType<typeof claimJob>>) {
   const metadata = resolvePodcastMetadata(project, settings);
   const outputPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.${settings.format}`);
   const planOptions = { settings, intro: pickTrack(settings.introAssetId), outro: pickTrack(settings.outroAssetId), coverPath, metadata };
-  const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: "measure" });
-  const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
-  await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 0, totalMs: BigInt(totalMs) }, true);
-  const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(coverPath ? [coverPath] : [])], outputPath };
-  const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 0, to: 40 }, remote);
-  const measurement = parseLoudnormMeasurement(measureLog);
-  // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
-  if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
-  else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
-  const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, loudness: measurement ?? undefined });
-  await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 40 }, true);
-  await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 40, to: 100 }, remote);
+  // The body (source audio, voiceovers, mixes, range) is decoded once into a temporary WAV; the loudness measure and the
+  // encode pass read that file, so a multi-GB sermon video is not demuxed three times.
+  const bodyPath = path.join(MEDIA_ROOT, `${project.id}-${job.id}.body.wav`);
+  try {
+    const bodyPlan = buildPodcastRenderPlan(definition, sourcePaths, bodyPath, assetPaths, { ...planOptions, bodyOnly: true });
+    const bodyMs = Math.max(1, Math.round(bodyPlan.durationSeconds * 1000));
+    await updateProgress(job.id, { phase: "EXTRACTING_AUDIO", message: "Rendering the audio body", progress: 0, totalMs: BigInt(bodyMs) }, true);
+    await runFfmpegWithProgress(job.id, bodyPlan.args, bodyMs, { phase: "EXTRACTING_AUDIO", message: "Rendering the audio body", from: 0, to: 40 }, { files: [...sourcePaths.values(), ...assetPaths.values()], outputPath: bodyPath });
+    // Later passes need only the body file, the intro/outro and the cover.
+    const finalAssets = new Map([...assetPaths].filter(([id]) => id === settings.introAssetId || id === settings.outroAssetId));
+    const remote = { files: [bodyPath, ...finalAssets.values(), ...(coverPath ? [coverPath] : [])], outputPath };
+    const measurePlan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, bodyWav: bodyPath, loudness: "measure" });
+    const totalMs = Math.max(1, Math.round(measurePlan.durationSeconds * 1000));
+    await updateProgress(job.id, { phase: "ANALYSING", message: "Measuring loudness", progress: 40, totalMs: BigInt(totalMs) }, true);
+    const measureLog = await runFfmpegWithProgress(job.id, measurePlan.args, totalMs, { phase: "ANALYSING", message: "Measuring loudness", from: 40, to: 60 }, remote);
+    const measurement = parseLoudnormMeasurement(measureLog);
+    // Silent or unmeasurable audio: fall back to single-pass loudnorm rather than failing the job.
+    if (!measurement) await logJobEvent(job.id, "WARN", "Loudness measurement failed; using single-pass normalisation");
+    else await logJobEvent(job.id, "INFO", `Measured ${measurement.input_i} LUFS, normalising to ${PODCAST_TARGET_LUFS} LUFS`, { ...measurement });
+    const plan = buildPodcastRenderPlan(definition, sourcePaths, outputPath, assetPaths, { ...planOptions, bodyWav: bodyPath, loudness: measurement ?? undefined });
+    await updateProgress(job.id, { phase: "ENCODING", message: "Encoding podcast", progress: 60 }, true);
+    await runFfmpegWithProgress(job.id, plan.args, totalMs, { phase: "ENCODING", message: "Encoding podcast", from: 60, to: 100 }, remote);
+  } finally { await rm(bodyPath, { force: true }); }
   await createOutput(project.id, job.id, "AUDIO", outputPath, podcastMimeType(settings.format));
   await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Podcast ready", completedAt: new Date() }, true);
 }
@@ -433,9 +439,7 @@ async function processPublication() {
   return true;
 }
 
-// No expiry cleanup: project media is persistent (src/lib/prisma.ts clears expiresAt on write and drops expiresAt filters on
-// findMany). The former cleanupExpiredMedia() relied on that filter, so it selected *every* source and output and deleted
-// their files once a minute.
+// No expiry cleanup: project media is persistent. The expiresAt columns are legacy and nothing reads or writes them.
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); process.exit(0); });
 /** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
 async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }

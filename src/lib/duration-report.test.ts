@@ -33,6 +33,11 @@ describe("duration report", () => {
     expect(computeDurationReport(definition([clip(61)], { targetSeconds: 60 })).warnings).toEqual([]);
   });
 
+  it("carries the values of a warning so the UI can show it in its own language", () => {
+    const warning = computeDurationReport(definition([clip(100)], { targetSeconds: 60 })).warnings.find((w) => w.code === "off-target");
+    expect(warning?.params).toMatchObject({ video: "1:40", target: "1:00", diff: "+0:40" });
+  });
+
   it("compares the podcast with the video: no slates, plus intro and outro", () => {
     const items = [{ type: "slate", mode: "standalone", durationSeconds: 30, data: {} }, clip(60)];
     const durations = new Map([["intro", 10], ["outro", 5]]);

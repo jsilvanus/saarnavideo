@@ -1,14 +1,16 @@
 "use client";
 
 import { useWorkspace } from "./useWorkspace";
+import { useT } from "@/i18n/I18nProvider";
 
 export default function Sidebar() {
   const { projects, selectedId, setCreating, menuId, setMenuId, setConfirmDelete, openProject, duplicateProject } = useWorkspace();
+  const t = useT();
   return (
     <aside className="sidebar">
       <div className="brand">SaarnaVideo</div>
       <button className="new" onClick={() => setCreating(true)}>
-        ＋ Uusi projekti
+        {t("sidebar.new")}
       </button>
       <div className="projects">
         {projects.map((p) => (
@@ -16,12 +18,12 @@ export default function Sidebar() {
             <button className="project-main" onClick={() => void openProject(p.id)}>
               <strong>{p.title}</strong>
             </button>
-            <button className="more" aria-label={`Toiminnot: ${p.title}`} onClick={() => setMenuId(menuId === p.id ? null : p.id)}>
+            <button className="more" aria-label={t("sidebar.actions", { title: p.title })} onClick={() => setMenuId(menuId === p.id ? null : p.id)}>
               ⋯
             </button>
             {menuId === p.id && (
               <div className="menu">
-                <button onClick={() => void duplicateProject(p)}>Monista</button>
+                <button onClick={() => void duplicateProject(p)}>{t("sidebar.duplicate")}</button>
                 <button
                   className="danger"
                   onClick={() => {
@@ -29,13 +31,13 @@ export default function Sidebar() {
                     setMenuId(null);
                   }}
                 >
-                  Poista…
+                  {t("sidebar.delete")}
                 </button>
               </div>
             )}
           </div>
         ))}
-        {!projects.length && <p className="muted">Ei vielä projekteja.</p>}
+        {!projects.length && <p className="muted">{t("sidebar.empty")}</p>}
       </div>
     </aside>
   );

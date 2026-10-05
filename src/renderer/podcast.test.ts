@@ -12,6 +12,25 @@ const settings = { format: "mp3" as const, channels: "mono" as const, crossfadeS
 const graphOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
 
 describe("buildPodcastRenderPlan", () => {
+  it("renders the body once to a WAV and builds the later passes on that file", () => {
+    const options = { settings: { ...settings, startSeconds: 1, endSeconds: 9 }, outro: { path: "/outro.wav", durationSeconds: 3 } };
+    const items = [clip(0, 10), voice({ mode: "mix", atSeconds: 2, endSeconds: 1 })];
+    const body = buildPodcastRenderPlan(definition(items), sources, "/body.wav", assets, { ...options, bodyOnly: true });
+    expect(body.args).toContain("pcm_s16le");
+    expect(body.args.slice(-1)).toEqual(["/body.wav"]);
+    expect(graphOf(body.args)).toContain("atrim=start=1:end=9");
+    expect(graphOf(body.args)).not.toContain("loudnorm");
+    expect(body.args.some((a) => a === "/outro.wav")).toBe(false);
+    expect(body.durationSeconds).toBe(8);
+
+    const final = buildPodcastRenderPlan(definition(items), sources, "/out.mp3", assets, { ...options, bodyWav: "/body.wav", loudness: "measure" });
+    const inputs = final.args.filter((_, i) => final.args[i - 1] === "-i");
+    expect(inputs).toEqual(["/body.wav", "/outro.wav"]);
+    expect(graphOf(final.args)).not.toContain("atrim");
+    expect(graphOf(final.args)).toContain("loudnorm");
+    expect(final.durationSeconds).toBeCloseTo(8 + 3 - 0.5, 5);
+  });
+
   it("keeps only the chosen start..end of the body, before intro and outro are added", () => {
     const plan = buildPodcastRenderPlan(definition([slate(5), clip(0, 10), voice()]), sources, "/out.mp3", assets, { settings: { ...settings, startSeconds: 2, endSeconds: 11 }, outro: { path: "/outro.wav", durationSeconds: 3 } });
     const g = graphOf(plan.args);

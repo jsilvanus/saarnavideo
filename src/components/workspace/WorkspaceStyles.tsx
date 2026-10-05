@@ -867,53 +867,6 @@ export default function WorkspaceStyles() {
         grid-template-columns: 1fr 1fr;
         gap: 10px;
       }
-      .stepper {
-        gap: 8px;
-        padding: 12px 20px;
-        flex-wrap: wrap;
-      }
-      .stepper button {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-height: 52px;
-        padding: 6px 14px 6px 8px;
-        border: 1px solid transparent;
-        border-radius: 10px;
-        background: none;
-        color: #18202a;
-        text-align: left;
-        cursor: pointer;
-      }
-      .stepper button.active {
-        background: #eef2ff;
-        border-color: #111827;
-        border-bottom-color: #111827;
-        font-weight: 400;
-      }
-      .step-badge {
-        display: grid;
-        place-items: center;
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        background: #e5e7eb;
-        font-weight: 700;
-        font-size: 14px;
-        flex: none;
-      }
-      .stepper button.active .step-badge {
-        background: #111827;
-        color: white;
-      }
-      .step-text {
-        display: grid;
-        gap: 2px;
-      }
-      .step-text small {
-        color: #64748b;
-        font-size: 12px;
-      }
       .step-grid {
         display: flex;
         flex-wrap: wrap;
@@ -979,23 +932,6 @@ export default function WorkspaceStyles() {
         font-size: 12px;
         cursor: pointer;
       }
-      .variables-editor {
-        display: grid;
-        gap: 10px;
-      }
-      .fetch-variables { display: grid; gap: 8px; margin-bottom: 12px; }
-      .fetch-diff { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      .fetch-diff th, .fetch-diff td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #e5e5e5; word-break: break-word; }
-      .variable-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 34px;
-        gap: 6px;
-        align-items: center;
-      }
-      .variable-row small {
-        grid-column: 1 / -1;
-        margin-top: -4px;
-      }
       .podcast-range {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1027,149 +963,6 @@ export default function WorkspaceStyles() {
         top: 0;
         bottom: 0;
         background: #111827;
-      }
-      .segmented {
-        display: inline-flex;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        overflow: hidden;
-      }
-      .segmented button {
-        min-height: 36px;
-        padding: 0 14px;
-        border: 0;
-        background: white;
-        color: #18202a;
-        font-weight: 650;
-        cursor: pointer;
-      }
-      .segmented button[aria-pressed="true"] {
-        background: #111827;
-        color: white;
-      }
-      .timeline-view {
-        display: grid;
-        gap: 10px;
-        margin-bottom: 8px;
-      }
-      .timeline-view-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      .timeline-lane-label {
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #64748b;
-      }
-      .timeline-h {
-        display: grid;
-        gap: 6px;
-        overflow-x: auto;
-      }
-      .timeline-h-ruler {
-        position: relative;
-        height: 16px;
-        margin-left: 92px;
-        min-width: 600px;
-        font-size: 11px;
-        color: #64748b;
-      }
-      .timeline-h-ruler span {
-        position: absolute;
-        top: 0;
-      }
-      .timeline-h-lane {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .timeline-h-lane .timeline-lane-label {
-        width: 84px;
-        flex: none;
-      }
-      .timeline-h-track {
-        position: relative;
-        flex: 1;
-        min-width: 600px;
-        height: 46px;
-        border-radius: 8px;
-        background: #f1f5f9;
-      }
-      .timeline-v {
-        display: grid;
-        grid-template-columns: 48px repeat(3, minmax(0, 1fr));
-        gap: 6px;
-      }
-      .timeline-v-ruler {
-        position: relative;
-        font-size: 11px;
-        color: #64748b;
-      }
-      .timeline-v-ruler span {
-        position: absolute;
-        left: 0;
-      }
-      .timeline-v-track {
-        position: relative;
-        border-radius: 8px;
-        background: #f1f5f9;
-      }
-      .timeline-block {
-        position: absolute;
-        display: grid;
-        align-content: center;
-        gap: 1px;
-        padding: 2px 6px;
-        border-radius: 6px;
-        overflow: hidden;
-        font-size: 12px;
-        line-height: 1.25;
-        box-shadow: inset 0 0 0 1px #ffffff;
-      }
-      .timeline-h .timeline-block {
-        top: 3px;
-        bottom: 3px;
-      }
-      .timeline-v .timeline-block {
-        left: 3px;
-        right: 3px;
-        min-height: 18px;
-      }
-      .timeline-block strong,
-      .timeline-block small {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .timeline-block small {
-        color: inherit;
-        opacity: 0.8;
-        font-size: 11px;
-      }
-      .tone-clip {
-        background: #dbeafe;
-        color: #1e3a8a;
-      }
-      .tone-slate {
-        background: #e5e7eb;
-        color: #1f2937;
-      }
-      .tone-voice-picture {
-        background: #f3f4f6;
-        color: #374151;
-      }
-      .tone-graphic {
-        background: #ede9fe;
-        color: #4c1d95;
-      }
-      .tone-audio {
-        background: #ffedd5;
-        color: #7c2d12;
       }
       @media (max-width: 760px) {
         .app {
@@ -1229,12 +1022,6 @@ export default function WorkspaceStyles() {
       @media (max-width: 850px) {
         .workspace header {
           padding: 70px 16px 16px;
-        }
-        .stepper {
-          padding: 10px 12px;
-        }
-        .stepper .step-text small {
-          display: none;
         }
         .sidebar {
           width: 220px;

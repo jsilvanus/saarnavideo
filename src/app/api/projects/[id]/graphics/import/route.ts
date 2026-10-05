@@ -48,7 +48,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (!asset) {
         const ext = item.mimeType === "image/png" ? "png" : item.mimeType === "image/webp" ? "webp" : item.mimeType === "image/jpeg" ? "jpg" : "bin";
         const storagePath = await storeLibraryFile(data, item.contentHash, ext);
-        asset = await prisma.asset.create({ data: { assetKey: item.assetKey, type: "OVERLAY", storagePath, mimeType: item.mimeType, width: item.width, height: item.height, hasAlpha: item.hasAlpha, sizeBytes: BigInt(data.length), contentHash: item.contentHash, expiresAt: null } });
+        asset = await prisma.asset.create({ data: { assetKey: item.assetKey, type: "OVERLAY", storagePath, mimeType: item.mimeType, width: item.width, height: item.height, hasAlpha: item.hasAlpha, sizeBytes: BigInt(data.length), contentHash: item.contentHash } });
       }
       idMap.set(item.sourceAssetId, asset.id);
       idMap.set(item.assetKey, asset.id);

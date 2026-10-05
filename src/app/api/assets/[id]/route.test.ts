@@ -13,7 +13,7 @@ const assetIds: string[] = [];
 async function makeAsset(assetKey: string, file: string) {
   const storagePath = path.join(dir, file);
   await writeFile(storagePath, "x");
-  const asset = await prisma.asset.create({ data: { assetKey, type: "OVERLAY", storagePath, mimeType: "image/png", width: 100, height: 100, sizeBytes: BigInt(1), contentHash: file, expiresAt: null } });
+  const asset = await prisma.asset.create({ data: { assetKey, type: "OVERLAY", storagePath, mimeType: "image/png", width: 100, height: 100, sizeBytes: BigInt(1), contentHash: file } });
   assetIds.push(asset.id);
   return asset;
 }
@@ -84,7 +84,7 @@ describe("DELETE /api/assets/:id", () => {
 
   it("keeps the file while another row shares the storage path", async () => {
     const a = await makeAsset("logo", "a.png");
-    const twin = await prisma.asset.create({ data: { assetKey: "twin", type: "LOGO", storagePath: a.storagePath, mimeType: "image/png", sizeBytes: BigInt(1), expiresAt: null } });
+    const twin = await prisma.asset.create({ data: { assetKey: "twin", type: "LOGO", storagePath: a.storagePath, mimeType: "image/png", sizeBytes: BigInt(1) } });
     assetIds.push(twin.id);
     expect((await del(a.id)).status).toBe(204);
     expect(await exists(a.storagePath)).toBe(true);

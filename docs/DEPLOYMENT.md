@@ -29,9 +29,6 @@ YOUTUBE_CLIENT_SECRET=your-client-secret
 # Media storage (should be on fast, high-capacity storage)
 MEDIA_ROOT=/data/media
 
-# Media retention (days)
-MEDIA_RETENTION_DAYS=7
-
 # Resource limits
 MAX_SOURCE_SIZE_BYTES=53687091200          # 50 GB
 MAX_OUTPUT_SIZE_BYTES=107374182400         # 100 GB
@@ -146,7 +143,7 @@ volumes:
 ### Media Storage
 - [ ] `/data/media` mounted on fast, high-capacity storage (NAS, SSD array, or cloud object storage)
 - [ ] Disk has at least 500 GB available
-- [ ] Automatic cleanup jobs configured (7-day retention by default)
+- [ ] Disk monitoring or a manual cleanup routine in place (media is persistent; nothing expires)
 - [ ] Filesystem permissions: app runs as dedicated user
 
 ### FFmpeg
@@ -220,7 +217,7 @@ find /backups -name "db-*.sql.gz" -mtime +30 -delete
 ```
 
 ### Media (Optional)
-- Large files expire after 7 days, no need to backup
+- Media under `MEDIA_ROOT` is persistent and not recreated automatically: back up uploaded sources and the asset library if you cannot re-upload them
 - Keep project metadata in database backups (includes URLs, IDs)
 - Regenerate outputs from projects as needed
 

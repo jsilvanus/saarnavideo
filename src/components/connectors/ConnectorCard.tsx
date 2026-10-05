@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { errorMessage, jsonInit, requestJson } from "@/components/api";
 import PairsEditor from "./PairsEditor";
 import RequestEditor from "./RequestEditor";
@@ -25,6 +26,7 @@ const toDraft = (c: ApiConnectorView): Draft => ({
 
 /** One connector: address, authentication, extra headers and its requests. Stored secrets are never shown. */
 export default function ConnectorCard({ connector, onChanged, onDeleted }: Props) {
+  const t = useT();
   const [draft, setDraft] = useState<Draft>(toDraft(connector));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,9 +42,9 @@ export default function ConnectorCard({ connector, onChanged, onDeleted }: Props
     setError("");
     try {
       const auth = { type: draft.authType, token: draft.token, headerName: draft.headerName, value: draft.value, username: draft.username, password: draft.password };
-      onChanged(await requestJson<ApiConnectorView>(`/api/connectors/${connector.id}`, jsonInit("PATCH", { name: draft.name, baseUrl: draft.baseUrl, headers: draft.headers, auth }), "Yhteyttä ei voitu tallentaa"));
+      onChanged(await requestJson<ApiConnectorView>(`/api/connectors/${connector.id}`, jsonInit("PATCH", { name: draft.name, baseUrl: draft.baseUrl, headers: draft.headers, auth }), t("conn.saveFailed")));
     } catch (e) {
-      setError(errorMessage(e, "Yhteyttä ei voitu tallentaa"));
+      setError(errorMessage(e, t("conn.saveFailed")));
     } finally {
       setBusy(false);
     }
@@ -51,10 +53,10 @@ export default function ConnectorCard({ connector, onChanged, onDeleted }: Props
   async function remove() {
     setBusy(true);
     try {
-      await requestJson(`/api/connectors/${connector.id}`, { method: "DELETE" }, "Yhteyttä ei voitu poistaa");
+      await requestJson(`/api/connectors/${connector.id}`, { method: "DELETE" }, t("conn.deleteFailed"));
       onDeleted();
     } catch (e) {
-      setError(errorMessage(e, "Yhteyttä ei voitu poistaa"));
+      setError(errorMessage(e, t("conn.deleteFailed")));
       setBusy(false);
     }
   }
@@ -63,53 +65,53 @@ export default function ConnectorCard({ connector, onChanged, onDeleted }: Props
     setBusy(true);
     setError("");
     try {
-      const created = await requestJson<ApiRequestView>(`/api/connectors/${connector.id}/requests`, jsonInit("POST", body), "Pyyntöä ei voitu lisätä");
+      const created = await requestJson<ApiRequestView>(`/api/connectors/${connector.id}/requests`, jsonInit("POST", body), t("conn.requestAddFailed"));
       onChanged({ ...connector, requests: [...connector.requests, created] });
     } catch (e) {
-      setError(errorMessage(e, "Pyyntöä ei voitu lisätä"));
+      setError(errorMessage(e, t("conn.requestAddFailed")));
     } finally {
       setBusy(false);
     }
   }
 
-  const secretPlaceholder = secretStored ? "tallennettu, jätä tyhjäksi säilyttääksesi" : "";
+  const secretPlaceholder = secretStored ? t("conn.secretStored") : "";
   return (
-    <section className={styles.card} aria-label={`Yhteys ${connector.name}`}>
+    <section className={styles.card} aria-label={t("conn.ariaCard", { name: connector.name })}>
       <h2>{connector.name}</h2>
       <div className={styles.grid2}>
         <label className={styles.field}>
-          Nimi
+          {t("conn.name")}
           <input value={draft.name} onChange={(e) => set("name", e.target.value)} />
         </label>
         <label className={styles.field}>
-          Osoite
+          {t("conn.address")}
           <input className={styles.mono} value={draft.baseUrl} placeholder="https://" onChange={(e) => set("baseUrl", e.target.value)} />
         </label>
       </div>
       <div className={styles.grid2}>
         <label className={styles.field}>
-          Tunnistautuminen
+          {t("conn.auth")}
           <select value={draft.authType} onChange={(e) => set("authType", e.target.value as AuthType)}>
-            <option value="none">Ei mitään</option>
-            <option value="bearer">Bearer-tunniste</option>
-            <option value="api_key">API-avain otsikossa</option>
-            <option value="basic">Käyttäjätunnus ja salasana</option>
+            <option value="none">{t("conn.auth.none")}</option>
+            <option value="bearer">{t("conn.auth.bearer")}</option>
+            <option value="api_key">{t("conn.auth.apiKey")}</option>
+            <option value="basic">{t("conn.auth.basic")}</option>
           </select>
         </label>
         {draft.authType === "bearer" && (
           <label className={styles.field}>
-            Tunniste
+            {t("conn.token")}
             <input type="password" autoComplete="off" value={draft.token} placeholder={secretPlaceholder} onChange={(e) => set("token", e.target.value)} />
           </label>
         )}
         {draft.authType === "api_key" && (
           <div className={styles.grid2}>
             <label className={styles.field}>
-              Otsikon nimi
+              {t("conn.headerName")}
               <input className={styles.mono} value={draft.headerName} placeholder="X-Api-Key" onChange={(e) => set("headerName", e.target.value)} />
             </label>
             <label className={styles.field}>
-              Avain
+              {t("conn.apiKey")}
               <input type="password" autoComplete="off" value={draft.value} placeholder={secretPlaceholder} onChange={(e) => set("value", e.target.value)} />
             </label>
           </div>
@@ -117,39 +119,39 @@ export default function ConnectorCard({ connector, onChanged, onDeleted }: Props
         {draft.authType === "basic" && (
           <div className={styles.grid2}>
             <label className={styles.field}>
-              Käyttäjätunnus
+              {t("conn.username")}
               <input autoComplete="off" value={draft.username} onChange={(e) => set("username", e.target.value)} />
             </label>
             <label className={styles.field}>
-              Salasana
+              {t("conn.password")}
               <input type="password" autoComplete="off" value={draft.password} placeholder={secretPlaceholder} onChange={(e) => set("password", e.target.value)} />
             </label>
           </div>
         )}
       </div>
-      <PairsEditor label="Otsikot (lähetetään jokaisen pyynnön mukana)" rows={draft.headers} onChange={(rows) => set("headers", rows)} keyPlaceholder="Accept-Language" />
+      <PairsEditor label={t("conn.headers")} rows={draft.headers} onChange={(rows) => set("headers", rows)} keyPlaceholder="Accept-Language" />
       <div className={styles.actions}>
         <button type="button" className={`${styles.button} ${styles.primary}`} disabled={!dirty || busy} onClick={() => void save()}>
-          Tallenna yhteys
+          {t("conn.save")}
         </button>
         {!confirmDelete ? (
           <button type="button" className={`${styles.button} ${styles.danger}`} disabled={busy} onClick={() => setConfirmDelete(true)}>
-            Poista yhteys…
+            {t("conn.deleteAsk")}
           </button>
         ) : (
           <>
-            <span className={styles.muted}>Poistetaanko yhteys ja sen pyynnöt? Projektien muuttujat säilyvät.</span>
+            <span className={styles.muted}>{t("conn.deleteConfirm")}</span>
             <button type="button" className={`${styles.button} ${styles.danger}`} disabled={busy} onClick={() => void remove()}>
-              Poista
+              {t("conn.delete")}
             </button>
             <button type="button" className={styles.button} onClick={() => setConfirmDelete(false)}>
-              Peruuta
+              {t("conn.cancel")}
             </button>
           </>
         )}
       </div>
       {error && <p className={styles.error}>{error}</p>}
-      <h3>Pyynnöt</h3>
+      <h3>{t("conn.requests")}</h3>
       {connector.requests.map((request) => (
         <RequestEditor
           key={request.id}
@@ -159,13 +161,13 @@ export default function ConnectorCard({ connector, onChanged, onDeleted }: Props
           onDeleted={() => onChanged({ ...connector, requests: connector.requests.filter((r) => r.id !== request.id) })}
         />
       ))}
-      {!connector.requests.length && <p className={styles.muted}>Ei pyyntöjä vielä.</p>}
+      {!connector.requests.length && <p className={styles.muted}>{t("conn.noRequests")}</p>}
       <div className={styles.actions}>
-        <button type="button" className={styles.button} disabled={busy} onClick={() => void addRequest({ name: `Pyyntö ${connector.requests.length + 1}`, path: "/" })}>
-          ＋ Uusi pyyntö
+        <button type="button" className={styles.button} disabled={busy} onClick={() => void addRequest({ name: t("conn.defaultRequestName", { n: connector.requests.length + 1 }), path: "/" })}>
+          {t("conn.newRequest")}
         </button>
         <button type="button" className={styles.button} disabled={busy} onClick={() => void addRequest(CHURCH_YEAR_REQUEST_PRESET)}>
-          ＋ Kirkkovuosipyyntö (anno-api-muotoinen)
+          {t("conn.churchYearRequest")}
         </button>
       </div>
     </section>

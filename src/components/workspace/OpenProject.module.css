@@ -1,0 +1,56 @@
+.stepper {
+  gap: 8px;
+  padding: 12px 20px;
+  flex-wrap: wrap;
+}
+.stepper button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 6px 14px 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  color: #18202a;
+  text-align: left;
+  cursor: pointer;
+}
+.stepper button.active {
+  background: #eef2ff;
+  border-color: #111827;
+  border-bottom-color: #111827;
+  font-weight: 400;
+}
+.step-badge {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  font-weight: 700;
+  font-size: 14px;
+  flex: none;
+}
+.stepper button.active .step-badge {
+  background: #111827;
+  color: white;
+}
+.step-text {
+  display: grid;
+  gap: 2px;
+}
+.step-text small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+@media (max-width: 850px) {
+  .stepper {
+    padding: 10px 12px;
+  }
+  .stepper .step-text small {
+    display: none;
+  }
+}

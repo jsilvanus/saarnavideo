@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "@/i18n/I18nProvider";
 import { formatTime, sourceLabel } from "@/components/format";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
 import OutputSettings from "@/components/OutputSettings";
@@ -33,33 +34,34 @@ export default function SourceStep() {
     saveTitle,
     saveOutput,
   } = useOpenWorkspace();
+  const t = useT();
   return (
     <div className="step-grid">
       <div className="step-main">
         <Panel
-          title="Lähteet"
-          text="Yksi tai useampi tallenne. Paikallisen tiedoston voi ladata heti tai myöhemmin; YouTube-lähde noudetaan, kun video tehdään."
+          title={t("src.panel.title")}
+          text={t("src.panel.text")}
         >
           <div className="form-grid">
             <label>
-              Paikalliset videot
+              {t("src.localVideos")}
               <input type="file" accept="video/*" multiple onChange={(e) => setUploadFiles(Array.from(e.target.files ?? []))} />
               <select value={uploadMode} onChange={(e) => setUploadMode(e.target.value as "now" | "later")}>
-                <option value="now">Lataa nyt</option>
-                <option value="later">Lataa myöhemmin</option>
+                <option value="now">{t("src.uploadNow")}</option>
+                <option value="later">{t("src.uploadLater")}</option>
               </select>
               <button
                 onClick={() => void (uploadMode === "now" ? addUploads() : addDeferredUploads())}
                 disabled={busy || !uploadFiles.length}
               >
-                {uploadMode === "now" ? "Lataa valitut" : "Lisää odottava lähde"}
+                {uploadMode === "now" ? t("src.uploadSelected") : t("src.addPending")}
               </button>
             </label>
             <label>
-              YouTube-linkki
+              {t("src.youtubeLink")}
               <input value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} placeholder="https://youtube.com/watch?v=…" />
               <button onClick={() => void addYoutube()} disabled={busy || !youtubeUrl.trim()}>
-                Lisää YouTube-lähde
+                {t("src.addYoutube")}
               </button>
             </label>
           </div>
@@ -67,15 +69,15 @@ export default function SourceStep() {
             {selected.sources.map((s) => (
               <article className="card" key={s.id}>
                 <b>
-                  {s.type === "YOUTUBE" ? "YouTube" : "Tiedosto"} · {s.status === "PENDING" ? "odottaa tiedostoa" : "valmis"}
+                  {s.type === "YOUTUBE" ? "YouTube" : t("src.file")} · {s.status === "PENDING" ? t("src.pendingShort") : t("src.ready")}
                 </b>
                 <strong>{sourceLabel(s)}</strong>
                 <small>
                   {s.status === "PENDING"
-                    ? "Odottaa paikallista tiedostoa. Valitse varsinainen tiedosto, kun se on valmis."
+                    ? t("src.pendingHelp")
                     : s.durationMs
-                      ? `Kesto ${formatTime(s.durationMs / 1000)}`
-                      : "YouTube-video noudetaan, kun video tehdään."}
+                      ? t("src.duration", { time: formatTime(s.durationMs / 1000) })
+                      : t("src.youtubeFetched")}
                 </small>
                 {s.status === "PENDING" && (
                   <div className="pending-upload">
@@ -88,19 +90,19 @@ export default function SourceStep() {
                       }}
                     />
                     <button onClick={() => void uploadPendingSource(s)} disabled={busy || !pendingFiles[s.id]}>
-                      Lataa nyt
+                      {t("src.uploadNow")}
                     </button>
-                    {pendingFiles[s.id] && <small>Valittu: {pendingFiles[s.id].name}</small>}
+                    {pendingFiles[s.id] && <small>{t("src.selectedFile", { name: pendingFiles[s.id].name })}</small>}
                   </div>
                 )}
               </article>
             ))}
-            {!selected.sources.length && <p className="muted">Ei vielä lähteitä.</p>}
+            {!selected.sources.length && <p className="muted">{t("src.none")}</p>}
           </div>
         </Panel>
         <Panel
-          title="Litteroinnit"
-          text="Litteroi lähde kokonaan tai valitulta väliltä ja muokkaa tekstitysraitaa. Litterointi kuuluu lähteelle, joten se näkyy kaikissa projekteissa, jotka käyttävät samaa lähdettä."
+          title={t("src.transcriptions.title")}
+          text={t("src.transcriptions.text")}
         >
           <TranscriptionEditor
             projectId={selected.id}
@@ -111,15 +113,15 @@ export default function SourceStep() {
             onProjectRefresh={() => void openProject(selected.id)}
           />
         </Panel>
-        <Panel title="Tulosteen koko" text="Videon koko ja oletusrajaus. Rajauksen voi vaihtaa osioittain vaiheessa Rakenne.">
+        <Panel title={t("src.size.title")} text={t("src.size.text")}>
           <OutputSettings template={currentDefinition().template!} onChange={saveOutput} />
         </Panel>
       </div>
       <aside className="step-aside">
-        <Panel title="Projektin tiedot">
+        <Panel title={t("src.info.title")}>
           <ProjectTitle title={selected.title} onSave={saveTitle} />
-          <h3 className="subhead">Muuttujat</h3>
-          <p className="muted">Grafiikat käyttävät muuttujia muodossa {"{{nimi}}"}. Arvot täytetään, kun video tehdään.</p>
+          <h3 className="subhead">{t("src.variables")}</h3>
+          <p className="muted">{t("src.variablesText")}</p>
           <FetchVariables projectId={selected.id} variables={currentDefinition().variables ?? []} onSave={saveVariables} />
           <VariablesEditor
             variables={currentDefinition().variables ?? []}
@@ -129,7 +131,7 @@ export default function SourceStep() {
           <SaveAsTemplate
             projectId={selected.id}
             defaultName={selected.title}
-            onSaved={(name) => setMessage(`Pohja "${name}" tallennettu. Se löytyy uuden projektin pohjista.`)}
+            onSaved={(name) => setMessage(t("src.templateSaved", { name }))}
           />
         </Panel>
       </aside>

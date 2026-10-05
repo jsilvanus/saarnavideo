@@ -9,6 +9,7 @@ import { resizeLayer, snap } from "./graphics-editor/geometry";
 import type { Asset, Item, Layer } from "./graphics-editor/types";
 import { createCaptionLayer } from "@/domain/caption-style";
 import AssetPicker from "./AssetPicker";
+import { useT } from "@/i18n/I18nProvider";
 
 /** Parses a serialised layer list; undefined when missing or not a valid array (old/simple graphic). */
 export function parseLayers<T = Layer>(raw: string | undefined): T[] | undefined {
@@ -24,6 +25,7 @@ function defaultLayers(item: Item, title: string): Layer[] {
 }
 
 export default function GraphicsEditor({ projectId, graphicId, item, assets, title, onChange, onAssetsChanged }: { projectId: string; graphicId: string; item: Item; assets: Asset[]; title: string; onChange: (item: Item) => void; onAssetsChanged?: () => void | Promise<void> }) {
+  const t = useT();
   const [layers, setLayers] = useState<Layer[]>(() => defaultLayers(item, title));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(layers[0] ? [layers[0].id] : []));
   const [primaryId, setPrimaryId] = useState<string | null>(layers[0]?.id ?? null);
@@ -85,7 +87,7 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
   }
 
   return <div className="graphics-editor">
-    {libraryOpen && <AssetPicker projectId={projectId} kind="image" title="Choose an image from the library" linkedIds={assets.map(a => a.id)} onPick={chooseLibraryAsset} onClose={() => setLibraryOpen(false)} />}
+    {libraryOpen && <AssetPicker projectId={projectId} kind="image" title={t("ge.pickFromLibrary")} linkedIds={assets.map(a => a.id)} onPick={chooseLibraryAsset} onClose={() => setLibraryOpen(false)} />}
     <style>{KEYFRAMES}</style>
     <GraphicsEditorToolbar grid={grid} safe={safe} onAdd={addLayer} onDuplicate={duplicateSelected} onDelete={removeSelected} onToggleGrid={() => setGrid(v => !v)} onToggleSafe={() => setSafe(v => !v)} />
     <div className="ge-layout"><GraphicsEditorCanvas canvasRef={canvasRef} artboardRef={artboardRef} layers={layers} selectedIds={selectedIds} grid={grid} safe={safe} background={item.data?.backgroundColor ?? "#111"} onPointerMove={pointerMove} onPointerUp={pointerUp} onCanvasPointerDown={() => selectOnly(null)} onLayerPointerDown={beginPointer} /><GraphicsEditorProperties projectId={projectId} graphicId={graphicId} item={item} assets={assets} primary={primary} assetPicker={assetPicker} aspectLock={aspectLock} onLayer={updateLayer} onStyle={updateStyle} onChooseAsset={chooseAsset} onToggleAssetPicker={() => setAssetPicker(v => !v)} onOpenLibrary={() => setLibraryOpen(true)} onAspectLock={setAspectLock} /></div>

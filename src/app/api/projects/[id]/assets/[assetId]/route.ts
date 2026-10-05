@@ -17,7 +17,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const [project, asset] = await Promise.all([prisma.project.findUnique({ where: { id } }), prisma.asset.findUnique({ where: { id: assetId } })]);
     if (!project) return jsonError("Project not found", 404);
     if (!asset) return jsonError("Asset not found", 404);
-    await prisma.asset.update({ where: { id: assetId }, data: { projects: { connect: { id } }, expiresAt: null } });
+    await prisma.asset.update({ where: { id: assetId }, data: { projects: { connect: { id } } } });
     return NextResponse.json({ ok: true, assetId, projectId: id });
   } catch (error) { console.error("Asset attach error:", error); return jsonError("Failed to attach asset", 500); }
 }
