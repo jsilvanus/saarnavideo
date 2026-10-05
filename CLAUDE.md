@@ -59,6 +59,9 @@ Core domain models using Zod for type-safe validation:
 - **`validation.ts`** - Shared validation utilities
 - **`*.test.ts`** - Unit tests for domain logic
 
+#### `/src/i18n` - Interface language (fi, en, sv)
+- **`locales.ts`** (locale list, cookie name, `Accept-Language` parsing), **`translate.ts`** (`translate`, `makeT`, typed `MessageKey`), **`I18nProvider.tsx`** (`useT()`, `useLocale()`), **`server.ts`** (`getServerLocale()` for server components), **`messages/{fi,en,sv}.ts`**.
+
 #### `/src/components` - React UI Components
 - **`CompositionEditor.tsx`** - Interactive composition editor
 - **`GraphicsEditor.tsx`** - Scene graph editor
@@ -245,7 +248,7 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 - **Tests:** unit `reframe.test.ts`, `output-presets.test.ts`, `render-settings.test.ts`, `duration-report.test.ts`, `ffmpeg.test.ts`; `e2e/reframe.e2e.test.ts` (fixture `split.mp4`: left half red, right half green) checks the crop, fit, section/clip override and exact sizes by pixel colour and ffprobe.
 
 ### Project workspace UI (quick publish and three steps)
-`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules; self-contained pieces already use CSS modules: `TimelineView`, `VariablesEditor`, `FetchVariables` and the step bar of `OpenProject`, so new styles go into a `*.module.css` next to the component) groups the project into three steps (UI language Finnish; inner components such as SectionManager, TranscriptionEditor, CompositionEditor, OutputSettings, PublishPanel and VoiceoverPanel are still English):
+`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules; self-contained pieces already use CSS modules: `TimelineView`, `VariablesEditor`, `FetchVariables` and the step bar of `OpenProject`, so new styles go into a `*.module.css` next to the component) groups the project into three steps (all interface text goes through `useT()`, see "Interface language"):
 - **Pikajulkaisu** (`QuickStep.tsx`, step `quick`, first in the step bar and the landing step of a newly created project; existing projects open on Lähde): one page with five cards using the same handlers as the detailed steps: source (YouTube link or file), title plus `FetchVariables` and the variables editor, sections ("Käytä koko tallennetta" adds the whole source as one section via `addSegment`, with a manual duration field when the duration is unknown; otherwise a link to Rakenne), caption mode with preview/final render and job progress, and `PublishPanel`. `generate`/`previewRender` keep the user on this step when it is active (otherwise they jump to Julkaisu).
 - **Lähde:** sources (one or more), transcriptions, output size (OutputSettings) and project info: title plus **project variables**.
 - **Rakenne:** source sections (each root section has a source picker when the project has several sources, plus Reframe), graphics, voiceover audio, and the timeline: `TimelineView` (overview) above `CompositionEditor` (editing); composition sections are folded under "Koostuksen omat osiot".
@@ -485,3 +488,13 @@ See `Consider.md` (refactor backlog), `docs/plan.md` (roadmap) and the "not impl
 - See `docs/plan.md` for roadmap
 - See `docs/technical-phase-plan.md` for implementation strategy
 - Review `docs/API.md` for endpoint details
+
+---
+
+## Interface language (fi, en, sv)
+The whole UI is available in Finnish (default), English and Swedish. The language is the `saarnavideo-lang` cookie set by the switcher in the top bar (`LanguageSwitcher`); without it the browser's `Accept-Language` decides, Finnish when unsupported. `layout.tsx` reads it (`getServerLocale`), sets `<html lang>` and wraps the app in `I18nProvider`; client components call `const t = useT()` and `t("area.key", { name })`; server components use `makeT(await getServerLocale())`.
+- **Messages:** `src/i18n/messages/fi.ts` is the source; `en.ts` and `sv.ts` are typed `Record<keyof typeof fi, string>`, so a missing key is a compile error. `MessageKey` is derived from `fi` (plural suffixes stripped). `{name}` placeholders are filled from the params; an unknown placeholder stays as written. Plurals: define `key_one` and `key_other` and pass `count`; the form comes from `Intl.PluralRules`. Missing text falls back to Finnish, then to the key.
+- **Adding text:** add the key to all three files (same placeholders), then use it. `src/i18n/i18n.test.ts` checks key parity, placeholder parity and plural pairs.
+- **Dynamic keys** (job status, publication status, animation names) are built as `` `jobStatus.${status}` `` and cast to `MessageKey`; check the key exists first when the value can be unknown (`jobStatusLabel`).
+- **Not translated:** error text returned by API routes (`error` fields), server-side warnings (`assetWarnings`), job logs and the docs. `computeDurationReport` warnings carry `params` so the UI renders them itself (`DurationNotice`), the `message` stays English for API clients. Church and template content (built-in templates, church-year variable names) is Finnish by design and is not part of the UI language.
+- **Output language is separate:** the language of captions/transcription is chosen per run (`tr.language`), not by the interface language.

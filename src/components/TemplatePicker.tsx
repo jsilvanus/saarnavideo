@@ -42,6 +42,7 @@ export function TemplatePicker({ value, onChange }: { value: string; onChange: (
   }
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, []);
 
   const current = choices.find((choice) => valueOf(choice) === value);

@@ -33,7 +33,7 @@ export default function PodcastPanel({ projectId, projectTitle, preacher, gospel
   // The episode is cut from the composition audio by hand; nothing is picked automatically.
   const rangeProblem = start === undefined || end === undefined ? t("podcast.setRange") : end <= start ? t("podcast.endAfterStart") : body !== undefined && start >= body ? t("podcast.startAfterAudio", { end: formatTime(body) }) : "";
 
-  useEffect(() => { void requestJson<{ assets?: LibraryAudio[] }>("/api/assets?type=AUDIO", { cache: "no-store" }, t("podcast.libraryFailed")).then(d => setLibrary((d.assets ?? []).filter(a => a.type === "AUDIO"))).catch(() => undefined); }, []);
+  useEffect(() => { void requestJson<{ assets?: LibraryAudio[] }>("/api/assets?type=AUDIO", { cache: "no-store" }, t("podcast.libraryFailed")).then(d => setLibrary((d.assets ?? []).filter(a => a.type === "AUDIO"))).catch(() => undefined); }, [t]);
 
   const podcastJobs = jobs.filter(job => job.type === "PODCAST");
   const active = podcastJobs.find(job => ACTIVE.includes(job.status));
