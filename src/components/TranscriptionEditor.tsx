@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { errorMessage, jsonInit, requestJson } from "./api";
 import { formatTime, sourceLabel } from "./format";
 import { SourcePlayer, useSourcePlayer } from "./SourcePlayer";
@@ -35,6 +36,7 @@ export function transcriptTextUrl(sourceId: string, extension: "txt" | "html", r
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 
 export default function TranscriptionEditor({ projectId, sources, pendingFiles = {}, jobs = [], onProjectRefresh, sections = [] }: Props) {
+  const t = useT();
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
   const [mode, setMode] = useState<"whole" | "range">("whole");
   const [rangeStart, setRangeStart] = useState(0);
@@ -82,9 +84,9 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
       setJob(data);
       if (TERMINAL_STATUSES.has(data.status)) {
         stopPolling();
-        if (data.status === "COMPLETED") { setMessage("Transcription finished."); await loadCaptions(); }
-        else if (data.status === "FAILED") { setError(data.error || "Transcription failed."); }
-        else { setMessage("Transcription cancelled."); }
+        if (data.status === "COMPLETED") { setMessage(t("tr.finished")); await loadCaptions(); }
+        else if (data.status === "FAILED") { setError(data.error || t("tr.failed")); }
+        else { setMessage(t("tr.cancelled")); }
         onProjectRefresh?.();
       }
     } catch { /* transient poll failure, try again next tick */ }
@@ -118,15 +120,15 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     try {
       const body: { language: string; rangeStartSeconds?: number; rangeEndSeconds?: number } = { language };
       if (mode === "range") {
-        if (!(rangeEnd > rangeStart)) throw new Error("End must be greater than start.");
+        if (!(rangeEnd > rangeStart)) throw new Error(t("tr.endAfterStart"));
         body.rangeStartSeconds = rangeStart; body.rangeEndSeconds = rangeEnd;
       }
-      const data = await requestJson<{ id?: string; status?: string; progress?: number }>(`/api/projects/${projectId}/source/${source.id}/transcription-jobs`, jsonInit("POST", body), "Could not start transcription");
-      if (!data.id) throw new Error(data.error ?? "Could not start transcription");
+      const data = await requestJson<{ id?: string; status?: string; progress?: number }>(`/api/projects/${projectId}/source/${source.id}/transcription-jobs`, jsonInit("POST", body), t("tr.startFailed"));
+      if (!data.id) throw new Error(data.error ?? t("tr.startFailed"));
       setJob({ id: data.id, type: "TRANSCRIBE", sourceId: source.id, status: data.status ?? "QUEUED", progress: data.progress ?? 0 });
       startPolling(data.id);
-      setMessage("Transcription queued.");
-    } catch (e) { setError(errorMessage(e, "Could not start transcription")); }
+      setMessage(t("tr.queued"));
+    } catch (e) { setError(errorMessage(e, t("tr.startFailed"))); }
     finally { setStartBusy(false); }
   }
 
@@ -134,9 +136,9 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     if (!job) return;
     setError("");
     try {
-      await requestJson(`/api/projects/${projectId}/jobs/${job.id}/cancel`, { method: "POST" }, "Could not cancel transcription");
-      setMessage("Cancellation requested.");
-    } catch (e) { setError(errorMessage(e, "Could not cancel transcription")); }
+      await requestJson(`/api/projects/${projectId}/jobs/${job.id}/cancel`, { method: "POST" }, t("tr.cancelFailed"));
+      setMessage(t("tr.cancelRequested"));
+    } catch (e) { setError(errorMessage(e, t("tr.cancelFailed"))); }
   }
 
   async function uploadVtt() {
@@ -147,15 +149,15 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
       form.set("file", vttFile);
       form.set("language", language);
       if (mode === "range") {
-        if (!(rangeEnd > rangeStart)) throw new Error("End must be greater than start.");
+        if (!(rangeEnd > rangeStart)) throw new Error(t("tr.endAfterStart"));
         form.set("rangeStartSeconds", String(rangeStart));
         form.set("rangeEndSeconds", String(rangeEnd));
       }
-      await requestJson(`/api/sources/${source.id}/transcription-runs/upload`, { method: "POST", body: form }, "Could not import the .vtt file");
+      await requestJson(`/api/sources/${source.id}/transcription-runs/upload`, { method: "POST", body: form }, t("tr.vttFailed"));
       setVttFile(null);
-      setMessage("Transcript imported.");
+      setMessage(t("tr.imported"));
       await loadCaptions();
-    } catch (e) { setError(errorMessage(e, "Could not import the .vtt file")); }
+    } catch (e) { setError(errorMessage(e, t("tr.vttFailed"))); }
     finally { setUploadBusy(false); }
   }
 
@@ -166,13 +168,13 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
       const r = await fetch(`/api/sources/${source.id}/transcription-runs/${runId}/apply`, jsonInit("POST", { strategy }));
       const data = await r.json().catch(() => ({})) as { active?: TranscriptSegment[]; error?: string; conflicts?: string[] };
       if (r.status === 409) {
-        setRunErrors(prev => ({ ...prev, [runId]: `Blocked: this run overlaps ${data.conflicts?.length ?? "existing"} already-active line(s). Choose "Replace overlapping lines" to redo that stretch, or edit/remove the conflicting lines first.` }));
+        setRunErrors(prev => ({ ...prev, [runId]: t("tr.blocked", { count: data.conflicts?.length ?? t("tr.blockedExisting") }) }));
         return;
       }
-      if (!r.ok) throw new Error(data.error ?? "Could not apply this run");
-      setMessage("Run applied.");
+      if (!r.ok) throw new Error(data.error ?? t("tr.applyFailed"));
+      setMessage(t("tr.applied"));
       await loadCaptions();
-    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: errorMessage(e, "Could not apply this run") })); }
+    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: errorMessage(e, t("tr.applyFailed")) })); }
     finally { setApplyBusyId(null); }
   }
 
@@ -180,43 +182,43 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     if (!source) return;
     setApplyBusyId(runId); setRunErrors(prev => ({ ...prev, [runId]: "" })); setError("");
     try {
-      await requestJson(`/api/sources/${source.id}/transcription-runs/${runId}/discard`, { method: "POST" }, "Could not discard this run");
-      setMessage("Run discarded.");
+      await requestJson(`/api/sources/${source.id}/transcription-runs/${runId}/discard`, { method: "POST" }, t("tr.discardFailed"));
+      setMessage(t("tr.discarded"));
       await loadCaptions();
-    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: errorMessage(e, "Could not discard this run") })); }
+    } catch (e) { setRunErrors(prev => ({ ...prev, [runId]: errorMessage(e, t("tr.discardFailed")) })); }
     finally { setApplyBusyId(null); }
   }
 
   async function saveSegment(id: string, patch: Partial<Pick<TranscriptSegment, "text" | "startSeconds" | "endSeconds">>) {
     setError("");
     try {
-      const data = await requestJson<Partial<TranscriptSegment>>(`/api/transcript-segments/${id}`, jsonInit("PATCH", patch), "Could not save the caption line");
+      const data = await requestJson<Partial<TranscriptSegment>>(`/api/transcript-segments/${id}`, jsonInit("PATCH", patch), t("tr.saveLineFailed"));
       setCaptions(prev => prev ? { ...prev, active: prev.active.map(s => s.id === id ? { ...s, ...data } : s) } : prev);
-    } catch (e) { setError(errorMessage(e, "Could not save the caption line")); }
+    } catch (e) { setError(errorMessage(e, t("tr.saveLineFailed"))); }
   }
 
   async function deleteSegment(id: string) {
     setError("");
     try {
-      await requestJson(`/api/transcript-segments/${id}`, { method: "DELETE" }, "Could not delete the caption line");
+      await requestJson(`/api/transcript-segments/${id}`, { method: "DELETE" }, t("tr.deleteLineFailed"));
       setCaptions(prev => prev ? { ...prev, active: prev.active.filter(s => s.id !== id) } : prev);
-    } catch (e) { setError(errorMessage(e, "Could not delete the caption line")); }
+    } catch (e) { setError(errorMessage(e, t("tr.deleteLineFailed"))); }
   }
 
   async function addSegment() {
     if (!source) return;
-    if (!(newEnd > newStart)) { setError("End must be greater than start."); return; }
+    if (!(newEnd > newStart)) { setError(t("tr.endAfterStart")); return; }
     setError("");
     try {
-      await requestJson(`/api/sources/${source.id}/transcript-segments`, jsonInit("POST", { startSeconds: newStart, endSeconds: newEnd, text: newText }), "Could not add the caption line");
-      setNewText(""); setMessage("Line added.");
+      await requestJson(`/api/sources/${source.id}/transcript-segments`, jsonInit("POST", { startSeconds: newStart, endSeconds: newEnd, text: newText }), t("tr.addLineFailed"));
+      setNewText(""); setMessage(t("tr.lineAdded"));
       await loadCaptions();
-    } catch (e) { setError(errorMessage(e, "Could not add the caption line")); }
+    } catch (e) { setError(errorMessage(e, t("tr.addLineFailed"))); }
   }
 
   // Plain-text export: the range defaults to the whole recording and follows the source.
   useEffect(() => { setTextStart(0); setTextEnd(source?.durationMs != null ? Math.round(source.durationMs / 100) / 10 : ""); setTextSectionId(""); }, [source?.id, source?.durationMs]);
-  const textRangeError = textStart !== "" && textEnd !== "" && !(textEnd > textStart) ? "End must be greater than start." : "";
+  const textRangeError = textStart !== "" && textEnd !== "" && !(textEnd > textStart) ? t("tr.endAfterStart") : "";
   useEffect(() => {
     if (!source || textRangeError) { setTextPreview(""); return; }
     const controller = new AbortController();
@@ -237,39 +239,39 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     else { setTextStart(0); setTextEnd(source?.durationMs != null ? Math.round(source.durationMs / 100) / 10 : ""); }
   }
   async function copyText() {
-    try { await navigator.clipboard.writeText(textPreview); setTextStatus("Copied."); } catch { setTextStatus("Could not copy; select the text and copy it manually."); }
+    try { await navigator.clipboard.writeText(textPreview); setTextStatus(t("tr.copied")); } catch { setTextStatus(t("tr.copyFailed")); }
   }
 
   const sortedActive = useMemo(() => [...(captions?.active ?? [])].sort((a, b) => a.startSeconds - b.startSeconds), [captions]);
   const jobRunning = !!job && !TERMINAL_STATUSES.has(job.status);
 
-  if (!source) return <p className="muted">Add a source first.</p>;
+  if (!source) return <p className="muted">{t("tr.addSource")}</p>;
 
   return <div className="transcription-editor">
     <div className="picker-controls">
-      <label>Source<select value={source.id} onChange={e => setSourceId(e.target.value)}>{sources.map(s => <option key={s.id} value={s.id}>{s.type} · {sourceLabel(s)}{s.status === "PENDING" ? " · upload later" : ""}</option>)}</select></label>
-      <label>Language<select value={language} onChange={e => setLanguage(e.target.value)}><option value="fi">Finnish</option><option value="en">English</option><option value="sv">Swedish</option><option value="auto">Auto detect</option></select></label>
+      <label>{t("tr.source")}<select value={source.id} onChange={e => setSourceId(e.target.value)}>{sources.map(s => <option key={s.id} value={s.id}>{s.type} · {sourceLabel(s)}{s.status === "PENDING" ? t("tr.uploadLater") : ""}</option>)}</select></label>
+      <label>{t("tr.language")}<select value={language} onChange={e => setLanguage(e.target.value)}><option value="fi">{t("tr.lang.fi")}</option><option value="en">{t("tr.lang.en")}</option><option value="sv">{t("tr.lang.sv")}</option><option value="auto">{t("tr.lang.auto")}</option></select></label>
     </div>
 
     <SourcePlayer source={source} player={player} localFile={localFile} remoteSrc={`/api/sources/${source.id}`} onDuration={d => { if (rangeEnd === 60) setRangeEnd(Math.min(60, d)); }} />
 
     <div className="transcription-mode-toggle">
-      <button type="button" className={mode === "whole" ? "mode-active" : ""} onClick={() => setMode("whole")}>Whole video</button>
-      <button type="button" className={mode === "range" ? "mode-active" : ""} onClick={() => setMode("range")}>Selected range only</button>
+      <button type="button" className={mode === "whole" ? "mode-active" : ""} onClick={() => setMode("whole")}>{t("tr.whole")}</button>
+      <button type="button" className={mode === "range" ? "mode-active" : ""} onClick={() => setMode("range")}>{t("tr.range")}</button>
     </div>
     {mode === "range" && <div className="range-inputs">
-      <label>Start<input type="number" min="0" step=".1" value={rangeStart} onChange={e => { const n = Number(e.target.value); setRangeStart(n); seek(n); }} /></label>
-      <label>End<input type="number" min=".1" step=".1" value={rangeEnd} onChange={e => setRangeEnd(Number(e.target.value))} /></label>
-      <div className="picker-buttons"><button type="button" onClick={() => setRangeStart(current)}>Set start</button><button type="button" onClick={() => setRangeEnd(current)}>Set end</button></div>
+      <label>{t("tr.start")}<input type="number" min="0" step=".1" value={rangeStart} onChange={e => { const n = Number(e.target.value); setRangeStart(n); seek(n); }} /></label>
+      <label>{t("tr.end")}<input type="number" min=".1" step=".1" value={rangeEnd} onChange={e => setRangeEnd(Number(e.target.value))} /></label>
+      <div className="picker-buttons"><button type="button" onClick={() => setRangeStart(current)}>{t("tr.setStart")}</button><button type="button" onClick={() => setRangeEnd(current)}>{t("tr.setEnd")}</button></div>
     </div>}
 
     <div className="transcription-start-row">
-      <button className="primary" disabled={startBusy || (source.status === "PENDING" && source.type === "UPLOAD" && !localFile)} onClick={() => void startTranscription()}>{startBusy ? "Starting…" : "Start transcription"}</button>
-      {source.status === "PENDING" && source.type === "UPLOAD" && !localFile && <small className="muted">Upload this source&apos;s file first (Sources tab).</small>}
+      <button className="primary" disabled={startBusy || (source.status === "PENDING" && source.type === "UPLOAD" && !localFile)} onClick={() => void startTranscription()}>{startBusy ? t("tr.starting") : t("tr.startBtn")}</button>
+      {source.status === "PENDING" && source.type === "UPLOAD" && !localFile && <small className="muted">{t("tr.uploadFirst")}</small>}
       <div className="transcription-upload">
-        <span className="muted">— or upload your own .vtt —</span>
+        <span className="muted">{t("tr.orVtt")}</span>
         <input type="file" accept=".vtt,text/vtt" onChange={e => setVttFile(e.target.files?.[0] ?? null)} />
-        <button type="button" disabled={uploadBusy || !vttFile} onClick={() => void uploadVtt()}>{uploadBusy ? "Importing…" : "Import .vtt"}</button>
+        <button type="button" disabled={uploadBusy || !vttFile} onClick={() => void uploadVtt()}>{uploadBusy ? t("tr.importing") : t("tr.importVtt")}</button>
       </div>
     </div>
 
@@ -278,64 +280,65 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
         <strong>{job.status}</strong>
         {job.phase && <span> · {job.phase}</span>}
         <span> · {job.progress}%</span>
-        {job.etaSeconds != null && <span> · ETA {formatTime(job.etaSeconds)}</span>}
+        {job.etaSeconds != null && <span> · {t("tr.eta", { time: formatTime(job.etaSeconds) })}</span>}
       </div>
       <div className="progress-bar"><div style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }} /></div>
       {job.error && <p className="error">{job.error}</p>}
-      {jobRunning && <button className="stop-button" onClick={() => void abortJob()}>Abort</button>}
+      {jobRunning && <button className="stop-button" onClick={() => void abortJob()}>{t("tr.abort")}</button>}
     </div>}
 
     {message && <p className="success">{message}</p>}
     {error && <p className="error">{error}</p>}
 
     {!!captions?.pendingRuns.length && <div className="run-list">
-      <h3>Pending transcription runs</h3>
+      <h3>{t("tr.pendingRuns")}</h3>
       {captions.pendingRuns.map(run => <PendingRunCard key={run.id} run={run} busy={applyBusyId === run.id} conflict={runErrors[run.id]} onApply={strategy => void applyRun(run.id, strategy)} onDiscard={() => void discardRun(run.id)} />)}
     </div>}
 
     {!!sortedActive.length && <div className="downloads">
-      <a href={`/api/sources/${source.id}/captions.vtt`} download>Download VTT ↓</a>
-      <a href={`/api/sources/${source.id}/captions.srt`} download>Download SRT ↓</a>
+      <a href={`/api/sources/${source.id}/captions.vtt`} download>{t("tr.downloadVtt")}</a>
+      <a href={`/api/sources/${source.id}/captions.srt`} download>{t("tr.downloadSrt")}</a>
     </div>}
 
     {!!sortedActive.length && <div className="plain-text-export">
-      <h3>Plain text</h3>
-      <p className="muted">The spoken text without timings, for accessibility. Lines that start inside the range are included whole.</p>
+      <h3>{t("tr.plainText")}</h3>
+      <p className="muted">{t("tr.plainHelp")}</p>
       <div className="range-inputs">
-        <label>Start (s)<input type="number" min="0" step=".1" value={textStart} onChange={e => { setTextSectionId(""); setTextStart(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
-        <label>End (s)<input type="number" min="0" step=".1" value={textEnd} onChange={e => { setTextSectionId(""); setTextEnd(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
-        <label>Section<select value={textSectionId} onChange={e => pickTextSection(e.target.value)}><option value="">Whole recording</option>{textSections.map(x => <option key={x.id} value={x.id}>{x.label} ({formatTime(x.startSeconds!)}–{formatTime(x.endSeconds!)})</option>)}</select></label>
-        <label>Title (optional)<input value={textTitle} onChange={e => setTextTitle(e.target.value)} /></label>
+        <label>{t("tr.startS")}<input type="number" min="0" step=".1" value={textStart} onChange={e => { setTextSectionId(""); setTextStart(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
+        <label>{t("tr.endS")}<input type="number" min="0" step=".1" value={textEnd} onChange={e => { setTextSectionId(""); setTextEnd(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
+        <label>{t("tr.section")}<select value={textSectionId} onChange={e => pickTextSection(e.target.value)}><option value="">{t("tr.wholeRecording")}</option>{textSections.map(x => <option key={x.id} value={x.id}>{x.label} ({formatTime(x.startSeconds!)}–{formatTime(x.endSeconds!)})</option>)}</select></label>
+        <label>{t("tr.titleOptional")}<input value={textTitle} onChange={e => setTextTitle(e.target.value)} /></label>
       </div>
       {textRangeError && <p className="error">{textRangeError}</p>}
-      <textarea readOnly rows={8} aria-label="Plain text preview" value={textPreview} placeholder="No text in this range." />
+      <textarea readOnly rows={8} aria-label={t("tr.previewLabel")} value={textPreview} placeholder={t("tr.noText")} />
       <div className="downloads">
-        <button type="button" disabled={!textPreview} onClick={() => void copyText()}>Copy</button>
-        <a href={transcriptTextUrl(source.id, "txt", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>Download .txt ↓</a>
-        <a href={transcriptTextUrl(source.id, "html", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>Download .html ↓</a>
+        <button type="button" disabled={!textPreview} onClick={() => void copyText()}>{t("tr.copy")}</button>
+        <a href={transcriptTextUrl(source.id, "txt", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>{t("tr.downloadTxt")}</a>
+        <a href={transcriptTextUrl(source.id, "html", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>{t("tr.downloadHtml")}</a>
         {textStatus && <span className="muted" role="status">{textStatus}</span>}
       </div>
     </div>}
 
-    <div className="segment-list-head"><h3>Caption lines</h3>{captionsLoading && <span className="muted">Loading…</span>}</div>
+    <div className="segment-list-head"><h3>{t("tr.lines")}</h3>{captionsLoading && <span className="muted">{t("tr.loading")}</span>}</div>
     <div className="segment-list">
       {sortedActive.map(seg => <SegmentRow key={seg.id} segment={seg} current={current} onSeek={seek} onSave={saveSegment} onDelete={deleteSegment} />)}
-      {!sortedActive.length && !captionsLoading && <p className="muted">No active caption lines yet. Start a transcription, import a .vtt, or add a line manually below.</p>}
+      {!sortedActive.length && !captionsLoading && <p className="muted">{t("tr.noLines")}</p>}
     </div>
 
     <div className="add-line">
-      <h4>Add a line manually</h4>
+      <h4>{t("tr.addLine")}</h4>
       <div className="add-line-fields">
-        <label>Start<input type="number" min="0" step=".1" value={newStart} onChange={e => setNewStart(Number(e.target.value))} /></label>
-        <label>End<input type="number" min="0" step=".1" value={newEnd} onChange={e => setNewEnd(Number(e.target.value))} /></label>
+        <label>{t("tr.start")}<input type="number" min="0" step=".1" value={newStart} onChange={e => setNewStart(Number(e.target.value))} /></label>
+        <label>{t("tr.end")}<input type="number" min="0" step=".1" value={newEnd} onChange={e => setNewEnd(Number(e.target.value))} /></label>
       </div>
-      <textarea rows={2} placeholder="Caption text" value={newText} onChange={e => setNewText(e.target.value)} />
-      <button type="button" disabled={!newText.trim()} onClick={() => void addSegment()}>＋ Add line</button>
+      <textarea rows={2} placeholder={t("tr.captionText")} value={newText} onChange={e => setNewText(e.target.value)} />
+      <button type="button" disabled={!newText.trim()} onClick={() => void addSegment()}>{t("tr.addLineBtn")}</button>
     </div>
   </div>;
 }
 
 function PendingRunCard({ run, busy, conflict, onApply, onDiscard }: { run: PendingRun; busy: boolean; conflict?: string; onApply: (strategy: ApplyStrategy) => void; onDiscard: () => void }) {
+  const t = useT();
   const [strategy, setStrategy] = useState<ApplyStrategy>("replace_overlap");
   return <div className="run-card">
     <div className="run-card-head">
@@ -344,20 +347,21 @@ function PendingRunCard({ run, busy, conflict, onApply, onDiscard }: { run: Pend
       <span className="muted">{new Date(run.createdAt).toLocaleString()}</span>
     </div>
     {run.error && <p className="error">{run.error}</p>}
-    <p className="muted">{run.segments.length} line{run.segments.length === 1 ? "" : "s"}</p>
+    <p className="muted">{t("tr.runLines", { count: run.segments.length })}</p>
     <div className="run-card-actions">
       <select value={strategy} onChange={e => setStrategy(e.target.value as ApplyStrategy)}>
-        <option value="replace_overlap">Replace overlapping lines</option>
-        <option value="append">Append (fails if it overlaps)</option>
+        <option value="replace_overlap">{t("tr.replaceOverlap")}</option>
+        <option value="append">{t("tr.append")}</option>
       </select>
-      <button className="primary" disabled={busy} onClick={() => onApply(strategy)}>{busy ? "Applying…" : "Apply"}</button>
-      <button disabled={busy} onClick={onDiscard}>Discard</button>
+      <button className="primary" disabled={busy} onClick={() => onApply(strategy)}>{busy ? t("tr.applying") : t("tr.apply")}</button>
+      <button disabled={busy} onClick={onDiscard}>{t("tr.discard")}</button>
     </div>
     {conflict && <p className="error">{conflict}</p>}
   </div>;
 }
 
 function SegmentRow({ segment, current, onSeek, onSave, onDelete }: { segment: TranscriptSegment; current: number; onSeek: (seconds: number) => void; onSave: (id: string, patch: Partial<Pick<TranscriptSegment, "text" | "startSeconds" | "endSeconds">>) => void; onDelete: (id: string) => void }) {
+  const t = useT();
   const [text, setText] = useState(segment.text);
   const [start, setStart] = useState(segment.startSeconds);
   const [end, setEnd] = useState(segment.endSeconds);
@@ -365,12 +369,12 @@ function SegmentRow({ segment, current, onSeek, onSave, onDelete }: { segment: T
   const isCurrent = isWithinSegment(current, segment);
   return <div className={`segment-row${isCurrent ? " segment-current" : ""}`}>
     <div className="segment-times">
-      <button type="button" className="segment-seek" onClick={() => onSeek(segment.startSeconds)} title="Jump the player to this line">▶ {formatTime(segment.startSeconds)}</button>
-      <label>Start<input type="number" min="0" step=".1" value={start} onChange={e => setStart(Number(e.target.value))} onBlur={() => { if (!(end > start)) { setStart(segment.startSeconds); return; } if (start !== segment.startSeconds) onSave(segment.id, { startSeconds: start }); }} /></label>
-      <label>End<input type="number" min="0" step=".1" value={end} onChange={e => setEnd(Number(e.target.value))} onBlur={() => { if (!(end > start)) { setEnd(segment.endSeconds); return; } if (end !== segment.endSeconds) onSave(segment.id, { endSeconds: end }); }} /></label>
+      <button type="button" className="segment-seek" onClick={() => onSeek(segment.startSeconds)} title={t("tr.jump")}>▶ {formatTime(segment.startSeconds)}</button>
+      <label>{t("tr.start")}<input type="number" min="0" step=".1" value={start} onChange={e => setStart(Number(e.target.value))} onBlur={() => { if (!(end > start)) { setStart(segment.startSeconds); return; } if (start !== segment.startSeconds) onSave(segment.id, { startSeconds: start }); }} /></label>
+      <label>{t("tr.end")}<input type="number" min="0" step=".1" value={end} onChange={e => setEnd(Number(e.target.value))} onBlur={() => { if (!(end > start)) { setEnd(segment.endSeconds); return; } if (end !== segment.endSeconds) onSave(segment.id, { endSeconds: end }); }} /></label>
     </div>
     <textarea rows={2} value={text} onChange={e => setText(e.target.value)} onBlur={() => { if (text !== segment.text) onSave(segment.id, { text }); }} />
-    <button type="button" className="segment-delete" aria-label="Delete line" onClick={() => onDelete(segment.id)}>🗑</button>
+    <button type="button" className="segment-delete" aria-label={t("tr.deleteLine")} onClick={() => onDelete(segment.id)}>🗑</button>
   </div>;
 }
 
