@@ -1,0 +1,18 @@
+# An fffleet worker that can also run SaarnaVideo's yt-dlp downloads (job type "download").
+# Use it for the workers that DOWNLOAD_EXECUTOR=fffleet sends downloads to; it still renders ffmpeg jobs like the stock image.
+#   docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker .
+ARG FFFLEET_VERSION=latest
+FROM ghcr.io/jsilvanus/fffleet-worker:${FFFLEET_VERSION}
+
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 python3-pip \
+  && python3 -m pip install --break-system-packages yt-dlp \
+  && rm -rf /var/lib/apt/lists/* \
+  && yt-dlp --version
+
+# The executor is plain ESM with no dependencies, so no build step or npm install is needed.
+COPY fleet/download-executor.mjs /opt/saarnavideo/download-executor.mjs
+ENV FFFLEET_EXECUTORS=/opt/saarnavideo/download-executor.mjs
+
+USER node

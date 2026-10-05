@@ -44,7 +44,7 @@ WORKER_POLL_MS=3000
 ```
 
 ### Rendering on an fffleet fleet (Optional)
-By default the worker runs ffmpeg itself. With `RENDER_EXECUTOR=fffleet` it sends VIDEO, PREVIEW, THUMBNAIL and PODCAST ffmpeg commands to an [fffleet](https://github.com/jsilvanus/fffleet) fleet instead. YouTube downloads, transcription and the audio probe on upload still run where the worker runs.
+By default the worker runs ffmpeg itself. With `RENDER_EXECUTOR=fffleet` it sends VIDEO, PREVIEW, THUMBNAIL and PODCAST ffmpeg commands to an [fffleet](https://github.com/jsilvanus/fffleet) fleet instead. Transcription and the audio probe on upload still run where the worker runs; YouTube downloads can be moved separately (next section).
 
 ```bash
 RENDER_EXECUTOR=fffleet
@@ -58,6 +58,18 @@ AWS_SECRET_ACCESS_KEY=...
 ```
 
 The remote workers need no shared volume. For each render the worker uploads the files it reads to S3 (sources, assets, audio, the generated `.ass`/`.srt`, a template font), submits one batch job, and copies the output back to `MEDIA_ROOT`, so Output rows, downloads and publishing are unchanged. A file is uploaded once (keyed by path, size and modification time) and reused by later renders. Temporary caption files and the output copy in S3 are deleted after each job; sources and assets stay, so give the bucket a lifecycle rule if you want them to expire. Fleet workers should run with `FFFLEET_CACHE_DIR` so a source is downloaded to a worker once, not for every job, and the worker image must have `libass`, `drawtext` and `libmp3lame` (the published `fffleet-worker` image does).
+
+### yt-dlp downloads on an fffleet worker (Optional)
+`DOWNLOAD_EXECUTOR=fffleet` (default `local`) runs the YouTube download of a DOWNLOAD job on a fleet worker instead of in the SaarnaVideo worker. It uses the same `FFFLEET_*` and `AWS_*` settings as rendering (`RENDER_EXECUTOR` and `DOWNLOAD_EXECUTOR` are independent). The fleet workers must be able to run the `download` job type: build them from `Dockerfile.fleet-worker`, which adds python3, yt-dlp and `fleet/download-executor.mjs` to the published `ghcr.io/jsilvanus/fffleet-worker` image and sets `FFFLEET_EXECUTORS`.
+
+```bash
+docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker .
+# app / worker host
+DOWNLOAD_EXECUTOR=fffleet
+YTDLP_COOKIES_FILE=/run/secrets/youtube-cookies.txt   # optional
+```
+
+The video goes through S3 and is copied to `MEDIA_ROOT/sources/...`, as renders do; everything staged for the job under `<FFFLEET_S3_PREFIX>/tmp/<jobId>/` is deleted afterwards. Without `FFFLEET_URL`, or when the fleet cannot be reached, the download runs in the SaarnaVideo worker through the same executor (yt-dlp must then be installed there; the stock `Dockerfile.worker` has it). If `YTDLP_COOKIES_FILE` is set, a copy is staged in S3 for each job, and a cookie file refreshed by yt-dlp is written back to that path. Keep the bucket private; the cookie copy exists there only while the job runs. Storing cookies encrypted in the database with a Settings page is planned. Not yet tested against a real fleet or real YouTube.
 
 ### Transcription (Optional)
 ```bash
