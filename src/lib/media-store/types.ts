@@ -22,6 +22,8 @@ export interface MediaStore {
   put(key: string, body: Readable | Buffer, meta?: PutMeta): Promise<string>;
   /** Stores a local file. The source file is left where it is; the caller removes it when it was a temp file. */
   putFile(key: string, localPath: string, meta?: PutMeta): Promise<string>;
+  /** Like putFile, but consumes the source: local storage renames it into place, S3 uploads it and deletes the source. */
+  moveFile(key: string, localPath: string, meta?: PutMeta): Promise<string>;
   stat(ref: string): Promise<{ size: number } | null>;
   exists(ref: string): Promise<boolean>;
   stream(ref: string, range?: ByteRange): Promise<Readable>;

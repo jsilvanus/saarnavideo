@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { getMediaStore } from "@/lib/media-store";
 import { jsonError } from "./http";
 
@@ -24,14 +24,15 @@ export function sourceUploadFile(file: FormDataEntryValue | null): File | Respon
   return file;
 }
 
-/** Writes an uploaded source file under MEDIA_ROOT/sources/<projectId>/ and returns its path. */
+/** Streams an uploaded source file into the media store as sources/<projectId>/<time>-<name> and returns its reference. */
 export async function saveSourceFile(projectId: string, file: File): Promise<string> {
-  const directory = path.join(mediaRoot(), "sources", projectId);
-  await mkdir(directory, { recursive: true });
   const safeName = path.basename(file.name).replace(/[^a-zA-Z0-9._-]/g, "_") || "source";
-  const storagePath = path.join(directory, `${Date.now()}-${safeName}`);
-  await writeFile(storagePath, Buffer.from(await file.arrayBuffer()));
-  return storagePath;
+  return (await getMediaStore()).put(`sources/${projectId}/${Date.now()}-${safeName}`, Readable.fromWeb(file.stream() as unknown as NodeReadableStream), { mimeType: file.type || undefined });
+}
+
+/** Scratch directory for uploads that are checked (hashed, probed) before they are moved into the media store. */
+export function uploadScratchDir(): string {
+  return path.join(mediaRoot(), "tmp", "uploads");
 }
 
 /** Streams a stored media file (local path or s3:// reference), honouring a single `Range: bytes=start-end` request header. */

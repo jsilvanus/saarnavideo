@@ -36,6 +36,20 @@ export class LocalBackend {
     return target;
   }
 
+  async moveFile(key: string, localPath: string): Promise<string> {
+    const target = this.pathFor(key);
+    if (path.resolve(localPath) === path.resolve(target)) return target;
+    await mkdir(path.dirname(target), { recursive: true });
+    try {
+      await rename(localPath, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      await copyFile(localPath, target);
+      await rm(localPath, { force: true });
+    }
+    return target;
+  }
+
   async stat(file: string): Promise<{ size: number } | null> {
     return stat(file).then(info => (info.isFile() ? { size: info.size } : null), () => null);
   }

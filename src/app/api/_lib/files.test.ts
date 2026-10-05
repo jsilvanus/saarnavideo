@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createMediaStore, setMediaStore } from "@/lib/media-store";
 import { createMemoryObjectClient } from "@/lib/media-store/memory-client";
-import { rangedFileResponse, readStoredFile, removeStoredFile } from "./files";
+import { rangedFileResponse, readStoredFile, removeStoredFile, saveSourceFile } from "./files";
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(path.join(os.tmpdir(), "files-")); });
@@ -46,4 +46,14 @@ it("still serves an old local path while the store writes to s3", async () => {
   await writeFile(legacy, "legacy");
   setMediaStore(createMediaStore({ mode: "s3", root: dir, s3: { client: createMemoryObjectClient().client, bucket: "b" } }));
   expect(await (await rangedFileResponse(request(), legacy, "video/mp4")).text()).toBe("legacy");
+});
+
+describe.each(["local", "s3"] as const)("saveSourceFile with %s storage", (mode) => {
+  it("streams the upload into the store", async () => {
+    const client = createMemoryObjectClient();
+    setMediaStore(createMediaStore({ mode, root: path.join(dir, "root"), s3: { client: client.client, bucket: "b" } }));
+    const ref = await saveSourceFile("p1", new File(["sermon bytes"], "My Sermon.mp4", { type: "video/mp4" }));
+    expect(ref).toMatch(mode === "s3" ? /^s3:\/\/b\/sources\/p1\/\d+-My_Sermon\.mp4$/ : /sources\/p1\/\d+-My_Sermon\.mp4$/);
+    expect((await readStoredFile(ref)).toString()).toBe("sermon bytes");
+  });
 });
