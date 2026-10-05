@@ -7,7 +7,7 @@ type RawKey = keyof typeof fi;
 /** A key as written in code: `x_one` / `x_other` pairs are used as plain `x`. */
 export type MessageKey = RawKey extends infer K ? (K extends `${infer B}_one` | `${infer B}_other` ? B : K) : never;
 export type Messages = Record<RawKey, string>;
-export type Params = Record<string, string | number>;
+export type Params = Record<string, string | number | boolean>;
 export type TFunction = (key: MessageKey, params?: Params) => string;
 
 export const MESSAGES: Record<Locale, Messages> = { fi, en, sv };

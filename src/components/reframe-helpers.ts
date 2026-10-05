@@ -22,7 +22,7 @@ export function reframeFromChoice(choice: ReframeChoice, crop: CropRect | undefi
 }
 
 /** Small badge text for cards with a non-default reframe. */
-export function reframeBadge(reframe: Reframe | undefined): string | undefined {
+export function reframeBadge(reframe: Reframe | undefined): "crop" | "fit" | "fill" | undefined {
   if (!reframe) return undefined;
   return reframe.mode === "custom" ? "crop" : reframe.mode === "fit" ? "fit" : "fill";
 }
