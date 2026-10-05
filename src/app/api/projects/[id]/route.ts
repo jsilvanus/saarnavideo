@@ -1,9 +1,9 @@
-import { rm } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { validateRenderSettings } from "@/domain/render-settings";
 import { jsonError, jsonSafe } from "@/app/api/_lib/http";
+import { removeStoredFile } from "@/app/api/_lib/files";
 
 const patchSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
@@ -60,7 +60,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     const referenced = await prisma.source.findMany({ where: { storagePath: { in: orphanPaths } }, select: { storagePath: true } });
     const referencedPaths = new Set(referenced.map((source) => source.storagePath));
     for (const storagePath of orphanPaths) {
-      if (!referencedPaths.has(storagePath)) await rm(storagePath, { force: true }).catch(() => undefined);
+      if (!referencedPaths.has(storagePath)) await removeStoredFile(storagePath);
     }
 
     return new Response(null, { status: 204 });

@@ -1,7 +1,7 @@
-import { createReadStream } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { getMediaStore } from "@/lib/media-store";
 import { jsonError } from "./http";
 
 export const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024);
@@ -34,15 +34,18 @@ export async function saveSourceFile(projectId: string, file: File): Promise<str
   return storagePath;
 }
 
-/** Streams a media file, honouring a single `Range: bytes=start-end` request header. */
+/** Streams a stored media file (local path or s3:// reference), honouring a single `Range: bytes=start-end` request header. */
 export async function rangedFileResponse(request: Request, storagePath: string, mimeType: string | null) {
-  const size = (await stat(storagePath)).size;
+  const store = await getMediaStore();
+  const info = await store.stat(storagePath);
+  if (!info) throw new Error(`Media file not found: ${storagePath}`);
+  const size = info.size;
   const range = request.headers.get("range");
   const headers = new Headers({ "Content-Type": mimeType || "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=60" });
-  const stream = (start?: number, end?: number) => Readable.toWeb(createReadStream(storagePath, start === undefined ? undefined : { start, end })) as ReadableStream;
+  const body = async (start?: number, end?: number) => Readable.toWeb(await store.stream(storagePath, start === undefined ? undefined : { start, end })) as ReadableStream;
   if (!range) {
     headers.set("Content-Length", String(size));
-    return new Response(stream(), { status: 200, headers });
+    return new Response(await body(), { status: 200, headers });
   }
   const unsatisfiable = () => new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
   const match = /^bytes=(\d+)-(\d*)$/.exec(range);
@@ -53,5 +56,17 @@ export async function rangedFileResponse(request: Request, storagePath: string, 
   const end = Math.min(requestedEnd, size - 1);
   headers.set("Content-Length", String(end - start + 1));
   headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
-  return new Response(stream(start, end), { status: 206, headers });
+  return new Response(await body(start, end), { status: 206, headers });
+}
+
+/** Reads a whole stored file into memory (small files only: graphic assets). */
+export async function readStoredFile(storagePath: string): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of await (await getMediaStore()).stream(storagePath)) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+/** Deletes a stored file; a missing file or a storage error is ignored (the database row is the source of truth). */
+export async function removeStoredFile(storagePath: string): Promise<void> {
+  await (await getMediaStore()).remove(storagePath).catch(() => undefined);
 }

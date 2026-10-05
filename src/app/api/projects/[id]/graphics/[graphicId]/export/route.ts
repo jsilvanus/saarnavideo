@@ -1,9 +1,9 @@
-import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { migrateProjectDefinition } from "@/domain/project";
 import { createGraphicPackage } from "@/domain/graphic-package";
 import { jsonError } from "@/app/api/_lib/http";
+import { readStoredFile } from "@/app/api/_lib/files";
 
 function referencedAssets<T extends { id: string; assetKey: string }>(graphic: unknown, assets: T[]) {
   const values = JSON.stringify(graphic);
@@ -28,7 +28,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       continue;
     }
     try {
-      const data = await readFile(asset.storagePath);
+      const data = await readStoredFile(asset.storagePath);
       assets.push({ ...entry, dataBase64: data.toString("base64") });
     } catch {
       return jsonError(`Asset file is unavailable: ${asset.assetKey}`, 409);

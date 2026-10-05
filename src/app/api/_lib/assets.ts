@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -9,6 +9,7 @@ import { validateAssetKey, validateAssetType, validateImageFile, type ImageMetad
 import { MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFile } from "@/integrations/audio-assets";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "./http";
+import { getMediaStore } from "@/lib/media-store";
 import { mediaRoot, rangedFileResponse } from "./files";
 
 export const MAX_ASSET_SIZE = Number(process.env.MAX_ASSET_SIZE_BYTES ?? 10 * 1024 * 1024);
@@ -22,8 +23,10 @@ export function sha256(data: Buffer) {
 export async function assetFileResponse(asset: { storagePath: string; mimeType: string }, request?: Request) {
   try {
     if (request && asset.mimeType.startsWith("audio/")) return await rangedFileResponse(request, asset.storagePath, asset.mimeType);
-    const info = await stat(asset.storagePath);
-    return new Response(createReadStream(asset.storagePath) as unknown as ReadableStream, { headers: { "Content-Type": asset.mimeType, "Content-Length": String(info.size), "Cache-Control": "private, max-age=3600" } });
+    const store = await getMediaStore();
+    const info = await store.stat(asset.storagePath);
+    if (!info) return jsonError("Asset file unavailable", 404);
+    return new Response(Readable.toWeb(await store.stream(asset.storagePath)) as ReadableStream, { headers: { "Content-Type": asset.mimeType, "Content-Length": String(info.size), "Cache-Control": "private, max-age=3600" } });
   } catch {
     return jsonError("Asset file unavailable", 404);
   }

@@ -90,3 +90,8 @@ export function getMediaStore(): Promise<MediaStore> {
   shared ??= createMediaStoreFromEnv().catch(error => { shared = undefined; throw error; });
   return shared;
 }
+
+/** Replaces the process-wide store (tests). Pass `undefined` to go back to the environment. */
+export function setMediaStore(store: MediaStore | undefined): void {
+  shared = store ? Promise.resolve(store) : undefined;
+}
