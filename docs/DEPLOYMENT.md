@@ -69,7 +69,7 @@ DOWNLOAD_EXECUTOR=fffleet
 YTDLP_COOKIES_FILE=/run/secrets/youtube-cookies.txt   # optional
 ```
 
-The video goes through S3 and is copied to `MEDIA_ROOT/sources/...`, as renders do; everything staged for the job under `<FFFLEET_S3_PREFIX>/tmp/<jobId>/` is deleted afterwards. Without `FFFLEET_URL`, or when the fleet cannot be reached, the download runs in the SaarnaVideo worker through the same executor (yt-dlp must then be installed there; the stock `Dockerfile.worker` has it). If `YTDLP_COOKIES_FILE` is set, a copy is staged in S3 for each job, and a cookie file refreshed by yt-dlp is written back to that path. Keep the bucket private; the cookie copy exists there only while the job runs. Storing cookies encrypted in the database with a Settings page is planned. Not yet tested against a real fleet or real YouTube.
+The video goes through S3 and is copied to `MEDIA_ROOT/sources/...`, as renders do; everything staged for the job under `<FFFLEET_S3_PREFIX>/tmp/<jobId>/` is deleted afterwards. Without `FFFLEET_URL`, or when the fleet cannot be reached, the download runs in the SaarnaVideo worker through the same executor (yt-dlp must then be installed there; the stock `Dockerfile.worker` has it). If `YTDLP_COOKIES_FILE` is set, a copy is staged in S3 for each job, and a cookie file refreshed by yt-dlp is written back to that path. Keep the bucket private; the cookie copy exists there only while the job runs. CI builds `Dockerfile.fleet-worker` and pushes `ghcr.io/<owner>/saarnavideo-fleet-worker` (`latest` and the commit sha) from main; use it for the workers that receive downloads. Storing cookies encrypted in the database with a Settings page is planned. Not yet tested against a real fleet or real YouTube.
 
 ### Transcription (Optional)
 ```bash

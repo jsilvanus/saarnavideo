@@ -42,6 +42,31 @@ jobs:
           docker run --rm saarnavideo-worker:ci ffprobe -version
           docker run --rm saarnavideo-worker:ci yt-dlp --version
 
+  fleet-worker-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build fleet worker image (fffleet worker + yt-dlp + download executor)
+        run: docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker:ci .
+      - name: Verify toolchain and executor
+        run: |
+          docker run --rm --entrypoint yt-dlp saarnavideo-fleet-worker:ci --version
+          docker run --rm --entrypoint ffmpeg saarnavideo-fleet-worker:ci -version
+          docker run --rm --entrypoint node saarnavideo-fleet-worker:ci \
+            -e "import('/opt/saarnavideo/download-executor.mjs').then(m => { if (m.default?.type !== 'download') process.exit(1) })"
+      - name: Push to ghcr (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMAGE=ghcr.io/${{ github.repository_owner }}/saarnavideo-fleet-worker
+          docker tag saarnavideo-fleet-worker:ci "$IMAGE:latest"
+          docker tag saarnavideo-fleet-worker:ci "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
+
   e2e:
     runs-on: ubuntu-latest
     steps:
