@@ -109,6 +109,8 @@ export function useWorkspaceState() {
   }
   useEffect(() => {
     void refreshProjects();
+    // load the project list once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   async function createProject(e: FormEvent) {
     e.preventDefault();

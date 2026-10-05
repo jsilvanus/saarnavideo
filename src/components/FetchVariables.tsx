@@ -5,6 +5,7 @@ import Link from "next/link";
 import { errorMessage, jsonInit, requestJson } from "@/components/api";
 import type { ApiConnectorView } from "@/components/connectors/types";
 import type { ProjectVariable } from "@/domain/variables";
+import styles from "./FetchVariables.module.css";
 
 type Props = {
   projectId: string;
@@ -66,7 +67,7 @@ export default function FetchVariables({ projectId, variables, onSave }: Props) 
   if (connectors && !options.length) {
     return <p className="muted" data-testid="fetch-variables">Muuttujat voi hakea rajapinnasta. <Link href="/settings">Lisää rajapinta asetuksissa</Link>.{error && <span className="error"> {error}</span>}</p>;
   }
-  return <div className="fetch-variables" data-testid="fetch-variables">
+  return <div className={styles["fetch-variables"]} data-testid="fetch-variables">
     <div className="form-grid">
       <label>Rajapinta<select value={requestId} onChange={(e) => { setRequestId(e.target.value); setValues(null); }}>{options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>
       <label>Päivä <small className="muted">{"{{paiva}}"}</small><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
@@ -76,7 +77,7 @@ export default function FetchVariables({ projectId, variables, onSave }: Props) 
     {values && (changes.length === 0
       ? <p className="muted">Ei muutoksia: haetut arvot ovat jo muuttujissa{Object.keys(values).length === 0 ? " (haku ei palauttanut arvoja)" : ""}.</p>
       : <>
-        <table className="fetch-diff"><thead><tr><th>Muuttuja</th><th>Nyt</th><th>Haettu</th></tr></thead><tbody>
+        <table className={styles["fetch-diff"]}><thead><tr><th>Muuttuja</th><th>Nyt</th><th>Haettu</th></tr></thead><tbody>
           {changes.map(([key, value]) => <tr key={key}><td className="mono">{key}</td><td>{current.get(key) ?? "–"}</td><td>{value}</td></tr>)}
         </tbody></table>
         <div className="button-row"><button type="button" className="primary" disabled={busy} onClick={() => void apply()}>Käytä arvot</button><button type="button" onClick={() => setValues(null)}>Hylkää</button></div>

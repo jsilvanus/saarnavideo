@@ -1,0 +1,14 @@
+.variables-editor {
+  display: grid;
+  gap: 10px;
+}
+.variable-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 34px;
+  gap: 6px;
+  align-items: center;
+}
+.variable-row small {
+  grid-column: 1 / -1;
+  margin-top: -4px;
+}

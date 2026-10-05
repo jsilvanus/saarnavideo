@@ -109,6 +109,7 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     } catch { setCaptions({ active: [], pendingRuns: [] }); }
     finally { setCaptionsLoading(false); }
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when another source is selected
   useEffect(() => { void loadCaptions(); }, [source?.id]);
 
   async function startTranscription() {

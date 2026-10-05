@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Graphic } from "@/domain/graphics";
 import { VARIABLE_KEY_PATTERN, variableNames, type ProjectVariable } from "@/domain/variables";
+import styles from "./VariablesEditor.module.css";
 
 type Props = {
   variables: ProjectVariable[];
@@ -37,8 +38,8 @@ export default function VariablesEditor({ variables, graphics = [], onSave }: Pr
     finally { setSaving(false); }
   }
 
-  return <div className="variables-editor" data-testid="variables-editor">
-    {rows.map((row, index) => <div className="variable-row" key={index}>
+  return <div className={styles["variables-editor"]} data-testid="variables-editor">
+    {rows.map((row, index) => <div className={styles["variable-row"]} key={index}>
       <label><span className="sr-only">Muuttujan nimi</span><input aria-label="Muuttujan nimi" className="mono" value={row.key} placeholder="nimi" onChange={e => update(index, { key: e.target.value.trim() })} aria-invalid={!!problem(row, index)} /></label>
       <label><span className="sr-only">Arvo</span><input aria-label={`Arvo: ${row.key}`} value={row.value} placeholder="arvo" onChange={e => update(index, { value: e.target.value })} /></label>
       <button type="button" className="icon-button" aria-label={`Poista ${row.key}`} title="Poista" onClick={() => setRows(current => current.filter((_, i) => i !== index))}>×</button>

@@ -7,6 +7,7 @@ import type { TimelineItem } from "@/domain/project";
 import { layoutTimeline } from "@/domain/timeline";
 import { overlayOutputRange } from "@/renderer/overlay-timing";
 import { formatTime, sourceLabel } from "./format";
+import styles from "./TimelineView.module.css";
 
 type Source = { id: string; originalName?: string | null; youtubeUrl?: string | null };
 type AudioAsset = { id: string; assetKey: string };
@@ -46,10 +47,10 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
 
   const { blocks, total } = useMemo(() => buildBlocks(items as TimelineItem[], graphics, sections, sources, audioAssets), [items, graphics, sections, sources, audioAssets]);
 
-  return <div className="timeline-view" data-testid="timeline-view" data-orientation={orientation}>
-    <div className="timeline-view-head">
+  return <div className={styles["timeline-view"]} data-testid="timeline-view" data-orientation={orientation}>
+    <div className={styles["timeline-view-head"]}>
       <span className="muted">Kesto {formatTime(total)}</span>
-      <div role="group" aria-label="Aikajanan suunta" className="segmented">
+      <div role="group" aria-label="Aikajanan suunta" className={styles["segmented"]}>
         <button type="button" aria-pressed={orientation === "horizontal"} onClick={() => choose("horizontal")}>Vaaka</button>
         <button type="button" aria-pressed={orientation === "vertical"} onClick={() => choose("vertical")}>Pysty</button>
       </div>
@@ -60,11 +61,11 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
 }
 
 function Horizontal({ blocks, total }: { blocks: Block[]; total: number }) {
-  return <div className="timeline-h">
-    <div className="timeline-h-ruler" aria-hidden="true">{ticks(total).map(t => <span key={t} style={{ left: `${(t / total) * 100}%` }}>{formatTime(t)}</span>)}</div>
-    {LANES.map(lane => <div className="timeline-h-lane" key={lane.id}>
-      <span className="timeline-lane-label">{lane.label}</span>
-      <div className="timeline-h-track">{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} style={{ left: `${(b.start / total) * 100}%`, width: `${Math.max(0.4, ((b.end - b.start) / total) * 100)}%` }} />)}</div>
+  return <div className={styles["timeline-h"]}>
+    <div className={styles["timeline-h-ruler"]} aria-hidden="true">{ticks(total).map(t => <span key={t} style={{ left: `${(t / total) * 100}%` }}>{formatTime(t)}</span>)}</div>
+    {LANES.map(lane => <div className={styles["timeline-h-lane"]} key={lane.id}>
+      <span className={styles["timeline-lane-label"]}>{lane.label}</span>
+      <div className={styles["timeline-h-track"]}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} style={{ left: `${(b.start / total) * 100}%`, width: `${Math.max(0.4, ((b.end - b.start) / total) * 100)}%` }} />)}</div>
     </div>)}
   </div>;
 }
@@ -72,15 +73,15 @@ function Horizontal({ blocks, total }: { blocks: Block[]; total: number }) {
 function Vertical({ blocks, total }: { blocks: Block[]; total: number }) {
   // Tall enough to read, short enough not to scroll forever on an hour-long service.
   const height = Math.round(Math.min(1400, Math.max(480, total * 1.2)));
-  return <div className="timeline-v" style={{ gridTemplateRows: `auto ${height}px` }}>
-    <span />{LANES.map(lane => <span className="timeline-lane-label" key={lane.id}>{lane.label}</span>)}
-    <div className="timeline-v-ruler" aria-hidden="true">{ticks(total).map(t => <span key={t} style={{ top: `${(t / total) * 100}%` }}>{formatTime(t)}</span>)}</div>
-    {LANES.map(lane => <div className="timeline-v-track" key={lane.id}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} style={{ top: `${(b.start / total) * 100}%`, height: `${Math.max(0.4, ((b.end - b.start) / total) * 100)}%` }} />)}</div>)}
+  return <div className={styles["timeline-v"]} style={{ gridTemplateRows: `auto ${height}px` }}>
+    <span />{LANES.map(lane => <span className={styles["timeline-lane-label"]} key={lane.id}>{lane.label}</span>)}
+    <div className={styles["timeline-v-ruler"]} aria-hidden="true">{ticks(total).map(t => <span key={t} style={{ top: `${(t / total) * 100}%` }}>{formatTime(t)}</span>)}</div>
+    {LANES.map(lane => <div className={styles["timeline-v-track"]} key={lane.id}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} style={{ top: `${(b.start / total) * 100}%`, height: `${Math.max(0.4, ((b.end - b.start) / total) * 100)}%` }} />)}</div>)}
   </div>;
 }
 
 function BlockView({ block, style }: { block: Block; style: React.CSSProperties }) {
-  return <div className={`timeline-block tone-${block.tone}`} style={style} title={`${block.label} · ${formatTime(block.start)}–${formatTime(block.end)}${block.detail ? ` · ${block.detail}` : ""}`}>
+  return <div className={`${styles["timeline-block"]} ${styles[`tone-${block.tone}`]}`} style={style} title={`${block.label} · ${formatTime(block.start)}–${formatTime(block.end)}${block.detail ? ` · ${block.detail}` : ""}`}>
     <strong>{block.label}</strong>{block.detail && <small>{block.detail}</small>}
   </div>;
 }
