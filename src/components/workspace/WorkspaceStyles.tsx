@@ -980,6 +980,9 @@ export default function WorkspaceStyles() {
         display: grid;
         gap: 10px;
       }
+      .fetch-variables { display: grid; gap: 8px; margin-bottom: 12px; }
+      .fetch-diff { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      .fetch-diff th, .fetch-diff td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #e5e5e5; word-break: break-word; }
       .variable-row {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 34px;
