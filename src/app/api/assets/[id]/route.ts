@@ -1,9 +1,9 @@
-import { rm } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { assetFileResponse } from "@/app/api/_lib/assets";
 import { jsonError } from "@/app/api/_lib/http";
+import { removeStoredFile } from "@/app/api/_lib/files";
 import { validateAssetKey } from "@/integrations/image-assets";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -54,7 +54,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       return NextResponse.json({ error: `"${asset.assetKey}" is still used in ${count} project${count === 1 ? "" : "s"} (${names}). Remove it from them first, or delete it anyway.`, projectCount: count }, { status: 409 });
     }
     await prisma.asset.delete({ where: { id } });
-    if (asset.storagePath && await prisma.asset.count({ where: { storagePath: asset.storagePath } }) === 0) await rm(asset.storagePath, { force: true }).catch(() => undefined);
+    if (asset.storagePath && await prisma.asset.count({ where: { storagePath: asset.storagePath } }) === 0) await removeStoredFile(asset.storagePath);
     return new Response(null, { status: 204 });
   } catch (error) {
     console.error("Asset delete error:", error);

@@ -1,7 +1,6 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
+import { getMediaStore } from "@/lib/media-store";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/app/api/_lib/http";
 import { outputExtension } from "@/domain/captions";
@@ -21,8 +20,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   try {
     // Players ask for byte ranges (and `?inline=1` marks a player's first request), so seeking does not restart the download.
     if (request.headers.has("range") || new URL(request.url).searchParams.get("inline") === "1") return await rangedFileResponse(request, output.storagePath, output.mimeType);
-    const info = await stat(output.storagePath);
-    const stream = Readable.toWeb(createReadStream(output.storagePath)) as ReadableStream;
+    const store = await getMediaStore();
+    const info = await store.stat(output.storagePath);
+    if (!info) return jsonError("Output file is unavailable", 404);
+    const stream = Readable.toWeb(await store.stream(output.storagePath)) as ReadableStream;
     return new NextResponse(stream, {
       headers: {
         "Content-Type": output.mimeType,
