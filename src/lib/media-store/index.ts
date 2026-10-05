@@ -93,7 +93,7 @@ export async function createMediaStoreFromEnv(env: Record<string, string | undef
     return createMediaStore({ mode, root });
   }
   const { createAwsObjectClient } = await import("./aws-client");
-  const client = await createAwsObjectClient({ endpoint: env.MEDIA_S3_ENDPOINT, region: env.AWS_REGION });
+  const client = await createAwsObjectClient({ endpoint: env.MEDIA_S3_ENDPOINT, region: env.AWS_REGION, credentials: env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY ? { accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY, sessionToken: env.AWS_SESSION_TOKEN } : undefined });
   return createMediaStore({ mode: mode as "local" | "s3", root, s3: { client, bucket: env.MEDIA_S3_BUCKET!, prefix: env.MEDIA_S3_PREFIX ?? "media" } });
 }
 
