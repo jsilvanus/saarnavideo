@@ -12,7 +12,8 @@ import { readRemoteConfig } from "@/worker/remote-ffmpeg";
  * (FFFLEET_EXECUTORS, see Dockerfile.fleet-worker). The video comes back through S3 and is copied to the local
  * output path, so the rest of the worker does not change. Without a reachable fleet the same executor runs in-process.
  *
- * Cookies (first version): when YTDLP_COOKIES_FILE is set, a copy is staged in S3 for the job only. If the executor
+ * Cookies: the worker passes a cookie file (a private temp copy of the cookies stored in Settings, else YTDLP_COOKIES_FILE; see
+ * `withDownloadCookies`); a copy is staged in S3 for the job only. If the executor
  * returns an updated cookie file (yt-dlp rewrites it), it replaces the local file. Everything staged is deleted afterwards.
  */
 
@@ -20,7 +21,7 @@ export type RemoteDownloadRun = {
   jobId: string;
   url: string;
   outputPath: string;
-  /** Local cookie file (YTDLP_COOKIES_FILE); staged for this job and updated in place if the executor returns a new one. */
+  /** Local cookie file (see withDownloadCookies); staged for this job and updated in place if the executor returns a new one. */
   cookiesFile?: string;
   onProgress?: (percent: number) => void;
   labels?: Record<string, string>;

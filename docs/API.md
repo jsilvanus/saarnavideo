@@ -551,6 +551,22 @@ Response: 302 Redirect to /
 
 (Automatically stores credentials in database)
 
+### yt-dlp cookies (YouTube downloads)
+
+Cookies for yt-dlp, stored AES-256-GCM encrypted. The text is write-only and is never returned.
+
+```
+GET /api/integrations/youtube/cookies
+Response: 200 { "configured": true, "source": "db" | "env" | "none", "cookieCount": 12, "updatedAt": "...", "envFallback": false }
+
+PUT /api/integrations/youtube/cookies
+{ "cookies": "<text of a Netscape cookies.txt>" }
+Response: 200 (same as GET) | 400 not a cookie file or too large (256 KB) | 503 YOUTUBE_TOKEN_ENCRYPTION_KEY missing or invalid
+
+DELETE /api/integrations/youtube/cookies
+Response: 200 (same as GET; falls back to YTDLP_COOKIES_FILE if set)
+```
+
 ## Templates
 
 Built-in templates (`sermon`, `liturgy`, `vespers`, `short-vertical`) and templates saved from projects. See `docs/TEMPLATE_CREATION.md`.
