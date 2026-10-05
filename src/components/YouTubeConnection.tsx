@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 
 export default function YouTubeConnection() {
+  const t = useT();
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -21,10 +23,10 @@ export default function YouTubeConnection() {
     setError("");
     try {
       const response = await fetch("/api/integrations/youtube/disconnect", { method: "POST" });
-      if (!response.ok) throw new Error("Could not disconnect YouTube");
+      if (!response.ok) throw new Error(t("yt.disconnectFailed"));
       setConnected(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not disconnect YouTube");
+      setError(e instanceof Error ? e.message : t("yt.disconnectFailed"));
     } finally {
       setBusy(false);
     }
@@ -32,7 +34,7 @@ export default function YouTubeConnection() {
 
   return (
     <div style={{ position: "fixed", top: 12, right: 12, zIndex: 1000, display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: "var(--background, #fff)", border: "1px solid #ddd", boxShadow: "0 2px 10px rgba(0,0,0,.12)" }}>
-      {connected ? <><span style={{ fontSize: 13 }}>YouTube connected</span><button type="button" disabled={busy} onClick={() => void disconnect()}>Disconnect</button></> : <a href="/api/integrations/youtube/connect">Connect YouTube</a>}
+      {connected ? <><span style={{ fontSize: 13 }}>{t("yt.connected")}</span><button type="button" disabled={busy} onClick={() => void disconnect()}>{t("yt.disconnect")}</button></> : <a href="/api/integrations/youtube/connect">{t("yt.connect")}</a>}
       {error && <span role="alert" style={{ fontSize: 12 }}>{error}</span>}
     </div>
   );
