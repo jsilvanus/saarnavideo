@@ -8,14 +8,7 @@ https://saarnavideo.example.com/api
 
 ## Authentication
 
-Most endpoints are currently open. In production, add authentication middleware:
-
-```typescript
-// Example: Add Bearer token validation
-if (!request.headers.get("Authorization")?.startsWith("Bearer ")) {
-  return new Response("Unauthorized", { status: 401 });
-}
-```
+Set `ACCESS_SECRET` on the server (see `DEPLOYMENT.md`, "Access secret") and every endpoint requires it: send `Authorization: Bearer <secret>` or `x-access-secret: <secret>`, or the `saarnavideo-session` cookie that `POST /api/auth/login` (`{ "secret": "..." }`) sets. Without the secret the API answers `401 {"error":"Unauthorized"}`. `POST /api/auth/logout` clears the cookie. With `ACCESS_SECRET` unset there is no gate.
 
 ## Core Resources
 

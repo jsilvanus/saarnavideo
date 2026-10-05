@@ -24,6 +24,13 @@ YOUTUBE_CLIENT_ID=your-client-id
 YOUTUBE_CLIENT_SECRET=your-client-secret
 ```
 
+### Access secret (login gate)
+```bash
+# One shared secret in front of the whole app. Unset = no gate (development).
+ACCESS_SECRET=a-long-random-string
+```
+With `ACCESS_SECRET` set, every page and `/api/*` route needs the secret: browsers sign in once on `/login` (30-day `HttpOnly` cookie derived from the secret, so changing the secret signs everybody out); scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Only `/login`, `/api/auth/login` and `/api/auth/logout` are open. It is one shared password, not per-user accounts: use HTTPS (the cookie is marked `Secure` behind `x-forwarded-proto: https`) and generate it with `openssl rand -base64 32`. The worker does not call the app's HTTP API and needs no secret.
+
 ### Media and Jobs
 ```bash
 # Media storage (should be on fast, high-capacity storage). With MEDIA_STORAGE=s3 it is only worker scratch space and a download cache.
@@ -221,6 +228,7 @@ volumes:
 - [ ] FFmpeg process monitoring (check for hangs)
 
 ### Security
+- [ ] `ACCESS_SECRET` set (the app has no other login) and served over HTTPS
 - [ ] Database password strong and rotated
 - [ ] OAuth secret stored securely (not in code)
 - [ ] File uploads validated (size, MIME type)
@@ -237,7 +245,7 @@ volumes:
 ### Multiple Machines
 - PostgreSQL on dedicated database server (`schema.postgresql.prisma`)
 - Media storage: `MEDIA_STORAGE=s3` (no shared volume) or local disk on NFS/SMB shared by every app and worker instance
-- Several app instances behind a load balancer: the app keeps no state outside the database and the media store. Put authentication in front of it first; the app has no login of its own
+- Several app instances behind a load balancer: the app keeps no state outside the database and the media store. Set `ACCESS_SECRET` (shared-secret login) or put your own authentication in front of it; the app has no per-user login
 - Several workers: jobs are claimed atomically, running jobs carry a heartbeat, and a worker that dies has its interrupted transcription taken over by another worker (other stale jobs are failed). Run `prisma db push` after upgrading (new `MediaJob.workerId` / `heartbeatAt` columns)
 - Workers on dedicated machines; with S3 media each needs scratch disk for `MEDIA_ROOT` and the download cache
 
