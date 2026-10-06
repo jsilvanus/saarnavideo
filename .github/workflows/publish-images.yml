@@ -3,7 +3,6 @@ name: Publish images
 # Builds the container images the deployment stack (jsilvanus/deploy-media) pulls:
 #   saarnavideo               the web app and API (Dockerfile)
 #   saarnavideo-worker        the job worker: ffmpeg, libass, fonts, yt-dlp (Dockerfile.worker)
-#   saarnavideo-fleet-worker  fffleet worker + yt-dlp + the download executor (Dockerfile.fleet-worker)
 # Tags: `latest` and `sha-<sha>` from main, `<version>` and `<major>.<minor>` from v*.*.* tags.
 # The images are not pushed from pull requests.
 
@@ -28,8 +27,6 @@ jobs:
             file: Dockerfile
           - image: saarnavideo-worker
             file: Dockerfile.worker
-          - image: saarnavideo-fleet-worker
-            file: Dockerfile.fleet-worker
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
