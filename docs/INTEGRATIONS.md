@@ -97,7 +97,7 @@ yt-dlp needs python and the SaarnaVideo executor, so use the image built from `D
 docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker .
 ```
 
-It is the published worker plus python3, yt-dlp and `fleet/download-executor.mjs`, loaded through `FFFLEET_EXECUTORS`; it still renders like the stock image. The image is not built or pushed by CI yet; build and push it yourself, or run a plain worker with the same `FFFLEET_EXECUTORS` added to its environment. Then set on the app's worker:
+It is the published worker plus python3, yt-dlp and `fleet/download-executor.mjs`, loaded through `FFFLEET_EXECUTORS`; it still renders like the stock image. CI does not publish it; prefer `ghcr.io/jsilvanus/fffleet-worker-ytdlp` (fffleet 2.4.0), or build it yourself, or run a plain worker with the same `FFFLEET_EXECUTORS` added to its environment. Then set on the app's worker:
 
 ```bash
 DOWNLOAD_EXECUTOR=fffleet      # plus the same FFFLEET_* and AWS_* settings as above
