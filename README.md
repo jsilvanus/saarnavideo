@@ -1,92 +1,64 @@
 # SaarnaVideo
 
-SaarnaVideo is a focused media composition tool for turning worship-service recordings into publishable videos with minimal manual editing.
+SaarnaVideo turns worship-service recordings into publishable videos with as little manual editing as possible. You bring a recording (an uploaded file or a YouTube link), pick the sections you want, and the app renders a finished video (and, if you like, a podcast episode) with title cards, lower thirds, captions and your own graphics, then publishes it to YouTube or a Facebook Page.
 
-## Current implementation
+It is built for the Evangelical-Lutheran Church of Finland: the built-in templates (Saarna, Messu, Iltahartaus, Shorts) follow the order of the service, and the church-year data (feast day, theme, Gospel text, colour) can be fetched into the graphics from an API such as anno-api. The interface is available in Finnish (default), English and Swedish.
 
-- Next.js + TypeScript web application
-- Prisma project/media lifecycle model
-- local source upload and YouTube URL source references
-- Google/YouTube OAuth connection with encrypted token-at-rest storage
-- database-backed media worker with DOWNLOAD / THUMBNAIL / PREVIEW / VIDEO jobs
-- self-contained Docker worker containing FFmpeg, ffprobe and yt-dlp
-- live persisted media-job progress
-- FFmpeg source-range rendering and separated-clip concatenation
-- downloadable generated outputs
-- queued YouTube publication, private by default, including generated thumbnail upload
-- Docker Compose development environment
-- Vitest renderer tests
+## What it does
 
-Transcription, assisted timestamping, and the complete reusable template system remain planned work described in `docs/technical-phase-plan.md`.
+- **Sources:** upload a file, or give a YouTube link (downloaded with yt-dlp). A project can have several sources.
+- **Sections and timeline:** cut the recording into sections, reorder them, add opening and closing cards, overlays, voiceovers and background audio. Cut, fade and crossfade transitions.
+- **Templates:** start from a built-in template, or save any project as your own.
+- **Graphics:** a scene-graph graphics editor, a shared graphics library (images, audio, folders), and project variables (`{{preacher}}`, `{{evankeliumi}}`) that fill the text of your graphics.
+- **Output size:** 16:9, Shorts, Reels, TikTok, Stories, square and portrait presets, with fill, fit or custom crop.
+- **Captions:** from a transcription of the recording, as a soft track, burned into the picture, or both. Plain-text transcript export.
+- **Podcast:** an audio episode with intro and outro, loudness normalised, with tags and cover art.
+- **Publishing:** YouTube (including thumbnail and captions) and one Facebook Page.
+- **Rendering anywhere:** on the same machine, or on a pool of workers through [fffleet](https://github.com/jsilvanus/fffleet), with media in local disk or S3.
 
-## Development
+## Quick start (development)
 
-Requirements:
-
-- Node.js 22+
-- PostgreSQL 17+ (or Docker)
-- Docker for the containerized media worker
-
-Install dependencies and initialize Prisma:
+You need Node.js 22 or newer. FFmpeg and yt-dlp are only needed on the machine that runs the worker (the Docker worker image has both).
 
 ```bash
 npm install
-npx prisma generate
-npx prisma db push
+cp .env.example .env          # edit if you like; the defaults use SQLite
+npx prisma db push            # creates the SQLite database
+npm run dev                   # web app on http://localhost:3000
+npm run worker                # in a second terminal: renders and downloads
 ```
 
-Run the web application:
+To run everything in containers (PostgreSQL, app, worker, speech-to-text), see [docs/INSTALL.md](docs/INSTALL.md).
+
+Before anyone else can reach the app, set `ACCESS_SECRET` (a shared-secret login, see [docs/INSTALL.md](docs/INSTALL.md#access-secret-login)): the app has no other login.
+
+## Documentation
+
+| Document | What is in it |
+|---|---|
+| [docs/INSTALL.md](docs/INSTALL.md) | Install and first run: local, Docker Compose, production, every environment variable |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the app, worker, queue, storage and renderer fit together; module map |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Wiring up fffleet (rendering and downloads on workers), S3, varfetch connectors, speech-to-text, YouTube, Facebook |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production notes, checklist, scaling, backups, troubleshooting |
+| [docs/API.md](docs/API.md) | HTTP API reference |
+| [docs/TEMPLATE_CREATION.md](docs/TEMPLATE_CREATION.md), [docs/GRAPHIC_PACKAGE.md](docs/GRAPHIC_PACKAGE.md) | Templates and the `.svgraphic` graphic package format |
+| [docs/YOUTUBE_OAUTH_SETUP.md](docs/YOUTUBE_OAUTH_SETUP.md), [docs/FACEBOOK_SETUP.md](docs/FACEBOOK_SETUP.md) | Publishing setup |
+| [CLAUDE.md](CLAUDE.md) | Detailed behaviour of every feature, for contributors and coding assistants |
+| [docs/plan.md](docs/plan.md), [docs/technical-phase-plan.md](docs/technical-phase-plan.md) | The original product plan (historical; parts have changed) |
+
+## Tests
 
 ```bash
-npm run dev
+npm test                      # unit tests (run `npx prisma db push` first; some tests use the database)
+npm run lint
+npx tsc --noEmit
+npm run test:e2e              # needs ffmpeg/ffprobe; starts next dev and the worker, drives the real HTTP API
 ```
 
-Run the worker separately:
+## Related projects
 
-```bash
-npm run worker
-```
+[fffleet](https://github.com/jsilvanus/fffleet) (generic ffmpeg job runner), [varfetch](https://github.com/jsilvanus/varfetch) (API connector core), [liturgos-auditor](https://github.com/jsilvanus/liturgos-auditor) (speech-to-text service), [live-captions-yt](https://github.com/jsilvanus/live-captions-yt) (live captions).
 
-Run tests:
+## Licence
 
-```bash
-npm test
-```
-
-For the complete containerized stack:
-
-```bash
-docker compose up --build
-```
-
-### YouTube setup
-
-Create OAuth credentials in Google Cloud with the YouTube Data API enabled. Configure `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, and `YOUTUBE_REDIRECT_URI` in `.env`. Also set `YOUTUBE_TOKEN_ENCRYPTION_KEY` to a stable 32-byte hex key (for example, `openssl rand -hex 32`).
-
-The application exposes **Connect YouTube** in the UI. After OAuth, the connection is retained using an encrypted access/refresh token pair. Generated videos can then be queued for YouTube publication; the default privacy state is **private**.
-
-The OAuth callback is:
-
-```text
-/api/integrations/youtube/callback
-```
-
-The redirect URI configured in Google Cloud must match `YOUTUBE_REDIRECT_URI` exactly.
-
-## Architecture
-
-```text
-Project -> Source -> Composition -> MediaJob -> Output -> optional Publication
-                                      |
-                                 media worker
-                              yt-dlp + FFmpeg
-```
-
-PostgreSQL is the persistent job queue. The application creates media jobs and the worker polls/claims them. The worker container owns all media-processing dependencies, so the host does not need FFmpeg or yt-dlp installed.
-
-Large source and output media is temporary by design; the default retention period is seven days.
-
-See:
-
-- `docs/plan.md` for the product and architecture plan.
-- `docs/technical-phase-plan.md` for the implementation phases.
+All rights reserved, except for parts that carry their own licence notice (EUPL-1.2).
