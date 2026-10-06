@@ -107,7 +107,7 @@ The job type is `download`; the worker advertises `type:download`, so downloads 
 
 ### How the pieces use the fffleet package
 
-SaarnaVideo depends on the `fffleet` npm package (client and in-process runner, currently `^2.2.0`) and imports only `createFleet`, `createS3Client`, `s3ConfigFromEnv` and the types. Where:
+SaarnaVideo depends on the `fffleet` npm package (client and in-process runner, currently `^2.3.1`) and imports only `createFleet`, `createS3Client`, `s3ConfigFromEnv` and the types. Where:
 
 | File | Role |
 |---|---|
@@ -150,11 +150,11 @@ You can use the same bucket for render staging (`FFFLEET_S3_BUCKET`) or a differ
 
 ## API connectors and church-year data (varfetch)
 
-**Settings** (top right) manages connectors: a base address, authentication (bearer, API-key header, basic; the secret is stored but never shown again) and requests with `{{name}}` placeholders and JSONPath mappings to project variable names. Requests run through the [varfetch](https://github.com/jsilvanus/varfetch) package (`^0.2.0`; only `fireRequest` on the server, types in the browser).
+**Settings** (top right) manages connectors: a base address, authentication (bearer, API-key header, basic; the secret is stored but never shown again) and requests with `{{name}}` placeholders and JSONPath mappings to project variable names. Requests run through the [varfetch](https://github.com/jsilvanus/varfetch) package (`^0.3.0`; only `fireRequest` on the server, types in the browser).
 
 Nothing about a particular service is built in. For church-year data point a connector at an [anno-api](https://github.com/jsilvanus/anno-api) instance and press **Lisää kirkkovuosipohja** to add the day request (`/api/v1/date/{{paiva}}`) with the variable names `pyhapaiva`, `teema`, `evankeliumi`, `evankeliumiteksti`, `vari`, `jakso`, `aika`. In a project's **Lähde** step press **Hae muuttujat**, check old against new values and save the ones you accept; graphics that contain `{{evankeliumi}}` and so on fill themselves in at render time.
 
-Connector calls to private or loopback addresses are blocked. To call a service on your own network, list its host in `CONNECTOR_ALLOW` on the app (comma separated; `CONNECTOR_DENY` wins). The check resolves the name before the request; it does not yet pin the address for the request itself (a DNS rebinding gap, listed in varfetch's open items), so only add connectors you trust.
+Connector calls to private or loopback addresses are blocked. To call a service on your own network, list its host in `CONNECTOR_ALLOW` on the app (comma separated; `CONNECTOR_DENY` wins). The connection goes only to the addresses the check validated (DNS pinning, varfetch 0.3), so rebinding between check and connect is not possible, and variable values are URL-encoded when put into the path (`encodePathVariables`).
 
 ## Speech-to-text (liturgos-auditor)
 

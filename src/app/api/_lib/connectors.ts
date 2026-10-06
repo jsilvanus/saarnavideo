@@ -16,7 +16,7 @@ export async function runStoredRequest(requestId: string, variables: Record<stri
   const request = await prisma.apiRequest.findUnique({ where: { id: requestId }, include: { connector: true } });
   if (!request || (connectorId && request.connectorId !== connectorId)) return { error: jsonError("Request not found", 404) };
   const { connector, request: definition } = toVarfetch(request.connector, request);
-  const result = await fireRequest({ connector, request: definition, variables, network: networkRulesFromEnv() });
+  const result = await fireRequest({ connector, request: definition, variables, network: networkRulesFromEnv(), encodePathVariables: true });
   if (!result.ok) return { error: jsonError(fireErrorMessage(result), 502, { status: result.status }) };
   return { values: result.values, status: result.status };
 }

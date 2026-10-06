@@ -172,7 +172,7 @@ Enums:
 
 ### Media Processing
 - **FFmpeg** (with libass) - Video rendering and composition; **yt-dlp** - YouTube downloads
-- **fffleet** (`^2.2.0`) - optional render/download workers; **varfetch** (`^0.2.0`) - API connector engine
+- **fffleet** (`^2.3.1`) - optional render/download workers; **varfetch** (`^0.3.0`) - API connector engine
 - **liturgos-auditor** - speech-to-text service (the Python script in `transcription/` is an older fallback)
 
 ### Development & Testing

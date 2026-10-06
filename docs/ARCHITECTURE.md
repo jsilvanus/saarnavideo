@@ -89,7 +89,7 @@ Pure code, no I/O: it turns a definition into ffmpeg arguments, so it is testabl
 
 - **Access:** optional shared secret (`ACCESS_SECRET`) enforced by the Edge middleware for every page and API route; see [INSTALL.md](INSTALL.md#access-secret-login). No per-user accounts.
 - **Secrets at rest:** YouTube tokens and yt-dlp cookies are AES-256-GCM encrypted with `YOUTUBE_TOKEN_ENCRYPTION_KEY`. The Facebook Page token is environment-only. API connector secrets are stored in the database and never returned by the API (only `hasSecret`); they are **not encrypted at rest yet**.
-- **Outbound requests:** connector calls go through varfetch's address guard (private and loopback blocked unless allowed by `CONNECTOR_ALLOW`).
+- **Outbound requests:** connector calls go through varfetch's address guard (private and loopback blocked unless allowed by `CONNECTOR_ALLOW`), with DNS pinning.
 - **Uploads:** size limits and MIME checks per route; images are validated for type and dimensions.
 
 ## Source map

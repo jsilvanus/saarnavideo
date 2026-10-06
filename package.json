@@ -23,11 +23,11 @@
     "@aws-sdk/client-s3": "^3.1146.0",
     "@aws-sdk/lib-storage": "^3.1146.0",
     "@prisma/client": "^6.15.0",
-    "fffleet": "^2.2.0",
+    "fffleet": "^2.3.1",
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "varfetch": "^0.2.0",
+    "varfetch": "^0.3.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
