@@ -172,18 +172,41 @@ export function useWorkspaceState() {
       video.src = url;
     });
   }
-  async function sourceUploadForm(file: File) {
-    const form = new FormData();
-    form.set("file", file);
-    const d = await getVideoDurationMs(file);
-    if (d !== undefined) form.set("durationMs", String(d));
-    return form;
+  async function uploadFileToS3(presignedUrl: string, file: File) {
+    const response = await fetch(presignedUrl, {
+      method: "PUT",
+      body: file,
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`S3 upload failed: ${response.status} ${response.statusText}`);
+    }
   }
+
   async function addUploads() {
     if (!selected || !uploadFiles.length) return;
     await withBusy(t("ws.uploadFailed"), async () => {
-      for (const file of uploadFiles)
-        await requestJson(`/api/projects/${selected.id}/source`, { method: "POST", body: await sourceUploadForm(file) }, t("ws.uploadFailed"));
+      for (const file of uploadFiles) {
+        // Step 1: Request presigned URL
+        const presignedData = await requestJson<{ uploadUrl: string; sourceId: string }>(
+          `/api/projects/${selected.id}/source/presigned-url`,
+          jsonInit("POST", { fileName: file.name, fileSizeBytes: file.size }),
+          t("ws.uploadFailed"),
+        );
+
+        // Step 2: Upload file directly to S3
+        await uploadFileToS3(presignedData.uploadUrl, file);
+
+        // Step 3: Finalize the upload
+        const durationMs = await getVideoDurationMs(file);
+        await requestJson(
+          `/api/projects/${selected.id}/source/${presignedData.sourceId}/finalize`,
+          jsonInit("POST", { durationMs }),
+          t("ws.uploadFailed"),
+        );
+      }
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.sourcesUploaded"));
@@ -212,28 +235,49 @@ export function useWorkspaceState() {
       setError(t("ws.chooseLocalFile", { name: source.originalName || source.id }));
       return false;
     }
-    const r = await fetch(`/api/projects/${selected.id}/source/${source.id}`, { method: "PUT", body: await sourceUploadForm(file) });
-    const data = await r.json();
-    if (!r.ok) {
-      setError(data.error ?? t("ws.uploadFailed"));
-      return false;
-    }
-    setPendingFiles((p) => {
-      const n = { ...p };
-      delete n[source.id];
-      return n;
-    });
-    await openProject(selected.id);
-    if (data.durationWarning) {
-      setDurationMismatch({
-        sourceId: source.id,
-        originalName: source.originalName,
-        referenceDurationMs: data.durationWarning.referenceDurationMs,
-        actualDurationMs: data.durationWarning.actualDurationMs,
+
+    try {
+      // Step 1: Request presigned URL for this specific source
+      const presignedData = await requestJson<{ uploadUrl: string }>(
+        `/api/projects/${selected.id}/source/presigned-url`,
+        jsonInit("POST", { fileName: file.name, fileSizeBytes: file.size, sourceId: source.id }),
+        t("ws.uploadFailed"),
+      );
+
+      // Step 2: Upload file directly to S3
+      await uploadFileToS3(presignedData.uploadUrl, file);
+
+      // Step 3: Finalize the upload
+      const durationMs = await getVideoDurationMs(file);
+      const data = await requestJson<{
+        error?: string;
+        durationWarning?: { referenceDurationMs: number; actualDurationMs: number };
+      }>(
+        `/api/projects/${selected.id}/source/${source.id}/finalize`,
+        jsonInit("POST", { durationMs }),
+        t("ws.uploadFailed"),
+      );
+
+      setPendingFiles((p) => {
+        const n = { ...p };
+        delete n[source.id];
+        return n;
       });
+      await openProject(selected.id);
+      if (data.durationWarning) {
+        setDurationMismatch({
+          sourceId: source.id,
+          originalName: source.originalName,
+          referenceDurationMs: data.durationWarning.referenceDurationMs,
+          actualDurationMs: data.durationWarning.actualDurationMs,
+        });
+        return false;
+      }
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, t("ws.uploadFailed")));
       return false;
     }
-    return true;
   }
   async function addYoutube() {
     if (!selected || !youtubeUrl.trim()) return;
@@ -660,7 +704,7 @@ export function useWorkspaceState() {
     duplicateProject,
     deleteProject,
     getVideoDurationMs,
-    sourceUploadForm,
+    uploadFileToS3,
     addUploads,
     addDeferredUploads,
     uploadPendingSource,

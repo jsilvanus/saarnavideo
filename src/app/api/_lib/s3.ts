@@ -2,7 +2,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Initialize S3 client from environment
-function getS3Client() {
+export function getS3Client() {
   if (!process.env.MEDIA_S3_BUCKET) {
     throw new Error("MEDIA_S3_BUCKET not configured");
   }
