@@ -48,6 +48,9 @@ export function uploadWithProgress(
       const response = new Response(xhr.responseText || "", {
         status: xhr.status,
         statusText: xhr.statusText,
+        headers: {
+          "Content-Type": xhr.getResponseHeader("Content-Type") ?? "application/json",
+        },
       });
       resolve(response);
     };

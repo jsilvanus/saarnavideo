@@ -4,7 +4,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { parseLayers } from "@/components/GraphicsEditor";
 import { findAssetUsage } from "@/domain/asset-usage";
-import { errorMessage, jsonInit, requestJson } from "@/components/api";
+import { errorMessage, jsonInit, requestJson, requestJsonWithProgress, uploadWithProgress } from "@/components/api";
 import { sourceLabel } from "@/components/format";
 import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { timelineDuration } from "@/domain/timeline";
@@ -61,7 +61,8 @@ export function useWorkspaceState() {
     [acceptedClamp, setAcceptedClamp] = useState(false),
     [selectedGraphicId, setSelectedGraphicId] = useState<string | null>(null),
     [confirmDeleteGraphicId, setConfirmDeleteGraphicId] = useState<string | null>(null),
-    [previewBusy, setPreviewBusy] = useState(false);
+    [previewBusy, setPreviewBusy] = useState(false),
+    [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   async function withBusy(fallback: string, fn: () => Promise<void>, setFlag: (busy: boolean) => void = setBusy) {
     setFlag(true);
@@ -173,21 +174,28 @@ export function useWorkspaceState() {
     });
   }
   async function uploadFileToS3(presignedUrl: string, file: File) {
-    const response = await fetch(presignedUrl, {
-      method: "PUT",
-      body: file,
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
+    const response = await uploadWithProgress(
+      presignedUrl,
+      {
+        method: "PUT",
+        body: file,
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+        },
       },
-    });
+      (value) => setUploadProgress(value),
+      `S3 upload failed: ${file.name}`,
+    );
     if (!response.ok) {
       throw new Error(`S3 upload failed: ${response.status} ${response.statusText}`);
     }
+    setUploadProgress(100);
   }
 
   async function addUploads() {
     if (!selected || !uploadFiles.length) return;
     await withBusy(t("ws.uploadFailed"), async () => {
+      setUploadProgress(0);
       for (const file of uploadFiles) {
         // Step 1: Request presigned URL
         const presignedData = await requestJson<{ uploadUrl: string; sourceId: string }>(
@@ -207,6 +215,7 @@ export function useWorkspaceState() {
           t("ws.uploadFailed"),
         );
       }
+      setUploadProgress(null);
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.sourcesUploaded"));
