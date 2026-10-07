@@ -192,7 +192,7 @@ export function useWorkspaceState() {
         // Step 1: Request presigned URL
         const presignedData = await requestJson<{ uploadUrl: string; sourceId: string }>(
           `/api/projects/${selected.id}/source/presigned-url`,
-          jsonInit("POST", { fileName: file.name, fileSizeBytes: file.size }),
+          jsonInit("POST", { fileName: file.name, sizeBytes: file.size, contentType: file.type || "application/octet-stream" }),
           t("ws.uploadFailed"),
         );
 
@@ -240,7 +240,7 @@ export function useWorkspaceState() {
       // Step 1: Request presigned URL for this specific source
       const presignedData = await requestJson<{ uploadUrl: string }>(
         `/api/projects/${selected.id}/source/presigned-url`,
-        jsonInit("POST", { fileName: file.name, fileSizeBytes: file.size, sourceId: source.id }),
+        jsonInit("POST", { fileName: file.name, sizeBytes: file.size, contentType: file.type || "application/octet-stream" }),
         t("ws.uploadFailed"),
       );
 
