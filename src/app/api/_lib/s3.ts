@@ -38,22 +38,31 @@ export async function generatePresignedUploadUrl(
   let url = await getSignedUrl(client, command, { expiresIn });
   
   // Replace internal Docker S3 URL with public S3 URL for frontend access
-  // Internal: http://s3:9000 or http://BUCKET.s3:9000 (inside Docker network)
-  // Public: http://localhost:9000 (accessible from browser on host)
+  // The AWS SDK generates URLs in virtual-hosted-style: http://BUCKET.ENDPOINT:PORT/KEY
+  // We need to convert these to use the public endpoint so the browser can access them.
+  // Example: http://saarnavideo-media.s3:9000/... → http://localhost:9000/...
   if (process.env.MEDIA_S3_ENDPOINT_PUBLIC && process.env.MEDIA_S3_ENDPOINT) {
-    // Replace the hostname part, handling both:
-    // - http://s3:9000 (path-style)
-    // - http://bucket.s3:9000 (virtual-hosted-style)
-    const internalEndpoint = process.env.MEDIA_S3_ENDPOINT;
     try {
-      const internalUrl = new URL(internalEndpoint);
+      const internalUrl = new URL(process.env.MEDIA_S3_ENDPOINT);
       const publicUrl = new URL(process.env.MEDIA_S3_ENDPOINT_PUBLIC);
-      // Replace hostname (e.g., "s3", "bucket.s3" → "localhost")
-      url = url.replace(internalUrl.hostname, publicUrl.hostname);
-      // Also update port if it changed
-      if (internalUrl.port !== publicUrl.port) {
-        url = url.replace(`:${internalUrl.port}`, `:${publicUrl.port}`);
+      
+      // For virtual-hosted-style URLs, the hostname is "bucket.endpoint"
+      // We need to find and replace the endpoint part with the public endpoint
+      // Build the hostname pattern to search for: "endpoint:port"
+      let endpointPattern = internalUrl.hostname;
+      if (internalUrl.port) {
+        endpointPattern += `:${internalUrl.port}`;
       }
+      
+      // Build the replacement: "publicEndpoint:port"
+      let endpointReplacement = publicUrl.hostname;
+      if (publicUrl.port) {
+        endpointReplacement += `:${publicUrl.port}`;
+      }
+      
+      // Replace the endpoint pattern with the public endpoint
+      // This handles virtual-hosted URLs like: bucket.endpoint:port → bucket.publicEndpoint:port
+      url = url.replace(endpointPattern, endpointReplacement);
     } catch (err) {
       // If URL parsing fails, log and continue with original URL
       console.error("Failed to replace S3 endpoint:", err);

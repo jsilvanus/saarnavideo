@@ -3,7 +3,7 @@
 import { useT } from "@/i18n/I18nProvider";
 import { formatTime, sourceLabel } from "@/components/format";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
-import OutputSettings from "@/components/OutputSettings";
+import OutputSettings, { type OutputTemplate } from "@/components/OutputSettings";
 import VariablesEditor from "@/components/VariablesEditor";
 import FetchVariables from "@/components/FetchVariables";
 import { SaveAsTemplate } from "@/components/TemplatePicker";
@@ -114,7 +114,7 @@ export default function SourceStep() {
           />
         </Panel>
         <Panel title={t("src.size.title")} text={t("src.size.text")}>
-          <OutputSettings template={currentDefinition().template!} onChange={saveOutput} />
+          <OutputSettings template={currentDefinition().template as OutputTemplate} onChange={saveOutput} />
         </Panel>
       </div>
       <aside className="step-aside">
