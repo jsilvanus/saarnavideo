@@ -1,5 +1,17 @@
 # Deployment Notes: Presigned S3 URLs
 
+## Status: ✅ FIXED AND TESTED
+
+The presigned S3 URL upload flow is now fully functional and deployed.
+
+### Verified Working:
+- ✅ Presigned URL endpoint (`POST /api/projects/[id]/source/presigned-url`)
+- ✅ Direct S3 file upload via presigned URL (`PUT` to S3)
+- ✅ Upload finalization (`POST /api/projects/[id]/source/[sourceId]/finalize`)
+- ✅ End-to-end upload flow tested with 1MB file
+- ✅ Service deployed to http://localhost:3002
+- ✅ No more 400 "Invalid JSON" errors
+
 ## What Changed
 
 The frontend source upload flow has been migrated from direct FormData POST (which hit Node.js body size limits) to presigned S3 URLs. This eliminates the 10MB body size limit and allows direct S3 streaming.
