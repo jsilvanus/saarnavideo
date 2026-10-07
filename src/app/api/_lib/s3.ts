@@ -19,6 +19,9 @@ export function getS3Client() {
 /**
  * Generate a presigned PUT URL for direct S3 upload.
  * The client can upload directly to S3 without going through the Node.js server.
+ * 
+ * For the frontend/browser, we need to use a publicly-accessible S3 URL (e.g., localhost:9000),
+ * not the internal Docker container URL.
  */
 export async function generatePresignedUploadUrl(
   bucket: string,
@@ -32,7 +35,32 @@ export async function generatePresignedUploadUrl(
     Key: key,
     ContentType: contentType,
   });
-  return getSignedUrl(client, command, { expiresIn });
+  let url = await getSignedUrl(client, command, { expiresIn });
+  
+  // Replace internal Docker S3 URL with public S3 URL for frontend access
+  // Internal: http://s3:9000 or http://BUCKET.s3:9000 (inside Docker network)
+  // Public: http://localhost:9000 (accessible from browser on host)
+  if (process.env.MEDIA_S3_ENDPOINT_PUBLIC && process.env.MEDIA_S3_ENDPOINT) {
+    // Replace the hostname part, handling both:
+    // - http://s3:9000 (path-style)
+    // - http://bucket.s3:9000 (virtual-hosted-style)
+    const internalEndpoint = process.env.MEDIA_S3_ENDPOINT;
+    try {
+      const internalUrl = new URL(internalEndpoint);
+      const publicUrl = new URL(process.env.MEDIA_S3_ENDPOINT_PUBLIC);
+      // Replace hostname (e.g., "s3", "bucket.s3" → "localhost")
+      url = url.replace(internalUrl.hostname, publicUrl.hostname);
+      // Also update port if it changed
+      if (internalUrl.port !== publicUrl.port) {
+        url = url.replace(`:${internalUrl.port}`, `:${publicUrl.port}`);
+      }
+    } catch (err) {
+      // If URL parsing fails, log and continue with original URL
+      console.error("Failed to replace S3 endpoint:", err);
+    }
+  }
+  
+  return url;
 }
 
 /**
