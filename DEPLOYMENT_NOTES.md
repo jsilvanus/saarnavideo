@@ -1,43 +1,59 @@
-# Deployment Notes: Presigned S3 URLs
+# Deployment Notes: Presigned S3 URLs with Hostname Replacement
 
-## Status: ✅ FIXED AND TESTED
+## Status: ✅ BROWSER ACCESS FIXED
 
-The presigned S3 URL upload flow is now fully functional and deployed.
+The presigned S3 URL upload flow now includes automatic hostname replacement, allowing browsers to access S3 via public endpoint (localhost:9000) instead of internal Docker container hostname (s3:9000).
 
 ### Verified Working:
 - ✅ Presigned URL endpoint (`POST /api/projects/[id]/source/presigned-url`)
+- ✅ Hostname replacement: Internal S3 URLs converted to localhost for browser access
 - ✅ Direct S3 file upload via presigned URL (`PUT` to S3)
 - ✅ Upload finalization (`POST /api/projects/[id]/source/[sourceId]/finalize`)
-- ✅ End-to-end upload flow tested with 1MB file
+- ✅ End-to-end upload flow (build time ~3m 30s)
 - ✅ Service deployed to http://localhost:3002
-- ✅ No more 400 "Invalid JSON" errors
+
+### Recently Fixed:
+- ✅ Frontend field names in presigned URL requests (`sizeBytes` instead of `fileSizeBytes`, added `contentType`)
+- ✅ Presigned URL hostname replacement (internal Docker `s3:9000` → public `localhost:9000`)
 
 ## What Changed
 
-The frontend source upload flow has been migrated from direct FormData POST (which hit Node.js body size limits) to presigned S3 URLs. This eliminates the 10MB body size limit and allows direct S3 streaming.
+The presigned S3 URLs now work correctly for browser-based uploads by:
 
-**Commit**: `3a8c992` - Frontend: migrate source uploads to presigned S3 URLs
+1. **Fixed Frontend Field Names** (Commit `a530430`)
+   - Changed `fileSizeBytes` → `sizeBytes`
+   - Added `contentType` field to presigned URL requests
+   - Both `addUploads()` and `uploadPendingSource()` functions updated
 
-### Key Changes
-- `src/components/workspace/useWorkspace.tsx`: Updated to use presigned URL flow
-  - `uploadFileToS3()`: New helper for direct S3 PUT requests
-  - `addUploads()`: Now requests presigned URL → uploads to S3 → finalizes
-  - `uploadPendingSource()`: Also uses presigned URL flow
-- `src/app/api/_lib/s3.ts`: Exported `getS3Client` function
+2. **Presigned URL Hostname Replacement** (Commit `2ed717f`)
+   - S3 client generates URLs with internal Docker hostname: `http://saarnavideo-media.s3:9000/...`
+   - Browser cannot reach internal Docker container names
+   - Solution: Replace internal hostname with public endpoint in `generatePresignedUploadUrl()`
+   - Handles both path-style and virtual-hosted-style S3 URLs
+
+3. **Environment Variable Configuration** (Commit `a9040fa`)
+   - Added `MEDIA_S3_ENDPOINT_PUBLIC` to `compose.yml`
+   - Defaults to `S3_ENDPOINT` if not specified (backward compatible)
+   - Set to `http://localhost:9000` in deploy-media `.env` for local development
 
 ### Upload Flow (3 steps)
 1. **Request presigned URL**: `POST /api/projects/[id]/source/presigned-url`
-   - Request: `{ fileName, fileSizeBytes, sourceId }`
-   - Response: `{ uploadUrl, sourceId }`
+   - Request: `{ fileName, contentType, sizeBytes }`
+   - Response: `{ uploadUrl, sourceId, s3Key, projectId }`
+   - Note: `uploadUrl` hostname is automatically replaced to use `MEDIA_S3_ENDPOINT_PUBLIC`
    
 2. **Upload to S3**: `PUT {uploadUrl}`
    - File is uploaded directly to S3 (bypasses Node.js)
    - No body size limits
+   - Browser connects to `http://localhost:9000` (public endpoint)
    
 3. **Finalize upload**: `POST /api/projects/[id]/source/[sourceId]/finalize`
    - Updates source status from PENDING to AVAILABLE
 
 ## Testing Locally
+
+### Prerequisites
+The build takes approximately **3 minutes 30 seconds**. Plan accordingly.
 
 ### Using deploy-media stack (recommended for testing):
 ```bash
@@ -54,6 +70,23 @@ docker compose -f compose.yml -f compose.local.yml -f compose.dev.yml up -d
 # Access at http://localhost:3002
 ```
 
+### Environment Configuration
+For local development, ensure these are set in `.env`:
+```
+S3_ENDPOINT_PUBLIC=http://localhost:9000
+MEDIA_S3_ENDPOINT_PUBLIC=http://localhost:9000
+```
+
+The deploy-media `compose.yml` includes fallback logic:
+```yaml
+MEDIA_S3_ENDPOINT_PUBLIC: ${S3_ENDPOINT_PUBLIC:-${S3_ENDPOINT:-http://s3:9000}}
+```
+
+This means:
+- Uses `S3_ENDPOINT_PUBLIC` if set
+- Falls back to `S3_ENDPOINT` if `S3_ENDPOINT_PUBLIC` not set
+- Falls back to `http://s3:9000` (internal) if neither is set
+
 ### Using standalone saarnavideo stack:
 ```bash
 cd C:\Users\jsilv\Code\saarnavideo
@@ -67,10 +100,14 @@ docker compose up app -d
 1. ✅ Frontend loads without errors
 2. ✅ Upload a file (any size, especially >10MB)
 3. ✅ Check browser DevTools Network tab:
-   - Should see: `POST /source/presigned-url` → `PUT {S3 presigned URL}` → `POST /source/[id]/finalize`
+   - Should see: `POST /source/presigned-url` (returns URL with `localhost:9000` hostname)
+   - Should see: `PUT {presigned URL}` to S3 (hostname should be `localhost`, not `saarnavideo-media.s3`)
+   - Should see: `POST /source/[id]/finalize`
    - Should NOT see: Direct file POST to `/api/projects/[id]/source`
-4. ✅ Check S3 logs to verify file appears directly in S3 bucket
-5. ✅ Source should show AVAILABLE status after upload completes
+4. ✅ Check presigned URL in Network tab to verify it points to `localhost:9000` not internal `s3:9000`
+5. ✅ Browser upload should succeed (no connection refused errors)
+6. ✅ Check S3 logs to verify file appears directly in S3 bucket
+7. ✅ Source should show AVAILABLE status after upload completes
 
 ## What Still Uses FormData
 
