@@ -39,6 +39,7 @@ export const sv: Record<keyof typeof fi, string> = {
   "output.previewPrefix": "Förhandsvisning ",
   "modal.newProject": "Nytt projekt",
   "common.cancel": "Avbryt",
+  "common.uploading": "Laddar upp…",
   "modal.createProject": "Skapa projekt",
   "modal.removeAsset.aria": "Ta bort tillgång från projektet",
   "modal.removeAsset.title": "Ta bort ”{name}” från det här projektet?",

@@ -37,6 +37,7 @@ export const fi = {
   "output.previewPrefix": "Esikatselu ",
   "modal.newProject": "Uusi projekti",
   "common.cancel": "Peruuta",
+  "common.uploading": "Lähetetään…",
   "modal.createProject": "Luo projekti",
   "modal.removeAsset.aria": "Poista aineisto projektista",
   "modal.removeAsset.title": "Poistetaanko “{name}” tästä projektista?",

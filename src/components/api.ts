@@ -56,7 +56,12 @@ export function uploadWithProgress(
     };
     xhr.onerror = () => reject(new Error(fallback));
     xhr.ontimeout = () => reject(new Error(fallback));
-    xhr.send(init?.body as BodyInit | null);
+    const body = init?.body;
+    if (body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData || body instanceof URLSearchParams || typeof body === "string") {
+      xhr.send(body as XMLHttpRequestBodyInit);
+      return;
+    }
+    xhr.send(body as XMLHttpRequestBodyInit | null);
   });
 }
 

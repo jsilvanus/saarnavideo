@@ -39,6 +39,7 @@ export const en: Record<keyof typeof fi, string> = {
   "output.previewPrefix": "Preview ",
   "modal.newProject": "New project",
   "common.cancel": "Cancel",
+  "common.uploading": "Uploading…",
   "modal.createProject": "Create project",
   "modal.removeAsset.aria": "Remove asset from project",
   "modal.removeAsset.title": "Remove “{name}” from this project?",

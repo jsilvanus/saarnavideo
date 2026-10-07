@@ -3,8 +3,8 @@
 import { useT } from "@/i18n/I18nProvider";
 
 export function UploadProgress({ progress, label }: { progress: number | null; label?: string }) {
-  if (progress == null || progress < 0) return null;
   const t = useT();
+  if (progress == null || progress < 0) return null;
   const percent = Math.min(100, Math.max(0, Number.isFinite(progress) ? progress : 0));
 
   return (
