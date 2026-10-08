@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   abortMultipartUpload,
@@ -16,8 +17,13 @@ import {
   type SourceUploadSession,
 } from "@/domain/source-upload";
 
-const MULTIPART_THRESHOLD_BYTES = Number(process.env.S3_MULTIPART_THRESHOLD_BYTES ?? 8 * 1024 * 1024);
-const MULTIPART_CHUNK_BYTES = Math.max(5 * 1024 * 1024, Number(process.env.S3_MULTIPART_CHUNK_BYTES ?? 5 * 1024 * 1024));
+function multipartThresholdBytes() {
+  return Number(process.env.S3_MULTIPART_THRESHOLD_BYTES ?? 8 * 1024 * 1024);
+}
+
+function multipartChunkBytes() {
+  return Math.max(5 * 1024 * 1024, Number(process.env.S3_MULTIPART_CHUNK_BYTES ?? 5 * 1024 * 1024));
+}
 
 async function findPendingUploadSource(projectId: string, sourceId: string) {
   const source = await prisma.source.findUnique({
@@ -93,7 +99,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const trimmedName = fileName.trim();
   const trimmedType = contentType.trim();
-  const wantsMultipart = sizeBytes > MULTIPART_THRESHOLD_BYTES;
+  const wantsMultipart = sizeBytes > multipartThresholdBytes();
 
   const existingSource = typeof sourceId === "string" ? await findPendingUploadSource(projectId, sourceId) : null;
   if (existingSource === "not-upload") return jsonError("Source is not an uploaded file", 409);
@@ -121,7 +127,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   let uploadSession = currentSession;
   if (!uploadSession || metadataMismatch || Boolean(uploadSession.multipart) !== wantsMultipart) {
-    uploadSession = undefined;
+    uploadSession = null;
   }
 
   const s3Key = uploadSession?.s3Key ?? generateS3SourceKey(projectId, source.id, trimmedName);
@@ -138,7 +144,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           ? {
               multipart: {
                 uploadId: (await createMultipartUploadSession(bucket, s3Key, trimmedType)).uploadId,
-                chunkSizeBytes: MULTIPART_CHUNK_BYTES,
+                chunkSizeBytes: multipartChunkBytes(),
                 completed: false,
                 parts: [],
               },
@@ -202,7 +208,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   if (body.action === "abort") {
     await abortMultipartUpload(bucket, uploadSession.s3Key, multipart!.uploadId);
-    await prisma.source.update({ where: { id: source.id }, data: { uploadSession: null } });
+    await prisma.source.update({ where: { id: source.id }, data: { uploadSession: Prisma.DbNull } });
     return NextResponse.json({ ok: true, aborted: true });
   }
 

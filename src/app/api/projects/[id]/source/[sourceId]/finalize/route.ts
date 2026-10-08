@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaStore, s3Ref } from "@/lib/media-store";
 import { jsonError } from "@/app/api/_lib/http";
@@ -60,7 +61,7 @@ export async function POST(
       storagePath,
       sizeBytes: BigInt(info.size),
       mimeType: source.mimeType ?? uploadSession.contentType,
-      uploadSession: null,
+      uploadSession: Prisma.DbNull,
       ...(durationMs !== undefined ? { durationMs, referenceDurationMs: durationMs } : {}),
     },
   });

@@ -12,7 +12,10 @@ const s3 = vi.hoisted(() => ({
   generatePresignedUploadUrl: vi.fn(async (_bucket: string, key: string) => `https://upload.example/${key}`),
 }));
 
-vi.mock("@/app/api/_lib/s3", () => s3);
+vi.mock("@/app/api/_lib/s3", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/api/_lib/s3")>()),
+  ...s3,
+}));
 
 import { POST as START, PATCH } from "./route";
 import { POST as FINALIZE } from "../[sourceId]/finalize/route";

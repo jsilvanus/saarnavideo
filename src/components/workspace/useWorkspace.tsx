@@ -54,6 +54,40 @@ function uploadProgressPercent(session: UploadSessionState) {
   return Math.round((session.completedBytes / session.totalBytes) * 100 || 0);
 }
 
+function parseStoredUploadSession(value: string): UploadSessionState | null {
+  const parsed = JSON.parse(value) as Partial<UploadSessionState> | null;
+  if (!parsed || typeof parsed !== "object") return null;
+  if (typeof parsed.projectId !== "string" || typeof parsed.sourceId !== "string" || typeof parsed.fileName !== "string") return null;
+  if (typeof parsed.chunkSizeBytes !== "number" || !Number.isFinite(parsed.chunkSizeBytes) || parsed.chunkSizeBytes <= 0) return null;
+  if (typeof parsed.completedBytes !== "number" || !Number.isFinite(parsed.completedBytes) || parsed.completedBytes < 0) return null;
+  if (typeof parsed.totalBytes !== "number" || !Number.isFinite(parsed.totalBytes) || parsed.totalBytes <= 0) return null;
+  if (typeof parsed.paused !== "boolean" || typeof parsed.multipart !== "boolean") return null;
+  if (parsed.uploadId !== undefined && typeof parsed.uploadId !== "string") return null;
+  if (parsed.s3Key !== undefined && typeof parsed.s3Key !== "string") return null;
+  if (parsed.completed !== undefined && typeof parsed.completed !== "boolean") return null;
+  if (!parsed.partEtags || typeof parsed.partEtags !== "object" || Array.isArray(parsed.partEtags)) return null;
+  const partEtags = Object.entries(parsed.partEtags).reduce<Record<number, string>>((all, [partNumber, etag]) => {
+    if (!/^\d+$/.test(partNumber) || typeof etag !== "string") return all;
+    all[Number(partNumber)] = etag;
+    return all;
+  }, {});
+  if (Object.keys(partEtags).length !== Object.keys(parsed.partEtags).length) return null;
+  return {
+    projectId: parsed.projectId,
+    sourceId: parsed.sourceId,
+    fileName: parsed.fileName,
+    uploadId: parsed.uploadId,
+    s3Key: parsed.s3Key,
+    chunkSizeBytes: parsed.chunkSizeBytes,
+    partEtags,
+    completedBytes: parsed.completedBytes,
+    totalBytes: parsed.totalBytes,
+    paused: parsed.paused,
+    multipart: parsed.multipart,
+    completed: parsed.completed,
+  };
+}
+
 function sessionFromSource(projectId: string, source: Source, upload: SourceUploadSession): UploadSessionState {
   return {
     projectId,
@@ -161,7 +195,9 @@ export function useWorkspaceState() {
     const raw = window.localStorage.getItem(UPLOAD_SESSION_STORAGE_KEY);
     if (!raw) return;
     try {
-      setUploadSession(JSON.parse(raw) as UploadSessionState);
+      const parsed = parseStoredUploadSession(raw);
+      if (!parsed) throw new Error("Invalid upload session state");
+      setUploadSession(parsed);
     } catch {
       window.localStorage.removeItem(UPLOAD_SESSION_STORAGE_KEY);
     }
@@ -366,7 +402,10 @@ export function useWorkspaceState() {
 
   async function finalizeUploadedSource(projectId: string, sourceId: string, file: File) {
     const durationMs = await getVideoDurationMs(file);
-    await requestJson(
+    return requestJson<{
+      error?: string;
+      durationWarning?: { referenceDurationMs: number; actualDurationMs: number };
+    }>(
       `/api/projects/${projectId}/source/${sourceId}/finalize`,
       jsonInit("POST", { durationMs }),
       t("ws.uploadFailed"),
@@ -391,10 +430,10 @@ export function useWorkspaceState() {
       await uploadSingleFile(sessionData.uploadUrl, file, controller);
     }
 
-    await finalizeUploadedSource(projectId, session.sourceId, file);
+    const finalized = await finalizeUploadedSource(projectId, session.sourceId, file);
     setUploadAbort(null);
     setUploadSession(null);
-    return true;
+    return finalized;
   }
 
   async function pauseUpload() {
@@ -412,8 +451,8 @@ export function useWorkspaceState() {
     if (!match) return;
     await withBusy(t("ws.uploadFailed"), async () => {
       setUploadSession((current) => (current ? { ...current, paused: false } : current));
-      const finished = await runSourceUpload(selected.id, match, uploadSession.sourceId);
-      if (!finished) return;
+      const result = await runSourceUpload(selected.id, match, uploadSession.sourceId);
+      if (!result) return;
       await openProject(selected.id);
     });
   }
@@ -422,8 +461,8 @@ export function useWorkspaceState() {
     if (!selected || !uploadFiles.length) return;
     await withBusy(t("ws.uploadFailed"), async () => {
       for (const file of uploadFiles) {
-        const finished = await runSourceUpload(selected.id, file);
-        if (!finished) return;
+        const result = await runSourceUpload(selected.id, file);
+        if (!result) return;
       }
       setUploadFiles([]);
       await openProject(selected.id);
@@ -455,8 +494,8 @@ export function useWorkspaceState() {
     }
 
     try {
-      const finished = await runSourceUpload(selected.id, file, source.id);
-      if (!finished) return false;
+      const result = await runSourceUpload(selected.id, file, source.id);
+      if (!result) return false;
 
       setPendingFiles((p) => {
         const n = { ...p };
@@ -464,6 +503,15 @@ export function useWorkspaceState() {
         return n;
       });
       await openProject(selected.id);
+      if (result.durationWarning) {
+        setDurationMismatch({
+          sourceId: source.id,
+          originalName: source.originalName,
+          referenceDurationMs: result.durationWarning.referenceDurationMs,
+          actualDurationMs: result.durationWarning.actualDurationMs,
+        });
+        return false;
+      }
       return true;
     } catch (e) {
       setError(errorMessage(e, t("ws.uploadFailed")));
@@ -902,7 +950,6 @@ export function useWorkspaceState() {
     duplicateProject,
     deleteProject,
     getVideoDurationMs,
-    uploadFileToS3,
     addUploads,
     addDeferredUploads,
     uploadPendingSource,

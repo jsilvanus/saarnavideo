@@ -18,9 +18,11 @@ Request body:
   "fileName": "my-video.mp4",
   "contentType": "video/mp4",
   "sizeBytes": 1073741824,
-  "sourceId": "abc123def456" // optional when resuming an existing pending source
+  "sourceId": "abc123def456"
 }
 ```
+
+`sourceId` is optional and is used only when resuming an existing pending source.
 
 Response:
 ```json
