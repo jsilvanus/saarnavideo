@@ -197,7 +197,7 @@ export function useWorkspaceState() {
     try {
       const parsed = parseStoredUploadSession(raw);
       if (!parsed) throw new Error("Invalid upload session state");
-      setUploadSession(parsed);
+      setUploadSession({ ...parsed, paused: true });
     } catch {
       window.localStorage.removeItem(UPLOAD_SESSION_STORAGE_KEY);
     }
@@ -222,10 +222,11 @@ export function useWorkspaceState() {
     const parsed = parseSourceUploadSession(active.uploadSession);
     if (!parsed) return;
     setUploadSession((current) => {
-      if (current?.sourceId === active.id) return { ...current, ...sessionFromSource(selected.id, active, parsed), paused: current.paused };
-      return current ?? sessionFromSource(selected.id, active, parsed);
+      const paused = uploadAbort ? (current?.paused ?? false) : true;
+      if (current?.sourceId === active.id) return { ...current, ...sessionFromSource(selected.id, active, parsed), paused };
+      return current ?? { ...sessionFromSource(selected.id, active, parsed), paused: true };
     });
-  }, [selected]);
+  }, [selected, uploadAbort]);
   async function createProject(e: FormEvent) {
     e.preventDefault();
     await withBusy(t("ws.createFailed"), async () => {
