@@ -325,15 +325,55 @@ export function useWorkspaceState() {
     await withBusy(t("ws.uploadFailed"), async () => {
       setUploadProgress(0);
       for (const file of uploadFiles) {
-        // Step 1: Request presigned URL
-        const presignedData = await requestJson<{ uploadUrl: string; sourceId: string }>(
+        const controller = new AbortController();
+        setUploadAbort(() => controller.abort.bind(controller));
+
+        // Step 1: Request presigned URL and multipart session metadata
+        const presignedData = await requestJson<{
+          uploadUrl: string;
+          sourceId: string;
+          s3Key?: string;
+          multipartEnabled?: boolean;
+          multipart?: { uploadId: string };
+          chunkSizeBytes?: number;
+        }>(
           `/api/projects/${selected.id}/source/presigned-url`,
           jsonInit("POST", { fileName: file.name, sizeBytes: file.size, contentType: file.type || "application/octet-stream" }),
           t("ws.uploadFailed"),
         );
 
-        // Step 2: Upload file directly to S3
-        await uploadFileToS3(presignedData.uploadUrl, file);
+        setUploadSession({
+          projectId: selected.id,
+          sourceId: presignedData.sourceId,
+          fileName: file.name,
+          s3Key: presignedData.s3Key,
+          uploadId: presignedData.multipart?.uploadId,
+          chunkSizeBytes: presignedData.chunkSizeBytes ?? file.size,
+          partEtags: {},
+          completedBytes: 0,
+          totalBytes: file.size,
+          paused: false,
+          multipart: Boolean(presignedData.multipartEnabled && presignedData.multipart && presignedData.s3Key),
+        });
+
+        // Step 2: Upload file directly to S3, with multipart support and resumable state
+        await uploadFileToS3(presignedData.uploadUrl, file, {
+          signal: controller.signal,
+          multipart: Boolean(presignedData.multipartEnabled && presignedData.multipart && presignedData.s3Key),
+          uploadId: presignedData.multipart?.uploadId,
+          s3Key: presignedData.s3Key,
+          onPartComplete: (partNumber, etag, uploadedBytes) => {
+            setUploadSession((current) =>
+              current && current.fileName === file.name
+                ? {
+                  ...current,
+                  partEtags: { ...current.partEtags, [partNumber]: etag },
+                  completedBytes: Math.min(current.completedBytes + uploadedBytes, file.size),
+                }
+                : current,
+            );
+          },
+        });
 
         // Step 3: Finalize the upload
         const durationMs = await getVideoDurationMs(file);
@@ -342,6 +382,9 @@ export function useWorkspaceState() {
           jsonInit("POST", { durationMs }),
           t("ws.uploadFailed"),
         );
+
+        setUploadAbort(null);
+        setUploadSession(null);
       }
       setUploadProgress(null);
       setUploadFiles([]);
@@ -375,14 +418,42 @@ export function useWorkspaceState() {
 
     try {
       // Step 1: Request presigned URL for this specific source
-      const presignedData = await requestJson<{ uploadUrl: string }>(
+      const presignedData = await requestJson<{
+        uploadUrl: string;
+        sourceId: string;
+        s3Key?: string;
+        multipartEnabled?: boolean;
+        multipart?: { uploadId: string };
+        chunkSizeBytes?: number;
+      }>(
         `/api/projects/${selected.id}/source/presigned-url`,
         jsonInit("POST", { fileName: file.name, sizeBytes: file.size, contentType: file.type || "application/octet-stream" }),
         t("ws.uploadFailed"),
       );
 
+      const controller = new AbortController();
+      setUploadAbort(() => controller.abort.bind(controller));
+      setUploadSession({
+        projectId: selected.id,
+        sourceId: source.id,
+        fileName: file.name,
+        s3Key: presignedData.s3Key,
+        uploadId: presignedData.multipart?.uploadId,
+        chunkSizeBytes: presignedData.chunkSizeBytes ?? file.size,
+        partEtags: {},
+        completedBytes: 0,
+        totalBytes: file.size,
+        paused: false,
+        multipart: Boolean(presignedData.multipartEnabled && presignedData.multipart && presignedData.s3Key),
+      });
+
       // Step 2: Upload file directly to S3
-      await uploadFileToS3(presignedData.uploadUrl, file);
+      await uploadFileToS3(presignedData.uploadUrl, file, {
+        signal: controller.signal,
+        multipart: Boolean(presignedData.multipartEnabled && presignedData.multipart && presignedData.s3Key),
+        uploadId: presignedData.multipart?.uploadId,
+        s3Key: presignedData.s3Key,
+      });
 
       // Step 3: Finalize the upload
       const durationMs = await getVideoDurationMs(file);
@@ -400,6 +471,8 @@ export function useWorkspaceState() {
         delete n[source.id];
         return n;
       });
+      setUploadSession(null);
+      setUploadAbort(null);
       await openProject(selected.id);
       if (data.durationWarning) {
         setDurationMismatch({
@@ -413,6 +486,8 @@ export function useWorkspaceState() {
       return true;
     } catch (e) {
       setError(errorMessage(e, t("ws.uploadFailed")));
+      setUploadSession(null);
+      setUploadAbort(null);
       return false;
     }
   }
@@ -797,6 +872,11 @@ export function useWorkspaceState() {
     setUploadMode,
     pendingFiles,
     setPendingFiles,
+    uploadProgress,
+    uploadSession,
+    uploadAbort,
+    pauseUpload,
+    resumeUpload,
     youtubeUrl,
     setYoutubeUrl,
     assetFile,

@@ -40,6 +40,8 @@ export const en: Record<keyof typeof fi, string> = {
   "modal.newProject": "New project",
   "common.cancel": "Cancel",
   "common.uploading": "Uploading…",
+  "common.pause": "Pause",
+  "common.resume": "Resume",
   "modal.createProject": "Create project",
   "modal.removeAsset.aria": "Remove asset from project",
   "modal.removeAsset.title": "Remove “{name}” from this project?",

@@ -38,6 +38,8 @@ export const fi = {
   "modal.newProject": "Uusi projekti",
   "common.cancel": "Peruuta",
   "common.uploading": "Lähetetään…",
+  "common.pause": "Keskeytä",
+  "common.resume": "Jatka",
   "modal.createProject": "Luo projekti",
   "modal.removeAsset.aria": "Poista aineisto projektista",
   "modal.removeAsset.title": "Poistetaanko “{name}” tästä projektista?",
