@@ -23,14 +23,13 @@ import { POST as FINALIZE } from "../[sourceId]/finalize/route";
 describe("direct source upload routes", () => {
   let projectId: string;
   let memory: ReturnType<typeof createMemoryObjectClient>;
-  const originalNodeEnv = process.env.NODE_ENV;
 
   beforeEach(async () => {
-    process.env.NODE_ENV = "test";
-    process.env.MEDIA_S3_BUCKET = "b";
-    process.env.S3_MULTIPART_THRESHOLD_BYTES = "8";
-    process.env.S3_MULTIPART_CHUNK_BYTES = "5242880";
-    process.env.UPLOAD_STALE_AFTER_MS = "60000";
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("MEDIA_S3_BUCKET", "b");
+    vi.stubEnv("S3_MULTIPART_THRESHOLD_BYTES", "8");
+    vi.stubEnv("S3_MULTIPART_CHUNK_BYTES", "5242880");
+    vi.stubEnv("UPLOAD_STALE_AFTER_MS", "60000");
     memory = createMemoryObjectClient();
     setMediaStore(createMediaStore({ mode: "s3", root: "/tmp/saarnavideo-upload-route", s3: { client: memory.client, bucket: "b" } }));
     projectId = (await prisma.project.create({ data: { title: "Upload route test", definition: {} } })).id;
@@ -44,12 +43,7 @@ describe("direct source upload routes", () => {
   afterEach(async () => {
     await prisma.project.delete({ where: { id: projectId } }).catch(() => undefined);
     setMediaStore(undefined);
-    process.env.NODE_ENV = originalNodeEnv;
-    delete process.env.MEDIA_S3_BUCKET;
-    delete process.env.S3_MULTIPART_THRESHOLD_BYTES;
-    delete process.env.S3_MULTIPART_CHUNK_BYTES;
-    delete process.env.UPLOAD_STALE_AFTER_MS;
-    delete process.env.ACCESS_SECRET;
+    vi.unstubAllEnvs();
   });
 
   const ctx = () => ({ params: Promise.resolve({ id: projectId }) });
@@ -176,7 +170,7 @@ describe("direct source upload routes", () => {
   });
 
   it("requires ACCESS_SECRET in production before minting upload urls", async () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     delete process.env.ACCESS_SECRET;
     const response = await START(new Request("http://localhost/x", {
       method: "POST",
