@@ -64,7 +64,6 @@ export async function createMultipartUploadSession(
   bucket: string,
   key: string,
   contentType: string,
-  expiresIn: number = 3600,
 ) {
   const client = getS3Client();
   const multipart = await client.send(new CreateMultipartUploadCommand({
@@ -75,10 +74,9 @@ export async function createMultipartUploadSession(
 
   const uploadId = multipart.UploadId;
   if (!uploadId) throw new Error("S3 multipart upload did not return an UploadId");
-
   return {
     uploadId,
-    createUrl: await getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }), { expiresIn }),
+    uploadId,
   };
 }
 
