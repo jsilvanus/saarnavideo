@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaStore, s3Ref } from "@/lib/media-store";
-import { accessSecret } from "@/lib/access-gate";
+import { uploadAuthRequired } from "@/app/api/_lib/upload-auth";
 import {
   abortMultipartUpload,
   completeMultipartUpload,
@@ -32,10 +32,6 @@ function multipartChunkBytes() {
 
 function uploadStaleAfterMs() {
   return Math.max(60_000, Number(process.env.UPLOAD_STALE_AFTER_MS ?? 24 * 60 * 60 * 1000));
-}
-
-function uploadAuthRequired() {
-  return process.env.NODE_ENV === "production" && !accessSecret();
 }
 
 async function findPendingUploadSource(projectId: string, sourceId: string) {
@@ -73,9 +69,12 @@ async function cleanupStalePendingUploads(now = new Date()) {
   const bucket = process.env.MEDIA_S3_BUCKET;
   if (!bucket) return;
   const staleAfterMs = uploadStaleAfterMs();
+  const cutoff = new Date(now.getTime() - staleAfterMs);
   const pending = await prisma.source.findMany({
-    where: { type: "UPLOAD", status: "PENDING" },
+    where: { type: "UPLOAD", status: "PENDING", createdAt: { lte: cutoff } },
     select: { id: true, createdAt: true, uploadSession: true },
+    orderBy: { createdAt: "asc" },
+    take: 100,
   });
   for (const source of pending) {
     const uploadSession = parseSourceUploadSession(source.uploadSession);
@@ -164,7 +163,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   let uploadSession = currentSession;
-  if (!uploadSession || metadataMismatch || Boolean(uploadSession.multipart) !== wantsMultipart) {
+  const resetUploadSession = !uploadSession || metadataMismatch || Boolean(uploadSession.multipart) !== wantsMultipart;
+  if (resetUploadSession) {
     uploadSession = null;
   }
 
@@ -172,6 +172,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   try {
     const bucket = await loadBucket();
+    if (resetUploadSession && currentSession) {
+      if (currentSession.multipart?.uploadId) {
+        await abortMultipartUpload(bucket, currentSession.s3Key, currentSession.multipart.uploadId).catch(() => undefined);
+      }
+      await removeUploadedObject(bucket, currentSession.s3Key);
+    }
     if (!uploadSession) {
       uploadSession = {
         s3Key,
@@ -218,7 +224,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id: projectId } = await context.params;
   if (uploadAuthRequired()) return jsonError("Direct uploads require ACCESS_SECRET in production", 503);
-  await cleanupStalePendingUploads();
   const body = await request.json().catch(() => null) as {
     sourceId?: string;
     uploadId?: string;

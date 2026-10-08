@@ -1,14 +1,10 @@
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { accessSecret } from "@/lib/access-gate";
 import { sourceUploadFile, parseDurationMs, saveSourceFile } from "@/app/api/_lib/files";
 import { jsonError } from "@/app/api/_lib/http";
+import { uploadAuthRequired } from "@/app/api/_lib/upload-auth";
 import { extractYouTubeId } from "@/app/api/_lib/youtube";
-
-function uploadAuthRequired() {
-  return process.env.NODE_ENV === "production" && !accessSecret();
-}
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;

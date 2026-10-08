@@ -2,13 +2,9 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaStore, s3Ref } from "@/lib/media-store";
-import { accessSecret } from "@/lib/access-gate";
 import { jsonError } from "@/app/api/_lib/http";
+import { uploadAuthRequired } from "@/app/api/_lib/upload-auth";
 import { parseSourceUploadSession } from "@/domain/source-upload";
-
-function uploadAuthRequired() {
-  return process.env.NODE_ENV === "production" && !accessSecret();
-}
 
 /**
  * POST /api/projects/[id]/source/[sourceId]/finalize

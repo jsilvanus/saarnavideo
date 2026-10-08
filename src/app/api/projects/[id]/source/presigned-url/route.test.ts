@@ -104,15 +104,14 @@ describe("direct source upload routes", () => {
       method: "PATCH",
       body: JSON.stringify({ action: "part-complete", sourceId: session.sourceId, uploadId: "upload-1", partNumber: 1, etag: "etag-1", sizeBytes: 20 }),
     }), ctx());
+    const store = createMediaStore({ mode: "s3", root: "/tmp/saarnavideo-upload-route", s3: { client: memory.client, bucket: "b" } });
+    await store.put(session.s3Key, Readable.from(Buffer.alloc(20)), { mimeType: "video/mp4" });
     const completed = await PATCH(new Request("http://localhost/x", {
       method: "PATCH",
       body: JSON.stringify({ action: "complete", sourceId: session.sourceId, uploadId: "upload-1" }),
     }), ctx());
     expect(completed.status).toBe(200);
     expect(s3.completeMultipartUpload).toHaveBeenCalledWith("b", session.s3Key, "upload-1", [{ ETag: "etag-1", PartNumber: 1 }]);
-
-    const store = createMediaStore({ mode: "s3", root: "/tmp/saarnavideo-upload-route", s3: { client: memory.client, bucket: "b" } });
-    await store.put(session.s3Key, Readable.from(Buffer.alloc(20)), { mimeType: "video/mp4" });
 
     const finalize = await FINALIZE(new Request("http://localhost/x", {
       method: "POST",
@@ -148,6 +147,34 @@ describe("direct source upload routes", () => {
     expect(await prisma.source.count({ where: { projects: { some: { id: projectId } } } })).toBe(1);
   });
 
+  it("aborts the old multipart upload when restarting a pending source with new metadata", async () => {
+    const source = await prisma.source.create({
+      data: {
+        type: "UPLOAD",
+        status: "PENDING",
+        originalName: "old.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 20,
+        uploadSession: {
+          s3Key: `media/projects/${projectId}/sources/${projectId}-old/old.mp4`,
+          fileName: "old.mp4",
+          contentType: "video/mp4",
+          sizeBytes: 20,
+          updatedAt: new Date().toISOString(),
+          multipart: { uploadId: "stale-upload", chunkSizeBytes: 5_242_880, completed: false, parts: [] },
+        },
+        projects: { connect: { id: projectId } },
+      },
+    });
+
+    const response = await START(new Request("http://localhost/x", {
+      method: "POST",
+      body: JSON.stringify({ sourceId: source.id, fileName: "new.mp4", contentType: "video/mp4", sizeBytes: 25 }),
+    }), ctx());
+    expect(response.status).toBe(200);
+    expect(s3.abortMultipartUpload).toHaveBeenCalledWith("b", `media/projects/${projectId}/sources/${projectId}-old/old.mp4`, "stale-upload");
+  });
+
   it("requires ACCESS_SECRET in production before minting upload urls", async () => {
     process.env.NODE_ENV = "production";
     delete process.env.ACCESS_SECRET;
@@ -167,6 +194,7 @@ describe("direct source upload routes", () => {
         originalName: "stale.mp4",
         mimeType: "video/mp4",
         sizeBytes: 20,
+        createdAt: new Date(Date.now() - 10 * 60_000),
         uploadSession: {
           s3Key: `media/projects/${projectId}/sources/stale/stale.mp4`,
           fileName: "stale.mp4",
