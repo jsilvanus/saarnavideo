@@ -23,11 +23,14 @@ import { POST as FINALIZE } from "../[sourceId]/finalize/route";
 describe("direct source upload routes", () => {
   let projectId: string;
   let memory: ReturnType<typeof createMemoryObjectClient>;
+  const originalNodeEnv = process.env.NODE_ENV;
 
   beforeEach(async () => {
+    process.env.NODE_ENV = "test";
     process.env.MEDIA_S3_BUCKET = "b";
     process.env.S3_MULTIPART_THRESHOLD_BYTES = "8";
     process.env.S3_MULTIPART_CHUNK_BYTES = "5242880";
+    process.env.UPLOAD_STALE_AFTER_MS = "60000";
     memory = createMemoryObjectClient();
     setMediaStore(createMediaStore({ mode: "s3", root: "/tmp/saarnavideo-upload-route", s3: { client: memory.client, bucket: "b" } }));
     projectId = (await prisma.project.create({ data: { title: "Upload route test", definition: {} } })).id;
@@ -41,9 +44,12 @@ describe("direct source upload routes", () => {
   afterEach(async () => {
     await prisma.project.delete({ where: { id: projectId } }).catch(() => undefined);
     setMediaStore(undefined);
+    process.env.NODE_ENV = originalNodeEnv;
     delete process.env.MEDIA_S3_BUCKET;
     delete process.env.S3_MULTIPART_THRESHOLD_BYTES;
     delete process.env.S3_MULTIPART_CHUNK_BYTES;
+    delete process.env.UPLOAD_STALE_AFTER_MS;
+    delete process.env.ACCESS_SECRET;
   });
 
   const ctx = () => ({ params: Promise.resolve({ id: projectId }) });
@@ -71,7 +77,7 @@ describe("direct source upload routes", () => {
 
     const partDone = await PATCH(new Request("http://localhost/x", {
       method: "PATCH",
-      body: JSON.stringify({ action: "part-complete", sourceId: first.sourceId, uploadId: "upload-1", partNumber: 1, etag: "etag-1", sizeBytes: 5 }),
+      body: JSON.stringify({ action: "part-complete", sourceId: first.sourceId, uploadId: "upload-1", partNumber: 1, etag: "etag-1", sizeBytes: 20 }),
     }), ctx());
     expect(partDone.status).toBe(200);
 
@@ -82,8 +88,8 @@ describe("direct source upload routes", () => {
     expect(resumed.status).toBe(200);
     const second = await resumed.json();
     expect(second.sourceId).toBe(first.sourceId);
-    expect(second.completedBytes).toBe(5);
-    expect(second.completedParts).toEqual([{ partNumber: 1, etag: "etag-1", sizeBytes: 5 }]);
+    expect(second.completedBytes).toBe(20);
+    expect(second.completedParts).toEqual([{ partNumber: 1, etag: "etag-1", sizeBytes: 20 }]);
     expect(s3.createMultipartUploadSession).toHaveBeenCalledTimes(1);
   });
 
@@ -140,5 +146,68 @@ describe("direct source upload routes", () => {
     const body = await res.json();
     expect(body.sourceId).toBe(source.id);
     expect(await prisma.source.count({ where: { projects: { some: { id: projectId } } } })).toBe(1);
+  });
+
+  it("requires ACCESS_SECRET in production before minting upload urls", async () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.ACCESS_SECRET;
+    const response = await START(new Request("http://localhost/x", {
+      method: "POST",
+      body: JSON.stringify({ fileName: "clip.mp4", contentType: "video/mp4", sizeBytes: 20 }),
+    }), ctx());
+    expect(response.status).toBe(503);
+  });
+
+  it("cleans up stale pending uploads before creating a new session", async () => {
+    const store = createMediaStore({ mode: "s3", root: "/tmp/saarnavideo-upload-route", s3: { client: memory.client, bucket: "b" } });
+    const stale = await prisma.source.create({
+      data: {
+        type: "UPLOAD",
+        status: "PENDING",
+        originalName: "stale.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 20,
+        uploadSession: {
+          s3Key: `media/projects/${projectId}/sources/stale/stale.mp4`,
+          fileName: "stale.mp4",
+          contentType: "video/mp4",
+          sizeBytes: 20,
+          updatedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+          multipart: { uploadId: "stale-upload", chunkSizeBytes: 5_242_880, completed: false, parts: [] },
+        },
+        projects: { connect: { id: projectId } },
+      },
+    });
+    await store.put("media/projects/test/sources/stale/stale.mp4".replace("test", projectId), Readable.from(Buffer.alloc(20)), { mimeType: "video/mp4" });
+
+    const response = await START(new Request("http://localhost/x", {
+      method: "POST",
+      body: JSON.stringify({ fileName: "fresh.mp4", contentType: "video/mp4", sizeBytes: 20 }),
+    }), ctx());
+    expect(response.status).toBe(200);
+    expect(await prisma.source.findUnique({ where: { id: stale.id } })).toBeNull();
+    expect(s3.abortMultipartUpload).toHaveBeenCalledWith("b", `media/projects/${projectId}/sources/stale/stale.mp4`, "stale-upload");
+    await expect(store.stat(`s3://b/media/projects/${projectId}/sources/stale/stale.mp4`)).resolves.toBeNull();
+  });
+
+  it("deletes mismatched multipart objects instead of keeping them in storage", async () => {
+    const start = await START(new Request("http://localhost/x", {
+      method: "POST",
+      body: JSON.stringify({ fileName: "clip.mp4", contentType: "video/mp4", sizeBytes: 20 }),
+    }), ctx());
+    const session = await start.json();
+    await PATCH(new Request("http://localhost/x", {
+      method: "PATCH",
+      body: JSON.stringify({ action: "part-complete", sourceId: session.sourceId, uploadId: "upload-1", partNumber: 1, etag: "etag-1", sizeBytes: 20 }),
+    }), ctx());
+    const store = createMediaStore({ mode: "s3", root: "/tmp/saarnavideo-upload-route", s3: { client: memory.client, bucket: "b" } });
+    await store.put(session.s3Key, Readable.from(Buffer.alloc(25)), { mimeType: "video/mp4" });
+
+    const completed = await PATCH(new Request("http://localhost/x", {
+      method: "PATCH",
+      body: JSON.stringify({ action: "complete", sourceId: session.sourceId, uploadId: "upload-1" }),
+    }), ctx());
+    expect(completed.status).toBe(409);
+    expect(await store.stat(`s3://b/${session.s3Key}`)).toBeNull();
   });
 });

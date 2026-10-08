@@ -88,7 +88,7 @@ Set one long random string on the **app**:
 ACCESS_SECRET="$(openssl rand -base64 32)"
 ```
 
-Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else.
+Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication.
 
 ## Environment reference
 
@@ -116,6 +116,7 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | `MAX_SOURCE_SIZE_BYTES` | 50 GB | worker | Largest source |
 | `MAX_OUTPUT_SIZE_BYTES` | 100 GB | worker | Largest output |
 | `MAX_UPLOAD_BYTES` | 5 GB (`.env.example` sets 50 GB) | app | Largest upload |
+| `UPLOAD_STALE_AFTER_MS` | 86400000 (24 h) | app | Abort/remove stale pending direct-upload sessions and their partial S3 objects |
 | `MAX_ASSET_SIZE_BYTES` | 10 MB | app | Largest library image |
 | `MAX_AUDIO_ASSET_SIZE_BYTES` | 200 MB | app | Largest library audio file |
 | `MAX_DURATION_SECONDS` | 43200 (12 h) | worker | Longest source |

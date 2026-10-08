@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getMediaStore, s3Ref } from "@/lib/media-store";
+import { accessSecret } from "@/lib/access-gate";
 import {
   abortMultipartUpload,
   completeMultipartUpload,
@@ -12,7 +14,10 @@ import {
 import { jsonError } from "@/app/api/_lib/http";
 import {
   completedUploadBytes,
+  expectedMultipartPartSize,
   parseSourceUploadSession,
+  sourceUploadIsStale,
+  touchSourceUploadSession,
   upsertMultipartUploadPart,
   type SourceUploadSession,
 } from "@/domain/source-upload";
@@ -23,6 +28,14 @@ function multipartThresholdBytes() {
 
 function multipartChunkBytes() {
   return Math.max(5 * 1024 * 1024, Number(process.env.S3_MULTIPART_CHUNK_BYTES ?? 5 * 1024 * 1024));
+}
+
+function uploadStaleAfterMs() {
+  return Math.max(60_000, Number(process.env.UPLOAD_STALE_AFTER_MS ?? 24 * 60 * 60 * 1000));
+}
+
+function uploadAuthRequired() {
+  return process.env.NODE_ENV === "production" && !accessSecret();
 }
 
 async function findPendingUploadSource(projectId: string, sourceId: string) {
@@ -52,6 +65,29 @@ function finalizeResponse(session: SourceUploadSession) {
   };
 }
 
+async function removeUploadedObject(bucket: string, key: string) {
+  await (await getMediaStore()).remove(s3Ref(bucket, key)).catch(() => undefined);
+}
+
+async function cleanupStalePendingUploads(now = new Date()) {
+  const bucket = process.env.MEDIA_S3_BUCKET;
+  if (!bucket) return;
+  const staleAfterMs = uploadStaleAfterMs();
+  const pending = await prisma.source.findMany({
+    where: { type: "UPLOAD", status: "PENDING" },
+    select: { id: true, createdAt: true, uploadSession: true },
+  });
+  for (const source of pending) {
+    const uploadSession = parseSourceUploadSession(source.uploadSession);
+    if (!uploadSession || !sourceUploadIsStale(uploadSession, staleAfterMs, now, source.createdAt)) continue;
+    if (uploadSession.multipart?.uploadId) {
+      await abortMultipartUpload(bucket, uploadSession.s3Key, uploadSession.multipart.uploadId).catch(() => undefined);
+    }
+    await removeUploadedObject(bucket, uploadSession.s3Key);
+    await prisma.source.delete({ where: { id: source.id } }).catch(() => undefined);
+  }
+}
+
 /**
  * POST /api/projects/[id]/source/presigned-url
  *
@@ -59,6 +95,8 @@ function finalizeResponse(session: SourceUploadSession) {
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id: projectId } = await context.params;
+  if (uploadAuthRequired()) return jsonError("Direct uploads require ACCESS_SECRET in production", 503);
+  await cleanupStalePendingUploads();
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -152,6 +190,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           : {}),
       };
     }
+    uploadSession = touchSourceUploadSession(uploadSession);
     const uploadUrl = await generatePresignedUploadUrl(bucket, uploadSession.s3Key, trimmedType, 3600);
     await prisma.source.update({
       where: { id: source.id },
@@ -178,6 +217,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id: projectId } = await context.params;
+  if (uploadAuthRequired()) return jsonError("Direct uploads require ACCESS_SECRET in production", 503);
+  await cleanupStalePendingUploads();
   const body = await request.json().catch(() => null) as {
     sourceId?: string;
     uploadId?: string;
@@ -216,6 +257,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (typeof body.partNumber !== "number" || body.partNumber <= 0) return jsonError("partNumber must be a positive number", 400);
     if (typeof body.etag !== "string" || !body.etag.trim()) return jsonError("etag is required", 400);
     if (typeof body.sizeBytes !== "number" || body.sizeBytes < 0) return jsonError("sizeBytes must be a non-negative number", 400);
+    const expectedSize = expectedMultipartPartSize(uploadSession, body.partNumber);
+    if (expectedSize === null) return jsonError("partNumber exceeds the declared upload size", 409);
+    if (body.sizeBytes !== expectedSize) return jsonError("Uploaded part size does not match the declared upload size", 409);
     const nextSession = {
       ...uploadSession,
       multipart: {
@@ -227,16 +271,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }),
       },
     } satisfies SourceUploadSession;
-    await prisma.source.update({ where: { id: source.id }, data: { uploadSession: nextSession } });
-    return NextResponse.json({ ok: true, completedBytes: completedUploadBytes(nextSession), completedParts: nextSession.multipart?.parts ?? [] });
+    const touchedSession = touchSourceUploadSession(nextSession);
+    await prisma.source.update({ where: { id: source.id }, data: { uploadSession: touchedSession } });
+    return NextResponse.json({ ok: true, completedBytes: completedUploadBytes(touchedSession), completedParts: touchedSession.multipart?.parts ?? [] });
   }
 
   if (body.action === "complete") {
+    if (completedUploadBytes(uploadSession) !== uploadSession.sizeBytes) {
+      return jsonError("Uploaded part sizes do not match the declared file size", 409);
+    }
     const parts = body.parts?.length
       ? body.parts
       : multipart!.parts.map((part) => ({ ETag: part.etag, PartNumber: part.partNumber }));
     if (!parts.length) return jsonError("No uploaded parts recorded", 409);
     await completeMultipartUpload(bucket, uploadSession.s3Key, multipart!.uploadId, parts);
+    const objectRef = s3Ref(bucket, uploadSession.s3Key);
+    const info = await (await getMediaStore()).stat(objectRef).catch(() => null);
+    if (!info || info.size !== uploadSession.sizeBytes) {
+      await removeUploadedObject(bucket, uploadSession.s3Key);
+      await prisma.source.update({ where: { id: source.id }, data: { uploadSession: Prisma.DbNull } });
+      return jsonError("Uploaded file size does not match the declared file size", 409);
+    }
     const nextSession = {
       ...uploadSession,
       multipart: {
@@ -244,8 +299,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         completed: true,
       },
     } satisfies SourceUploadSession;
-    await prisma.source.update({ where: { id: source.id }, data: { uploadSession: nextSession } });
-    return NextResponse.json({ ok: true, completed: true, completedBytes: completedUploadBytes(nextSession) });
+    const touchedSession = touchSourceUploadSession(nextSession);
+    await prisma.source.update({ where: { id: source.id }, data: { uploadSession: touchedSession } });
+    return NextResponse.json({ ok: true, completed: true, completedBytes: completedUploadBytes(touchedSession) });
   }
 
   if (typeof body.partNumber === "number" && body.partNumber > 0) {

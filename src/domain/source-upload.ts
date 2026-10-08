@@ -11,6 +11,7 @@ export const sourceUploadSessionSchema = z.object({
   fileName: z.string().trim().min(1),
   contentType: z.string().trim().min(1),
   sizeBytes: z.number().int().positive(),
+  updatedAt: z.string().datetime().optional(),
   multipart: z.object({
     uploadId: z.string().trim().min(1),
     chunkSizeBytes: z.number().int().positive(),
@@ -33,4 +34,26 @@ export function upsertMultipartUploadPart(parts: MultipartUploadPart[], next: Mu
 
 export function completedUploadBytes(session: SourceUploadSession) {
   return session.multipart?.parts.reduce((total, part) => total + part.sizeBytes, 0) ?? 0;
+}
+
+export function touchSourceUploadSession(session: SourceUploadSession, now = new Date()) {
+  return { ...session, updatedAt: now.toISOString() } satisfies SourceUploadSession;
+}
+
+export function sourceUploadUpdatedAt(session: SourceUploadSession, fallback = new Date(0)) {
+  if (!session.updatedAt) return fallback;
+  const parsed = new Date(session.updatedAt);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
+export function sourceUploadIsStale(session: SourceUploadSession, staleAfterMs: number, now = new Date(), fallback = new Date(0)) {
+  return now.getTime() - sourceUploadUpdatedAt(session, fallback).getTime() >= staleAfterMs;
+}
+
+export function expectedMultipartPartSize(session: SourceUploadSession, partNumber: number) {
+  const multipart = session.multipart;
+  if (!multipart || partNumber <= 0) return null;
+  const start = (partNumber - 1) * multipart.chunkSizeBytes;
+  if (start >= session.sizeBytes) return null;
+  return Math.min(multipart.chunkSizeBytes, session.sizeBytes - start);
 }

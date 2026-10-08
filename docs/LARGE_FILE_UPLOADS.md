@@ -6,6 +6,8 @@ Saarnavideo now supports **unlimited file size uploads** through presigned S3 UR
 
 Large uploads are now **refresh-safe** and **pause/resume-safe**: the server stores the active upload session on the pending `Source` row, including the multipart upload id and the uploaded parts. After a browser refresh, the UI can resume the same source instead of creating a duplicate pending upload.
 
+In production, these routes require the app's built-in shared-secret gate (`ACCESS_SECRET`), because SaarnaVideo has no other built-in authentication.
+
 ## API Endpoints
 
 ### 1. Request Presigned URL
@@ -153,6 +155,7 @@ async function uploadLargeFile(projectId: string, file: File) {
 |--------|---------|
 | 404 | Project not found |
 | 413 | File exceeds MAX_UPLOAD_BYTES limit |
+| 503 | `ACCESS_SECRET` is not configured in production |
 | 500 | S3 configuration error |
 
 Check the response body for error details.
@@ -162,7 +165,10 @@ Check the response body for error details.
 The following environment variables control file upload behavior:
 
 - `MAX_UPLOAD_BYTES` - Max file size (default: 50GB)
+- `UPLOAD_STALE_AFTER_MS` - Removes stale pending direct-upload sessions and their uploaded objects after this age (default: 24h)
 - `MEDIA_S3_BUCKET` - S3 bucket for uploads
 - `MEDIA_S3_PREFIX` - Key prefix in bucket (default: `media`)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` - S3 credentials
 - `MEDIA_S3_ENDPOINT` - S3-compatible endpoint (optional)
+
+Also configure an S3 lifecycle rule to abort incomplete multipart uploads automatically (recommended: after 1 day), so partially uploaded parts are removed even if the app never receives the abort request.
