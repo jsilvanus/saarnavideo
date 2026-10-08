@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import { useT } from "@/i18n/I18nProvider";
 import { formatTime } from "./format";
 
-type PlayableSource = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; youtubeVideoId?: string | null };
+type PlayableSource = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; storagePath?: string | null; youtubeVideoId?: string | null };
 type YouTubePlayer = { getCurrentTime: () => number; seekTo: (seconds: number, allowSeekAhead: boolean) => void; destroy: () => void };
 type YTWindow = Window & { YT?: { Player: new (element: HTMLElement, options: { videoId: string; events?: { onReady?: () => void } }) => YouTubePlayer }; onYouTubeIframeAPIReady?: () => void };
 
@@ -82,12 +82,14 @@ export function SourcePlayer({ source, player, localFile, remoteSrc, onDuration,
 }) {
   const t = useT();
   const { current, setCurrent, seek, videoRef, ytHostRef, localUrl } = player;
+  const hasRemoteVideo = source.type === "UPLOAD" && source.status === "AVAILABLE" && !!source.storagePath;
   return <>
     <div className="picker-player">
       {source.type === "YOUTUBE" && source.youtubeVideoId ? <div ref={ytHostRef} />
         : source.status === "PENDING" && localFile ? <video ref={videoRef} src={localUrl ?? undefined} controls onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} />
         : source.status === "PENDING" ? <div className="muted">{t("player.chooseLocal")}</div>
-        : <video ref={videoRef} src={remoteSrc} controls preload="metadata" onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} onLoadedMetadata={e => { if (e.currentTarget.duration) onDuration(e.currentTarget.duration); }} />}
+        : hasRemoteVideo ? <video ref={videoRef} src={remoteSrc} controls preload="metadata" onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} onLoadedMetadata={e => { if (e.currentTarget.duration) onDuration(e.currentTarget.duration); }} />
+        : <div className="muted">{t("player.chooseLocal")}</div>}
     </div>
     <div className="picker-time">
       <strong>{formatTime(current)}</strong>

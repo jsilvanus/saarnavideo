@@ -33,6 +33,7 @@ export default function SourceStep() {
     addUploads,
     addDeferredUploads,
     uploadPendingSource,
+    deleteSource,
     addYoutube,
     currentDefinition,
     saveVariables,
@@ -117,6 +118,11 @@ export default function SourceStep() {
                     </button>
                     {pendingFiles[s.id] && <small>{t("src.selectedFile", { name: pendingFiles[s.id].name })}</small>}
                   </div>
+                )}
+                {(s.type === "UPLOAD" || s.type === "YOUTUBE") && (
+                  <button onClick={() => void deleteSource(s)} disabled={busy} style={{ marginTop: 8 }}>
+                    {t("common.remove")}
+                  </button>
                 )}
               </article>
             ))}

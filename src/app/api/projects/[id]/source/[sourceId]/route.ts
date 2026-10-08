@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { sourceUploadFile, parseDurationMs, rangedFileResponse, saveSourceFile } from "@/app/api/_lib/files";
+import { getMediaStore, s3Ref } from "@/lib/media-store";
+import { abortMultipartUpload } from "@/app/api/_lib/s3";
+import { sourceUploadFile, parseDurationMs, rangedFileResponse, removeStoredFile, saveSourceFile } from "@/app/api/_lib/files";
 import { jsonError } from "@/app/api/_lib/http";
+import { parseSourceUploadSession } from "@/domain/source-upload";
 
 export async function PUT(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
   const { id, sourceId } = await context.params;
@@ -57,4 +60,46 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const source = await prisma.source.findFirst({ where: { id: sourceId, projects: { some: { id } } } });
   if (!source || source.type !== "UPLOAD" || !source.storagePath || source.status !== "AVAILABLE") return jsonError("Uploaded source not found", 404);
   return rangedFileResponse(request, source.storagePath, source.mimeType);
+}
+
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
+  const { id: projectId, sourceId } = await context.params;
+  const source = await prisma.source.findFirst({
+    where: { id: sourceId, projects: { some: { id: projectId } } },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      storagePath: true,
+      uploadSession: true,
+    },
+  });
+  if (!source) return jsonError("Source not found", 404);
+
+  await prisma.project.update({
+    where: { id: projectId },
+    data: { sources: { disconnect: { id: sourceId } } },
+  });
+
+  const remainingProjectLinks = await prisma.project.count({
+    where: { sources: { some: { id: sourceId } } },
+  });
+  if (remainingProjectLinks > 0) return new Response(null, { status: 204 });
+
+  const uploadSession = parseSourceUploadSession(source.uploadSession);
+  const bucket = process.env.MEDIA_S3_BUCKET;
+  if (bucket && source.type === "UPLOAD" && uploadSession?.s3Key) {
+    if (uploadSession.multipart?.uploadId) {
+      await abortMultipartUpload(bucket, uploadSession.s3Key, uploadSession.multipart.uploadId).catch(() => undefined);
+    }
+    await (await getMediaStore()).remove(s3Ref(bucket, uploadSession.s3Key)).catch(() => undefined);
+  }
+
+  if (source.storagePath) {
+    const otherReferences = await prisma.source.count({ where: { storagePath: source.storagePath, NOT: { id: sourceId } } });
+    if (otherReferences === 0) await removeStoredFile(source.storagePath).catch(() => undefined);
+  }
+
+  await prisma.source.delete({ where: { id: sourceId } }).catch(() => undefined);
+  return new Response(null, { status: 204 });
 }

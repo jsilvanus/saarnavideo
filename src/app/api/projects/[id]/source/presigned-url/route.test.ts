@@ -18,6 +18,7 @@ vi.mock("@/app/api/_lib/s3", async (importOriginal) => ({
 }));
 
 import { POST as START, PATCH } from "./route";
+import { DELETE as REMOVE_SOURCE } from "../[sourceId]/route";
 import { POST as FINALIZE } from "../[sourceId]/finalize/route";
 
 describe("direct source upload routes", () => {
@@ -139,6 +140,48 @@ describe("direct source upload routes", () => {
     const body = await res.json();
     expect(body.sourceId).toBe(source.id);
     expect(await prisma.source.count({ where: { projects: { some: { id: projectId } } } })).toBe(1);
+  });
+
+  it("removes a pending source from the project and cleans up its S3 upload session", async () => {
+    const source = await prisma.source.create({
+      data: {
+        type: "UPLOAD",
+        status: "PENDING",
+        originalName: "pending.mp4",
+        uploadSession: {
+          s3Key: "projects/test/pending.mp4",
+          fileName: "pending.mp4",
+          contentType: "video/mp4",
+          sizeBytes: 20,
+          updatedAt: new Date().toISOString(),
+          multipart: { uploadId: "upload-1", chunkSizeBytes: 5_242_880, completed: false, parts: [] },
+        },
+        projects: { connect: { id: projectId } },
+      },
+    });
+
+    const response = await REMOVE_SOURCE(new Request("http://localhost/x", { method: "DELETE" }), { params: Promise.resolve({ id: projectId, sourceId: source.id }) });
+    expect(response.status).toBe(204);
+    await expect(prisma.source.findUnique({ where: { id: source.id } })).resolves.toBeNull();
+    expect(s3.abortMultipartUpload).toHaveBeenCalledWith("b", "projects/test/pending.mp4", "upload-1");
+  });
+
+  it("removes a loaded upload source from the project when it is no longer referenced", async () => {
+    const source = await prisma.source.create({
+      data: {
+        type: "UPLOAD",
+        status: "AVAILABLE",
+        originalName: "ready.mp4",
+        storagePath: "s3://b/projects/test/ready.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 20,
+        projects: { connect: { id: projectId } },
+      },
+    });
+
+    const response = await REMOVE_SOURCE(new Request("http://localhost/x", { method: "DELETE" }), { params: Promise.resolve({ id: projectId, sourceId: source.id }) });
+    expect(response.status).toBe(204);
+    await expect(prisma.source.findUnique({ where: { id: source.id } })).resolves.toBeNull();
   });
 
   it("aborts the old multipart upload when restarting a pending source with new metadata", async () => {

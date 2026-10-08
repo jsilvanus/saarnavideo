@@ -521,6 +521,21 @@ export function useWorkspaceState() {
       return false;
     }
   }
+  async function deleteSource(source: Source) {
+    if (!selected) return;
+    const label = sourceLabel(source);
+    if (!confirm(`${t("common.remove")} ${label}?`)) return;
+    await withBusy(t("ws.deleteFailed"), async () => {
+      await requestJson(`/api/projects/${selected.id}/source/${source.id}`, { method: "DELETE" }, t("ws.deleteFailed"));
+      setPendingFiles((p) => {
+        const n = { ...p };
+        delete n[source.id];
+        return n;
+      });
+      await openProject(selected.id);
+      setMessage(t("ws.deleted"));
+    });
+  }
   async function addYoutube() {
     if (!selected || !youtubeUrl.trim()) return;
     await withBusy(t("ws.addYoutubeFailed"), async () => {
@@ -954,6 +969,7 @@ export function useWorkspaceState() {
     addUploads,
     addDeferredUploads,
     uploadPendingSource,
+    deleteSource,
     addYoutube,
     currentDefinition,
     saveDefinition,

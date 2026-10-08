@@ -7,7 +7,7 @@ import { aspectLabel } from "@/domain/output-presets";
 import { cropAspect, cropForAspect, type CropRect, type Reframe } from "@/domain/reframe";
 import { choiceOf, dragCrop, reframeBadge, reframeFromChoice, withZoom, zoomOf, type ReframeChoice } from "./reframe-helpers";
 
-type PreviewSource = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; youtubeVideoId?: string | null };
+type PreviewSource = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; storagePath?: string | null; youtubeVideoId?: string | null };
 type Props = {
   title: string;
   current: Reframe | undefined;
@@ -43,7 +43,7 @@ function ReframeDialog({ title, current, defaultLabel, source, atSeconds, outWid
   const [saving, setSaving] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null), boxRef = useRef<HTMLDivElement>(null), previewRef = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ x: number; y: number; start: CropRect } | null>(null);
-  const hasFile = source?.type === "UPLOAD" && source.status !== "PENDING";
+  const hasFile = source?.type === "UPLOAD" && source.status === "AVAILABLE" && !!source.storagePath;
 
   const fresh = cropForAspect(size.w, size.h, outWidth, outHeight);
   const rect = crop ?? fresh;
