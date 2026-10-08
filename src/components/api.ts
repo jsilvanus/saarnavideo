@@ -16,8 +16,9 @@ export async function requestJsonWithProgress<T = Record<string, unknown>>(
   init: RequestInit | undefined,
   fallback: string,
   onProgress: (percent: number) => void,
+  signal?: AbortSignal,
 ): Promise<T & { error?: string }> {
-  const response = await uploadWithProgress(url, init, onProgress, fallback);
+  const response = await uploadWithProgress(url, init, onProgress, fallback, signal);
   const data = await response.json().catch(() => ({})) as T & { error?: string };
   if (!response.ok) throw new Error(data.error ?? fallback);
   return data;
@@ -29,6 +30,7 @@ export function uploadWithProgress(
   init: RequestInit | undefined,
   onProgress: (percent: number) => void,
   fallback: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   if (typeof XMLHttpRequest === "undefined") {
     return fetch(url, init).then((response) => response);
@@ -37,6 +39,17 @@ export function uploadWithProgress(
     const xhr = new XMLHttpRequest();
     const method = init?.method ?? "GET";
     const headers = new Headers(init?.headers);
+    const abort = () => {
+      xhr.abort();
+      reject(new DOMException("Upload was aborted", "AbortError"));
+    };
+    if (signal) {
+      if (signal.aborted) {
+        abort();
+        return;
+      }
+      signal.addEventListener("abort", abort, { once: true });
+    }
     xhr.open(method, url, true);
     headers.forEach((value, key) => xhr.setRequestHeader(key, value));
     xhr.upload.onprogress = (event) => {
@@ -45,6 +58,7 @@ export function uploadWithProgress(
       onProgress(percent);
     };
     xhr.onload = () => {
+      if (signal) signal.removeEventListener("abort", abort);
       const response = new Response(xhr.responseText || "", {
         status: xhr.status,
         statusText: xhr.statusText,
@@ -54,8 +68,14 @@ export function uploadWithProgress(
       });
       resolve(response);
     };
-    xhr.onerror = () => reject(new Error(fallback));
-    xhr.ontimeout = () => reject(new Error(fallback));
+    xhr.onerror = () => {
+      if (signal) signal.removeEventListener("abort", abort);
+      reject(new Error(fallback));
+    };
+    xhr.ontimeout = () => {
+      if (signal) signal.removeEventListener("abort", abort);
+      reject(new Error(fallback));
+    };
     const body = init?.body;
     if (body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData || body instanceof URLSearchParams || typeof body === "string") {
       xhr.send(body as XMLHttpRequestBodyInit);

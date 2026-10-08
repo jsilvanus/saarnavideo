@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Initialize S3 client from environment
@@ -36,40 +36,91 @@ export async function generatePresignedUploadUrl(
     ContentType: contentType,
   });
   let url = await getSignedUrl(client, command, { expiresIn });
-  
+
   // Replace internal Docker S3 URL with public S3 URL for frontend access
   // The AWS SDK generates URLs in virtual-hosted-style: http://BUCKET.ENDPOINT:PORT/KEY
   // We need to convert these to use the public endpoint so the browser can access them.
-  // Example: http://saarnavideo-media.s3:9000/... → http://localhost:9000/...
   if (process.env.MEDIA_S3_ENDPOINT_PUBLIC && process.env.MEDIA_S3_ENDPOINT) {
     try {
       const internalUrl = new URL(process.env.MEDIA_S3_ENDPOINT);
       const publicUrl = new URL(process.env.MEDIA_S3_ENDPOINT_PUBLIC);
-      
-      // For virtual-hosted-style URLs, the hostname is "bucket.endpoint"
-      // We need to find and replace the endpoint part with the public endpoint
-      // Build the hostname pattern to search for: "endpoint:port"
+
       let endpointPattern = internalUrl.hostname;
-      if (internalUrl.port) {
-        endpointPattern += `:${internalUrl.port}`;
-      }
-      
-      // Build the replacement: "publicEndpoint:port"
+      if (internalUrl.port) endpointPattern += `:${internalUrl.port}`;
+
       let endpointReplacement = publicUrl.hostname;
-      if (publicUrl.port) {
-        endpointReplacement += `:${publicUrl.port}`;
-      }
-      
-      // Replace the endpoint pattern with the public endpoint
-      // This handles virtual-hosted URLs like: bucket.endpoint:port → bucket.publicEndpoint:port
+      if (publicUrl.port) endpointReplacement += `:${publicUrl.port}`;
+
       url = url.replace(endpointPattern, endpointReplacement);
     } catch (err) {
-      // If URL parsing fails, log and continue with original URL
       console.error("Failed to replace S3 endpoint:", err);
     }
   }
-  
+
   return url;
+}
+
+export async function createMultipartUploadSession(
+  bucket: string,
+  key: string,
+  contentType: string,
+  expiresIn: number = 3600,
+) {
+  const client = getS3Client();
+  const multipart = await client.send(new CreateMultipartUploadCommand({
+    Bucket: bucket,
+    Key: key,
+    ContentType: contentType,
+  }));
+
+  const uploadId = multipart.UploadId;
+  if (!uploadId) throw new Error("S3 multipart upload did not return an UploadId");
+
+  return {
+    uploadId,
+    createUrl: await getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }), { expiresIn }),
+  };
+}
+
+export async function generateMultipartPartUrl(
+  bucket: string,
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  expiresIn: number = 3600,
+): Promise<string> {
+  const client = getS3Client();
+  const command = new UploadPartCommand({
+    Bucket: bucket,
+    Key: key,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+  });
+  return getSignedUrl(client, command, { expiresIn });
+}
+
+export async function completeMultipartUpload(
+  bucket: string,
+  key: string,
+  uploadId: string,
+  parts: Array<{ ETag: string; PartNumber: number }>,
+) {
+  const client = getS3Client();
+  await client.send(new CompleteMultipartUploadCommand({
+    Bucket: bucket,
+    Key: key,
+    UploadId: uploadId,
+    MultipartUpload: { Parts: parts },
+  }));
+}
+
+export async function abortMultipartUpload(bucket: string, key: string, uploadId: string) {
+  const client = getS3Client();
+  await client.send(new AbortMultipartUploadCommand({
+    Bucket: bucket,
+    Key: key,
+    UploadId: uploadId,
+  }));
 }
 
 /**
