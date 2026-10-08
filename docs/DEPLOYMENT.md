@@ -31,7 +31,7 @@ YOUTUBE_CLIENT_SECRET=your-client-secret
 # One shared secret in front of the whole app. Unset = no gate (development).
 ACCESS_SECRET=a-long-random-string
 ```
-With `ACCESS_SECRET` set, every page and `/api/*` route needs the secret: browsers sign in once on `/login` (30-day `HttpOnly` cookie derived from the secret, so changing the secret signs everybody out); scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Only `/login`, `/api/auth/login` and `/api/auth/logout` are open. It is one shared password, not per-user accounts: use HTTPS (the cookie is marked `Secure` behind `x-forwarded-proto: https`) and generate it with `openssl rand -base64 32`. The worker does not call the app's HTTP API and needs no secret.
+With `ACCESS_SECRET` set, every page and `/api/*` route needs the secret: browsers sign in once on `/login` (30-day `HttpOnly` cookie derived from the secret, so changing the secret signs everybody out); scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Only `/login`, `/api/auth/login` and `/api/auth/logout` are open. It is one shared password, not per-user accounts: use HTTPS (the cookie is marked `Secure` behind `x-forwarded-proto: https`) and generate it with `openssl rand -base64 32`. The worker does not call the app's HTTP API and needs no secret. In production, source-upload routes return 503 until `ACCESS_SECRET` is configured because the app has no other built-in authentication.
 
 ### Media and Jobs
 ```bash
@@ -50,6 +50,7 @@ REQUEST_TIMEOUT_SECONDS=3600               # 1 hour
 
 # File upload size limit (API)
 MAX_UPLOAD_BYTES=53687091200               # 50 GB
+UPLOAD_STALE_AFTER_MS=86400000             # 24 h, then pending direct uploads and partial S3 objects are removed
 
 # Worker poll interval (ms)
 WORKER_POLL_MS=3000
@@ -70,6 +71,8 @@ MEDIA_CACHE_MAX_BYTES=21474836480           # worker download cache, default 20 
 Startup fails with a clear message when `MEDIA_STORAGE=s3` is set without the bucket or credentials; there is no silent fallback to local disk. This bucket is separate from the render staging bucket below (`FFFLEET_S3_BUCKET`), although they may be the same bucket with different prefixes.
 
 How it works with S3: uploads are streamed into the bucket (`sources/`, `assets/library/`, `outputs/` under the prefix). The app proxies downloads and range requests from the bucket, so the bucket can stay private. The worker downloads what a job reads into `MEDIA_ROOT/cache` (least recently used files are removed above `MEDIA_CACHE_MAX_BYTES`), writes results to `MEDIA_ROOT/work/<job>` and uploads them when the job ends; the scratch directory is removed afterwards. Give workers disk for one source plus its output. A stored `storagePath` is either an absolute local path or `s3://bucket/key`, so a system can read old local files while writing new ones to S3.
+
+For direct browser uploads, configure an S3 lifecycle rule that **aborts incomplete multipart uploads** automatically. Example policy: abort incomplete multipart uploads under your media prefix after 1 day. SaarnaVideo also removes stale pending upload rows and uploaded objects on the server, but the bucket rule is still needed so orphaned multipart parts do not accumulate when the app never receives the abort request.
 
 **Moving an existing install.** Stop the app and workers (or accept that files uploaded during the move are picked up by a second run), set the S3 variables, then:
 ```bash
@@ -180,6 +183,7 @@ Run several workers by scaling the `worker` service (`docker compose up -d --sca
 
 ### Security
 - [ ] `ACCESS_SECRET` set (the app has no other login) and served over HTTPS
+- [ ] S3 lifecycle rule aborts incomplete multipart uploads (recommended: 1 day)
 - [ ] Database password strong and rotated
 - [ ] OAuth secret stored securely (not in code)
 - [ ] File uploads validated (size, MIME type)

@@ -137,6 +137,8 @@ Response: 201 Created
 }
 ```
 
+For direct-to-S3 uploads, use `POST /projects/{projectId}/source/presigned-url`, upload the file (or multipart parts) to the returned URL(s), then `POST /projects/{projectId}/source/{sourceId}/finalize`. Reusing the same `sourceId` resumes a pending multipart upload after a refresh.
+
 **Limits:**
 - Max file size: 50 GB (configurable via `MAX_UPLOAD_BYTES`)
 - Supported formats: MP4, MOV, MKV, WebM

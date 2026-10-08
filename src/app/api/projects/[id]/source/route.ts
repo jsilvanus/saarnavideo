@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sourceUploadFile, parseDurationMs, saveSourceFile } from "@/app/api/_lib/files";
 import { jsonError } from "@/app/api/_lib/http";
+import { uploadAuthRequired } from "@/app/api/_lib/upload-auth";
 import { extractYouTubeId } from "@/app/api/_lib/youtube";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -15,6 +16,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     try {
       const body = await request.json() as { youtubeUrl?: string; localFileName?: string };
       if (body.localFileName?.trim()) {
+        if (uploadAuthRequired()) return jsonError("Uploads require ACCESS_SECRET in production", 503);
         const originalName = path.basename(body.localFileName.trim());
         const source = await prisma.source.create({ data: { type: "UPLOAD", status: "PENDING", originalName, projects: { connect: { id } } } });
         return NextResponse.json({ id: source.id, type: source.type, status: source.status, originalName }, { status: 201 });
@@ -30,6 +32,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
   }
 
+  if (uploadAuthRequired()) return jsonError("Uploads require ACCESS_SECRET in production", 503);
   const form = await request.formData();
   const file = sourceUploadFile(form.get("file"));
   if (file instanceof Response) return file;

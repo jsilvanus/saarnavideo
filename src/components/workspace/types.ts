@@ -5,6 +5,7 @@ import { type Publication } from "@/components/PublishPanel";
 import type { Section as SemanticSection } from "@/domain/sections";
 import type { Graphic } from "@/domain/graphics";
 import type { MessageKey } from "@/i18n/translate";
+import type { SourceUploadSession } from "@/domain/source-upload";
 
 export type Source = {
   id: string;
@@ -17,6 +18,7 @@ export type Source = {
   mimeType?: string | null;
   durationMs?: number | null;
   referenceDurationMs?: number | null;
+  uploadSession?: SourceUploadSession | null;
 };
 export type Asset = {
   id: string;

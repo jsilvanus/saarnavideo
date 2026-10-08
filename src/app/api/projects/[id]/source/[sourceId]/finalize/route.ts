@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getMediaStore, s3Ref } from "@/lib/media-store";
 import { jsonError } from "@/app/api/_lib/http";
+import { uploadAuthRequired } from "@/app/api/_lib/upload-auth";
+import { parseSourceUploadSession } from "@/domain/source-upload";
 
 /**
  * POST /api/projects/[id]/source/[sourceId]/finalize
@@ -15,6 +19,7 @@ export async function POST(
   context: { params: Promise<{ id: string; sourceId: string }> }
 ) {
   const { id: projectId, sourceId } = await context.params;
+  if (uploadAuthRequired()) return jsonError("Direct uploads require ACCESS_SECRET in production", 503);
 
   // Find the source
   const source = await prisma.source.findUnique({
@@ -38,11 +43,30 @@ export async function POST(
     // No body is OK
   }
 
-  // Update source status to AVAILABLE
+  const uploadSession = parseSourceUploadSession(source.uploadSession);
+  if (!uploadSession) return jsonError("Source upload session not found", 409);
+
+  const bucket = process.env.MEDIA_S3_BUCKET;
+  if (!bucket) return jsonError("S3 not configured", 500);
+
+  const storagePath = s3Ref(bucket, uploadSession.s3Key);
+  const store = await getMediaStore();
+  const info = await store.stat(storagePath).catch(() => null);
+  if (!info) return jsonError("Uploaded file not found", 409);
+  if (source.sizeBytes && info.size !== Number(source.sizeBytes)) {
+    await store.remove(storagePath).catch(() => undefined);
+    await prisma.source.update({ where: { id: sourceId }, data: { uploadSession: Prisma.DbNull } }).catch(() => undefined);
+    return jsonError("Uploaded file size does not match the source metadata", 409);
+  }
+
   const updated = await prisma.source.update({
     where: { id: sourceId },
     data: {
       status: "AVAILABLE",
+      storagePath,
+      sizeBytes: BigInt(info.size),
+      mimeType: source.mimeType ?? uploadSession.contentType,
+      uploadSession: Prisma.DbNull,
       ...(durationMs !== undefined ? { durationMs, referenceDurationMs: durationMs } : {}),
     },
   });

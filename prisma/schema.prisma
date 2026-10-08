@@ -106,6 +106,7 @@ model Source {
   sizeBytes BigInt?
   durationMs Int?
   referenceDurationMs Int?
+  uploadSession Json?
   createdAt DateTime @default(now())
   expiresAt DateTime? // legacy: unused, media is persistent
   projects Project[]

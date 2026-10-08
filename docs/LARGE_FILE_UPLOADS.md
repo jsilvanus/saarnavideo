@@ -4,6 +4,10 @@
 
 Saarnavideo now supports **unlimited file size uploads** through presigned S3 URLs. Instead of uploading files through the Node.js server (which has memory and body size limits), files are uploaded directly to S3.
 
+Large uploads are now **refresh-safe** and **pause/resume-safe**: the server stores the active upload session on the pending `Source` row, including the multipart upload id and the uploaded parts. After a browser refresh, the UI can resume the same source instead of creating a duplicate pending upload.
+
+In production, these routes require the app's built-in shared-secret gate (`ACCESS_SECRET`), because SaarnaVideo has no other built-in authentication.
+
 ## API Endpoints
 
 ### 1. Request Presigned URL
@@ -15,9 +19,12 @@ Request body:
 {
   "fileName": "my-video.mp4",
   "contentType": "video/mp4",
-  "sizeBytes": 1073741824
+  "sizeBytes": 1073741824,
+  "sourceId": "abc123def456"
 }
 ```
+
+`sourceId` is optional and is used only when resuming an existing pending source.
 
 Response:
 ```json
@@ -25,13 +32,18 @@ Response:
   "uploadUrl": "https://s3.example.com/...",
   "sourceId": "abc123def456",
   "s3Key": "media/projects/.../abc123def456/my-video.mp4",
-  "projectId": "cmux2m8xu0000nu0k8kqd4eky"
+  "projectId": "cmux2m8xu0000nu0k8kqd4eky",
+  "multipartEnabled": true,
+  "multipart": { "uploadId": "aws-upload-id", "completed": false },
+  "chunkSizeBytes": 5242880,
+  "completedBytes": 0,
+  "completedParts": []
 }
 ```
 
 ### 2. Upload File to S3
 
-Use the `uploadUrl` to upload the file directly to S3:
+Use the `uploadUrl` to upload the file directly to S3. Small files use one PUT; large files use the stored multipart session and request one presigned part URL per chunk:
 
 ```javascript
 const response = await presignedUrlResponse.json();
@@ -46,7 +58,7 @@ await fetch(uploadUrl, {
 });
 ```
 
-The presigned URL is valid for **1 hour**. If the upload takes longer, request a new URL.
+The presigned URL is valid for **1 hour**. If the upload takes longer, or the page refreshes, call the same endpoint again with the existing `sourceId` to resume the stored upload session.
 
 ### 3. Finalize the Source
 
@@ -133,7 +145,8 @@ async function uploadLargeFile(projectId: string, file: File) {
 ✅ **Unlimited file size** - No server body size limits  
 ✅ **Direct S3 upload** - Bypass Node.js server  
 ✅ **Low server memory** - No buffering required  
-✅ **Resumable** - Can use S3 multipart API for large files  
+✅ **Resumable** - Uses S3 multipart API for large files  
+✅ **Refresh-safe** - Resume the same pending source after reload without creating duplicates  
 ✅ **Fast** - Optimal network path directly to S3  
 
 ## Error Handling
@@ -142,6 +155,7 @@ async function uploadLargeFile(projectId: string, file: File) {
 |--------|---------|
 | 404 | Project not found |
 | 413 | File exceeds MAX_UPLOAD_BYTES limit |
+| 503 | `ACCESS_SECRET` is not configured in production |
 | 500 | S3 configuration error |
 
 Check the response body for error details.
@@ -151,7 +165,10 @@ Check the response body for error details.
 The following environment variables control file upload behavior:
 
 - `MAX_UPLOAD_BYTES` - Max file size (default: 50GB)
+- `UPLOAD_STALE_AFTER_MS` - Removes stale pending direct-upload sessions and their uploaded objects after this age (default: 24h)
 - `MEDIA_S3_BUCKET` - S3 bucket for uploads
 - `MEDIA_S3_PREFIX` - Key prefix in bucket (default: `media`)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` - S3 credentials
 - `MEDIA_S3_ENDPOINT` - S3-compatible endpoint (optional)
+
+Also configure an S3 lifecycle rule to abort incomplete multipart uploads automatically (recommended: after 1 day), so partially uploaded parts are removed even if the app never receives the abort request.
