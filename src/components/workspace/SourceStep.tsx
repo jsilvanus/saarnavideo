@@ -7,6 +7,7 @@ import OutputSettings, { type OutputTemplate } from "@/components/OutputSettings
 import VariablesEditor from "@/components/VariablesEditor";
 import FetchVariables from "@/components/FetchVariables";
 import { SaveAsTemplate } from "@/components/TemplatePicker";
+import { UploadProgress } from "@/components/UploadProgress";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { ProjectTitle } from "./ProjectTitle";
@@ -20,6 +21,10 @@ export default function SourceStep() {
     setUploadMode,
     pendingFiles,
     setPendingFiles,
+    uploadProgress,
+    uploadSession,
+    pauseUpload,
+    resumeUpload,
     youtubeUrl,
     setYoutubeUrl,
     setMessage,
@@ -65,6 +70,24 @@ export default function SourceStep() {
               </button>
             </label>
           </div>
+          {uploadProgress !== null && (
+            <div style={{ marginTop: 12 }}>
+              <UploadProgress progress={uploadProgress} label={t("common.uploading")} />
+              {uploadSession && (
+                <div className="button-row" style={{ marginTop: 8 }}>
+                  {uploadSession.paused ? (
+                    <button onClick={() => void resumeUpload()} disabled={busy}>
+                      {t("common.resume")}
+                    </button>
+                  ) : (
+                    <button onClick={() => void pauseUpload()} disabled={busy}>
+                      {t("common.pause")}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div className="cards">
             {selected.sources.map((s) => (
               <article className="card" key={s.id}>

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/i18n/I18nProvider";
-import { errorMessage, requestJson } from "@/components/api";
+import { errorMessage, requestJson, requestJsonWithProgress } from "@/components/api";
+import { UploadProgress } from "@/components/UploadProgress";
 import { formatTime } from "@/components/format";
 import AssetPicker from "@/components/AssetPicker";
 import { sanitizeAssetKey } from "@/integrations/image-assets";
@@ -40,6 +41,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
   const [file, setFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const recorder = useRef<MediaRecorder | null>(null);
@@ -78,17 +80,18 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
   function discard() { setBlob(null); setPreviewUrl(null); setState("idle"); setSeconds(0); }
 
   async function upload(source: Blob | File, key: string, uploadName: string) {
-    setBusy(true); setError(""); setMessage("");
+    setBusy(true); setUploadProgress(0); setError(""); setMessage("");
     try {
       const form = new FormData();
       form.set("file", source, uploadName);
       form.set("assetKey", sanitizeAssetKey(key.trim()) || defaultVoiceoverName());
       form.set("type", "AUDIO");
-      const asset = await requestJson<AudioAsset>(`/api/projects/${projectId}/assets`, { method: "POST", body: form }, t("vo.uploadFailed"));
+      const asset = await requestJsonWithProgress<AudioAsset>(`/api/projects/${projectId}/assets`, { method: "POST", body: form }, t("vo.uploadFailed"), (value) => setUploadProgress(value));
+      setUploadProgress(null);
       setMessage(t("vo.saved", { name: asset.assetKey }));
       await onChanged();
       return true;
-    } catch (e) { setError(errorMessage(e, t("vo.uploadFailed"))); return false; } finally { setBusy(false); }
+    } catch (e) { setUploadProgress(null); setError(errorMessage(e, t("vo.uploadFailed"))); return false; } finally { setBusy(false); }
   }
   async function saveRecording() {
     if (!blob) return;
@@ -116,6 +119,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
         {state === "recorded" && <><button data-testid="record-save" className="primary" disabled={busy} onClick={() => void saveRecording()}>{t("vo.saveToProject")}</button><button data-testid="record-again" disabled={busy} onClick={() => { discard(); void start(); }}>{t("vo.reRecord")}</button><button disabled={busy} onClick={discard}>{t("vo.discard")}</button></>}
       </div>
       {state === "recorded" && previewUrl && <audio data-testid="record-preview" controls src={previewUrl} style={{ width: "100%" }} />}
+      {uploadProgress !== null && <UploadProgress progress={uploadProgress} label={t("common.uploading")} />}
       <small className="muted">{t("vo.micNote")}</small>
     </div>
 
@@ -126,6 +130,7 @@ export default function VoiceoverPanel({ projectId, assets, definition, onSaveDe
         <label>{t("vo.name")}<input value={fileName} onChange={e => setFileName(e.target.value)} placeholder={t("vo.uploadPlaceholder")} /></label>
       </div>
       <div><button data-testid="audio-upload" disabled={busy || !file} onClick={() => void saveFile()}>{t("vo.upload")}</button></div>
+      {uploadProgress !== null && <UploadProgress progress={uploadProgress} label={t("common.uploading")} />}
     </div>
 
     {message && <p className="success">{message}</p>}{error && <p className="error">{error}</p>}
