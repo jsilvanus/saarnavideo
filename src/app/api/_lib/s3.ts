@@ -3,16 +3,41 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Initialize S3 client from environment
 export function getS3Client() {
-  if (!process.env.MEDIA_S3_BUCKET) {
+  const bucket = process.env.MEDIA_S3_BUCKET;
+  const endpoint = process.env.MEDIA_S3_ENDPOINT;
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+  if (!bucket) {
     throw new Error("MEDIA_S3_BUCKET not configured");
   }
+  if (!endpoint) {
+    throw new Error("MEDIA_S3_ENDPOINT not configured");
+  }
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not configured");
+  }
+
+  // Parse the endpoint URL to ensure it's valid
+  let endpointUrl: URL;
+  try {
+    endpointUrl = new URL(endpoint);
+  } catch (err) {
+    throw new Error(`Invalid MEDIA_S3_ENDPOINT URL: ${endpoint}`);
+  }
+
+  console.log(`[S3Client] Initializing with endpoint=${endpointUrl.toString()}, bucket=${bucket}, forcePathStyle=true`);
+
   return new S3Client({
-    region: "us-east-1", // Auto-configured for S3-compatible endpoints
-    endpoint: process.env.MEDIA_S3_ENDPOINT,
+    region: "us-east-1",
+    endpoint: endpointUrl.toString(),
     credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
+      accessKeyId,
+      secretAccessKey,
     },
+    // Force path-style URLs for S3-compatible services (required for non-AWS S3)
+    // This tells the SDK to use /bucket/key instead of bucket.s3.endpoint/key
+    forcePathStyle: true,
   });
 }
 
@@ -38,8 +63,7 @@ export async function generatePresignedUploadUrl(
   let url = await getSignedUrl(client, command, { expiresIn });
 
   // Replace internal Docker S3 URL with public S3 URL for frontend access
-  // The AWS SDK generates URLs in virtual-hosted-style: http://BUCKET.ENDPOINT:PORT/KEY
-  // We need to convert these to use the public endpoint so the browser can access them.
+  // With forcePathStyle: true, the URL is path-style: http://ENDPOINT/BUCKET/KEY
   if (process.env.MEDIA_S3_ENDPOINT_PUBLIC && process.env.MEDIA_S3_ENDPOINT) {
     try {
       const internalUrl = new URL(process.env.MEDIA_S3_ENDPOINT);
