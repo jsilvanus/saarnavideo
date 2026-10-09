@@ -7,15 +7,26 @@ export type S3Settings = { endpoint?: string; region?: string; forcePathStyle?: 
 export async function createAwsObjectClient(settings: S3Settings = {}): Promise<ObjectClient> {
   const { S3Client, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } = await import("@aws-sdk/client-s3");
   const { Upload } = await import("@aws-sdk/lib-storage");
-  const client = new S3Client({
+  
+  const forcePathStyle = settings.forcePathStyle ?? Boolean(settings.endpoint);
+  const clientConfig = {
     region: settings.region ?? "us-east-1",
     ...(settings.endpoint ? { endpoint: settings.endpoint } : {}),
-    forcePathStyle: settings.forcePathStyle ?? Boolean(settings.endpoint),
+    forcePathStyle,
     ...(settings.credentials ? { credentials: settings.credentials } : {}),
     // S3-compatible stores (Hetzner, MinIO, ...) often reject the SDK's default trailing-checksum uploads.
-    requestChecksumCalculation: "WHEN_REQUIRED",
-    responseChecksumValidation: "WHEN_REQUIRED",
+    requestChecksumCalculation: "WHEN_REQUIRED" as const,
+    responseChecksumValidation: "WHEN_REQUIRED" as const,
+  };
+  
+  console.log("[AWS-Client] Creating S3Client with config:", {
+    endpoint: clientConfig.endpoint,
+    forcePathStyle,
+    region: clientConfig.region,
   });
+  
+  const client = new S3Client(clientConfig);
+  
   return {
     async head(bucket, key) {
       try {
