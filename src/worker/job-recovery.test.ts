@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
+import { claimJob } from "./index";
 import { heartbeat, recoverStaleJobs, type RecoveryDb } from "./job-recovery";
 
 const db = prisma as unknown as RecoveryDb;
@@ -44,5 +45,20 @@ describe("job recovery", () => {
     await heartbeat(db, "w1", NOW);
     expect((await reload(mine.id)).heartbeatAt).toEqual(NOW);
     expect((await reload(other.id)).heartbeatAt).toEqual(ago(60_000));
+  });
+
+  it("fails queued jobs when their dependency job is missing", async () => {
+    const dependency = await prisma.mediaJob.create({
+      data: { projectId, status: "COMPLETED", type: "DOWNLOAD", completedAt: new Date(), message: "done" },
+    });
+    const dependent = await prisma.mediaJob.create({
+      data: { projectId, status: "QUEUED", type: "TRANSCRIBE", dependsOnJobId: dependency.id, priority: 1, parameters: { language: "fi", rangeStartSeconds: 0, rangeEndSeconds: 1 } },
+    });
+
+    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF; DELETE FROM "MediaJob" WHERE id = '${dependency.id}'; PRAGMA foreign_keys = ON;`);
+    const claimed = await claimJob();
+    expect(claimed).toBeNull();
+    expect((await reload(dependent.id)).status).toBe("FAILED");
+    expect((await reload(dependent.id)).error).toBe("Dependency job not found");
   });
 });
