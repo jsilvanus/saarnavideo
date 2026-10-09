@@ -55,7 +55,7 @@ describe("job recovery", () => {
       data: { projectId, status: "QUEUED", type: "TRANSCRIBE", dependsOnJobId: dependency.id, priority: 1, parameters: { language: "fi", rangeStartSeconds: 0, rangeEndSeconds: 1 } },
     });
 
-    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF; DELETE FROM "MediaJob" WHERE id = '${dependency.id}'; PRAGMA foreign_keys = ON;`);
+    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF; UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}'; PRAGMA foreign_keys = ON;`);
     const claimed = await claimJob();
     expect(claimed).toBeNull();
     expect((await reload(dependent.id)).status).toBe("FAILED");
