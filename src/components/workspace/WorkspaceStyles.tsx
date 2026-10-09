@@ -15,22 +15,32 @@ export default function WorkspaceStyles() {
       .sidebar {
         width: 270px;
         flex: none;
-        background: #111827;
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
         color: white;
         padding: 20px 14px;
+        border-right: 2px solid #10b981;
       }
       .brand {
         font-size: 21px;
         font-weight: 750;
         padding: 4px 8px 18px;
+        color: #d1fae5;
       }
       .new {
         width: 100%;
         padding: 10px;
-        border: 0;
+        border: 2px solid #10b981;
         border-radius: 8px;
         font-weight: 650;
         margin-bottom: 14px;
+        background: #10b981;
+        color: white;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .new:hover {
+        background: #059669;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
       }
       .projects {
         display: grid;
@@ -40,9 +50,15 @@ export default function WorkspaceStyles() {
         position: relative;
         display: flex;
         border-radius: 8px;
+        transition: all 0.2s ease;
+      }
+      .project:hover {
+        background: rgba(16, 185, 129, 0.15);
       }
       .project.selected {
-        background: #273244;
+        background: rgba(16, 185, 129, 0.25);
+        border-left: 3px solid #10b981;
+        padding-left: 0;
       }
       .project-main {
         flex: 1;
@@ -51,6 +67,9 @@ export default function WorkspaceStyles() {
         color: #e5e7eb;
         border: 0;
         padding: 10px;
+      }
+      .project.selected .project-main {
+        color: #d1fae5;
       }
       .more {
         background: none;
@@ -70,6 +89,7 @@ export default function WorkspaceStyles() {
         padding: 5px;
         z-index: 3;
         min-width: 150px;
+        border: 2px solid #10b981;
       }
       .menu button {
         display: block;
@@ -79,10 +99,19 @@ export default function WorkspaceStyles() {
         border: 0;
         padding: 9px;
         border-radius: 5px;
+        transition: all 0.2s ease;
+      }
+      .menu button:hover {
+        background: #d1fae5;
+        color: #059669;
       }
       .danger,
       .dangerButton {
-        color: #b91c1c !important;
+        color: #ef4444 !important;
+      }
+      .menu button.danger:hover {
+        background: #fee2e2;
+        color: #ef4444;
       }
       .workspace {
         flex: 1;
@@ -91,7 +120,7 @@ export default function WorkspaceStyles() {
       .workspace header {
         min-height: 92px;
         background: white;
-        border-bottom: 1px solid #e5e7eb;
+        border-bottom: 2px solid #10b981;
         padding: 20px 30px;
         padding-right: 340px;
         display: flex;
@@ -108,21 +137,28 @@ export default function WorkspaceStyles() {
       .header-actions button {
         min-height: 40px;
         padding: 8px 14px;
-        border: 1px solid #d8dee8;
+        border: 2px solid #10b981;
         border-radius: 8px;
         background: white;
-        color: #18202a;
+        color: #10b981;
         font-weight: 650;
+        transition: all 0.2s ease;
+        cursor: pointer;
+      }
+      .header-actions button:hover {
+        background: #d1fae5;
+        color: #059669;
       }
       .workspace h1 {
         margin: 0 0 4px;
         font-size: 24px;
+        color: #0f172a;
       }
       nav {
         display: flex;
         overflow: auto;
         background: white;
-        border-bottom: 1px solid #e5e7eb;
+        border-bottom: 2px solid #e5e7eb;
         padding: 0 20px;
       }
       nav button {
@@ -130,13 +166,17 @@ export default function WorkspaceStyles() {
         border: 0;
         padding: 14px 11px;
         color: #64748b;
-        border-bottom: 2px solid transparent;
+        border-bottom: 3px solid transparent;
         white-space: nowrap;
+        transition: all 0.2s ease;
+      }
+      nav button:hover {
+        color: #10b981;
       }
       nav button.active {
-        color: #111827;
-        border-bottom-color: #111827;
-        font-weight: 650;
+        color: #10b981;
+        border-bottom-color: #10b981;
+        font-weight: 750;
       }
       .content {
         padding: 28px;
@@ -144,12 +184,18 @@ export default function WorkspaceStyles() {
       }
       .panel {
         background: white;
-        border: 1px solid #e5e7eb;
+        border: 2px solid #e5e7eb;
         border-radius: 12px;
         padding: 24px;
+        transition: all 0.2s ease;
+      }
+      .panel:hover {
+        border-color: #10b981;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
       }
       .panel h2 {
         margin: 0 0 5px;
+        color: #0f172a;
       }
       .form-grid {
         display: grid;
@@ -165,32 +211,53 @@ export default function WorkspaceStyles() {
         gap: 6px;
         font-weight: 600;
         font-size: 14px;
+        color: #0f172a;
       }
       input,
       select,
       textarea {
         width: 100%;
         padding: 10px;
-        border: 1px solid #d8dee8;
+        border: 2px solid #e5e7eb;
         border-radius: 7px;
         background: white;
+        transition: border-color 0.2s ease;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: none;
+        border-color: #10b981;
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
       }
       .form-grid button,
       .button-row button,
       .row button {
         padding: 10px 12px;
-        border: 0;
+        border: 2px solid #10b981;
         border-radius: 7px;
-        background: #e5e7eb;
-        color: #18202a;
+        background: white;
+        color: #10b981;
+        transition: all 0.2s ease;
+        cursor: pointer;
+      }
+      .form-grid button:hover,
+      .button-row button:hover,
+      .row button:hover {
+        background: #d1fae5;
+        color: #059669;
       }
       .primary {
-        background: #111827 !important;
+        background: #10b981 !important;
         color: white !important;
-        border: 0;
+        border: 0 !important;
         border-radius: 8px;
         padding: 10px 15px;
         font-weight: 650;
+        transition: all 0.2s ease;
+      }
+      .primary:hover {
+        background: #059669 !important;
       }
       .cards {
         display: grid;
@@ -199,15 +266,21 @@ export default function WorkspaceStyles() {
         margin-top: 20px;
       }
       .card {
-        border: 1px solid #e5e7eb;
+        border: 2px solid #e5e7eb;
         border-radius: 9px;
         padding: 13px;
         display: grid;
         gap: 7px;
+        transition: all 0.2s ease;
+      }
+      .card:hover {
+        border-color: #10b981;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
       }
       .card b {
         font-size: 11px;
-        color: #4338ca;
+        color: #10b981;
+        font-weight: 700;
       }
       .pending-upload {
         display: grid;
@@ -222,9 +295,14 @@ export default function WorkspaceStyles() {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border: 1px solid #e5e7eb;
+        border: 2px solid #e5e7eb;
         padding: 12px;
         border-radius: 8px;
+        transition: all 0.2s ease;
+      }
+      .row:hover {
+        border-color: #10b981;
+        background: #f0fdf4;
       }
       .row span,
       .row small {
@@ -246,16 +324,22 @@ export default function WorkspaceStyles() {
         display: grid;
         text-align: left;
         gap: 4px;
-        border: 1px solid #d8dee8;
+        border: 2px solid #d8dee8;
         background: #f8fafc;
         padding: 10px 12px;
         border-radius: 8px;
         color: #18202a;
         font-weight: 700;
+        transition: all 0.2s ease;
+      }
+      .graphic-list button:hover {
+        border-color: #10b981;
+        background: #d1fae5;
       }
       .graphic-list button.graphic-selected {
-        border-color: #111827;
-        background: #eef2ff;
+        border-color: #10b981;
+        background: #d1fae5;
+        color: #059669;
       }
       .graphic-list small {
         color: #475569;
@@ -269,16 +353,17 @@ export default function WorkspaceStyles() {
         margin-top: 12px;
         margin-bottom: 8px;
         padding: 10px 12px;
-        border: 1px solid #d8dee8;
+        border: 2px solid #10b981;
         border-radius: 9px;
-        background: #f8fafc;
+        background: #d1fae5;
       }
       .graphic-editor-header > div:first-child {
         display: grid;
         gap: 2px;
       }
       .graphic-editor-header small {
-        color: #64748b;
+        color: #059669;
+        font-weight: 600;
       }
       .graphic-editor-actions {
         display: flex;
@@ -288,26 +373,33 @@ export default function WorkspaceStyles() {
         width: 34px;
         height: 34px;
         padding: 0 !important;
-        border: 1px solid #cbd5e1;
+        border: 2px solid #10b981;
         border-radius: 7px;
         background: white;
-        color: #334155;
+        color: #10b981;
         cursor: pointer;
+        transition: all 0.2s ease;
       }
       .icon-button:hover {
-        background: #e2e8f0;
+        background: #d1fae5;
+        color: #059669;
       }
       .danger-icon {
-        color: #b91c1c;
+        color: #ef4444;
+        border-color: #ef4444;
+      }
+      .danger-icon:hover {
+        background: #fee2e2;
+        color: #ef4444;
       }
       .composition-editor {
         display: grid;
         gap: 18px;
       }
       .resource-bin {
-        border: 1px solid #cbd5e1;
+        border: 2px solid #10b981;
         border-radius: 12px;
-        background: #f8fafc;
+        background: #d1fae5;
         padding: 14px;
       }
       .resource-bin-title {
@@ -318,8 +410,9 @@ export default function WorkspaceStyles() {
         margin-bottom: 12px;
       }
       .resource-bin-title span {
-        color: #64748b;
+        color: #059669;
         font-size: 13px;
+        font-weight: 600;
       }
       .resource-bin-grid {
         display: flex;
@@ -329,7 +422,7 @@ export default function WorkspaceStyles() {
       .resource-tile {
         width: 92px;
         height: 92px;
-        border: 1px solid #cbd5e1;
+        border: 2px solid #cbd5e1;
         border-radius: 10px;
         background: white;
         display: flex;
@@ -343,6 +436,11 @@ export default function WorkspaceStyles() {
         font-size: 12px;
         font-weight: 700;
         overflow: hidden;
+        transition: all 0.2s ease;
+      }
+      .resource-tile:hover {
+        border-color: #10b981;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
       }
       .resource-tile span:last-child {
         max-width: 100%;
@@ -351,8 +449,11 @@ export default function WorkspaceStyles() {
         white-space: nowrap;
       }
       .resource-tile.graphic {
-        border-color: #818cf8;
-        background: #eef2ff;
+        border-color: #a855f7;
+        background: #e9d5ff;
+      }
+      .resource-tile.graphic:hover {
+        border-color: #a855f7;
       }
       .resource-icon {
         font-size: 24px;
@@ -365,17 +466,17 @@ export default function WorkspaceStyles() {
       .composition-section {
         display: grid;
         gap: 7px;
-        border: 1px solid #cbd5e1;
+        border: 2px solid #10b981;
         border-radius: 12px;
         padding: 8px;
-        background: #fff;
-        box-shadow: 0 1px 2px #0000000a;
+        background: #d1fae5;
+        box-shadow: 0 1px 2px rgba(16, 185, 129, 0.15);
       }
       .composition-drop-zone {
         height: 28px;
-        border: 1px dashed transparent;
+        border: 2px dashed transparent;
         border-radius: 7px;
-        color: #94a3b8;
+        color: #10b981;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -385,19 +486,19 @@ export default function WorkspaceStyles() {
       }
       .composition-drop-zone.active {
         height: 44px;
-        border-color: #6366f1;
-        background: #eef2ff;
-        color: #4338ca;
+        border-color: #10b981;
+        background: #d1fae5;
+        color: #059669;
         font-weight: 700;
       }
       .section-header {
         display: flex;
         align-items: center;
         gap: 12px;
-        border: 1px solid #dfe4eb;
+        border: 2px solid #10b981;
         border-radius: 10px;
         padding: 7px;
-        background: white;
+        background: #f0fdf4;
       }
       .section-thumbnail {
         width: 58px !important;
@@ -419,17 +520,18 @@ export default function WorkspaceStyles() {
         gap: 3px;
       }
       .section-header small {
-        color: #64748b;
+        color: #059669;
+        font-weight: 600;
       }
       .section-body {
         display: grid;
         gap: 6px;
         padding-left: 14px;
-        border-left: 3px solid #cbd5e1;
+        border-left: 3px solid #10b981;
         margin-left: 5px;
       }
       .section-main-track {
-        border-left: 3px solid #94a3b8;
+        border-left: 3px solid #10b981;
         padding-left: 10px;
       }
       .composition-item-card {
@@ -437,11 +539,16 @@ export default function WorkspaceStyles() {
         grid-template-columns: 24px 1fr 30px;
         gap: 8px;
         align-items: center;
-        border: 1px solid #dfe4eb;
+        border: 2px solid #e5e7eb;
         border-radius: 8px;
         padding: 9px;
         background: #fff;
         cursor: grab;
+        transition: all 0.2s ease;
+      }
+      .composition-item-card:hover {
+        border-color: #10b981;
+        background: #f0fdf4;
       }
       .composition-item-card > div {
         display: grid;
@@ -455,34 +562,40 @@ export default function WorkspaceStyles() {
         border: 0;
         background: none;
         font-size: 18px;
-        color: #64748b;
+        color: #10b981;
+        transition: all 0.2s ease;
+        cursor: pointer;
+      }
+      .composition-item-card button:hover {
+        color: #059669;
       }
       .item-handle {
-        color: #94a3b8;
+        color: #10b981;
       }
       .overlay-track {
         min-height: 70px;
-        border: 1px dashed #cbd5e1;
+        border: 2px dashed #10b981;
         border-radius: 8px;
         padding: 8px;
-        background: #f8fafc;
+        background: #d1fae5;
         position: relative;
       }
       .overlay-track.drop-active {
-        border-color: #6366f1;
-        background: #eef2ff;
+        border-color: #10b981;
+        background: #a7f3d0;
+        border-style: solid;
       }
       .track-label {
         font-size: 10px;
         font-weight: 800;
-        color: #64748b;
+        color: #059669;
         letter-spacing: 0.08em;
         margin-bottom: 7px;
       }
       .overlay-track-line {
         position: relative;
         min-height: 34px;
-        background: linear-gradient(to right, #e2e8f0 1px, transparent 1px);
+        background: linear-gradient(to right, #86efac 1px, transparent 1px);
         background-size: 10% 100%;
         border-radius: 5px;
       }
@@ -491,7 +604,7 @@ export default function WorkspaceStyles() {
         top: 4px;
         height: 26px;
         border-radius: 5px;
-        background: #6366f1;
+        background: #10b981;
         color: white;
         display: flex;
         align-items: center;

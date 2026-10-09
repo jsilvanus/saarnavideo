@@ -1,7 +1,8 @@
 FROM node:22-bookworm-slim AS base
 WORKDIR /app
 # Prisma's engines need OpenSSL (not in the slim image) and detect it when `prisma generate` runs.
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+# curl is needed for healthchecks in docker-compose.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl curl && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps
 COPY package.json package-lock.json* ./
