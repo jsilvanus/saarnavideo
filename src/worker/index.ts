@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { prisma } from "@/lib/prisma";
 import { timelineDuration } from "@/domain/timeline";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
@@ -67,14 +68,34 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 async function logJobEvent(jobId: string, level: "DEBUG" | "INFO" | "WARN" | "ERROR", message: string, data?: Record<string, unknown>) { try { await prisma.jobLog.create({ data: { jobId, level, message, data: data ? JSON.stringify(data) : undefined } }); } catch (error) { console.error(`Failed to log job event: ${error}`); } }
 async function updateProgress(jobId: string, data: Record<string, unknown>, force = false) { const write = async () => { progressTimers.delete(jobId); try { await prisma.mediaJob.update({ where: { id: jobId }, data }); } catch (error) { console.error(`Failed to update job progress: ${error}`); } }; if (force) { const timer = progressTimers.get(jobId); if (timer) clearTimeout(timer); await write(); return; } if (progressTimers.has(jobId)) return; progressTimers.set(jobId, setTimeout(() => void write(), PROGRESS_WRITE_MS)); }
 
-async function claimJob() {
+export async function claimJob() {
   const candidates = await prisma.mediaJob.findMany({ where: { status: "QUEUED" }, orderBy: [{ priority: "desc" }, { createdAt: "asc" }], take: 10 });
   for (const candidate of candidates) {
-    if (candidate.dependsOnJobId) { const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } }); if (dependency && dependency.status !== "COMPLETED") { if (dependency.status === "FAILED" || dependency.status === "CANCELLED") await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", error: "Dependency did not complete" } }); continue; } }
+    if (!candidate.dependsOnJobId) {
+      const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
+      if (result.count === 1) return candidate;
+      continue;
+    }
+    const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } });
+    if (!dependency) {
+      await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency job not found", error: "Dependency job not found" } }).catch(() => undefined);
+      continue;
+    }
+    if (dependency.status !== "COMPLETED") {
+      if (dependency.status === "FAILED" || dependency.status === "CANCELLED") {
+        await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency did not complete", error: "Dependency did not complete" } }).catch(() => undefined);
+      }
+      continue;
+    }
     const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
     if (result.count === 1) return candidate;
   }
   return null;
+}
+
+const workerEntry = process.argv[1] ? pathToFileURL(process.argv[1]).href === import.meta.url : false;
+if (workerEntry) {
+  main().catch(error => { console.error("Fatal error:", error); process.exit(1); });
 }
 
 /** Stores a finished local file (uploading it first when media lives in S3) and records it as an Output row. */
@@ -538,4 +559,3 @@ async function main() {
     } catch (error) { console.error("Worker loop error:", error); await sleep(POLL_MS); }
   }
 }
-main().catch(error => { console.error("Fatal error:", error); process.exit(1); });
