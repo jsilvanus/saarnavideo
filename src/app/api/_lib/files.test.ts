@@ -53,7 +53,7 @@ describe.each(["local", "s3"] as const)("saveSourceFile with %s storage", (mode)
     const client = createMemoryObjectClient();
     setMediaStore(createMediaStore({ mode, root: path.join(dir, "root"), s3: { client: client.client, bucket: "b" } }));
     const ref = await saveSourceFile("p1", new File(["sermon bytes"], "My Sermon.mp4", { type: "video/mp4" }));
-    expect(ref).toMatch(mode === "s3" ? /^s3:\/\/b\/sources\/p1\/\d+-My_Sermon\.mp4$/ : /sources\/p1\/\d+-My_Sermon\.mp4$/);
+    expect(ref).toMatch(mode === "s3" ? /^s3:\/\/b\/sources\/p1\/\d+-My_Sermon\.mp4$/ : /sources[\\/]p1[\\/]\d+-My_Sermon\.mp4$/);
     expect((await readStoredFile(ref)).toString()).toBe("sermon bytes");
   });
 });

@@ -48,6 +48,7 @@ describe("job recovery", () => {
   });
 
   it("fails queued jobs when their dependency job is missing", async () => {
+    // Create a dependent job, but then manually delete its dependency to simulate a corrupted database state
     const dependency = await prisma.mediaJob.create({
       data: { projectId, status: "COMPLETED", type: "DOWNLOAD", completedAt: new Date(), message: "done" },
     });
@@ -55,10 +56,19 @@ describe("job recovery", () => {
       data: { projectId, status: "QUEUED", type: "TRANSCRIBE", dependsOnJobId: dependency.id, priority: 1, parameters: { language: "fi", rangeStartSeconds: 0, rangeEndSeconds: 1 } },
     });
 
-    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF; UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}'; PRAGMA foreign_keys = ON;`);
+    // Disable foreign key constraints, then set dependsOnJobId to a non-existent ID to simulate data corruption
+    await prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
+    try {
+      await prisma.$executeRawUnsafe(`UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}';`);
+    } finally {
+      await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+    }
+    
+    // After a second query, this job should fail because the dependency doesn't exist
     const claimed = await claimJob();
     expect(claimed).toBeNull();
-    expect((await reload(dependent.id)).status).toBe("FAILED");
-    expect((await reload(dependent.id)).error).toBe("Dependency job not found");
+    const failed = await reload(dependent.id);
+    expect(failed.status).toBe("FAILED");
+    expect(failed.error).toBe("Dependency job not found");
   });
 });

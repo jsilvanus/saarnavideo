@@ -30,11 +30,11 @@ const KEY_PATTERN = /(?:^|\/)((?:sources|assets\/library|outputs)\/.+)$/;
 /** Storage key for a file: the part of its path under sources/, assets/library/ or outputs/; outputs sitting loose in the media root go to outputs/<project>/. */
 export function keyForRef(ref: string, mediaRoot: string, projectId?: string): string {
   const parsed = parseRef(ref);
-  const location = parsed.kind === "s3" ? parsed.key : parsed.path;
+  const location = parsed.kind === "s3" ? parsed.key : parsed.path.replaceAll("\\", "/");
   const known = KEY_PATTERN.exec(location);
   if (known) return known[1];
   const base = path.basename(location);
-  if (parsed.kind === "local" && path.dirname(parsed.path) === path.resolve(mediaRoot) && projectId) return `outputs/${projectId}/${base}`;
+  if (parsed.kind === "local" && path.resolve(path.dirname(parsed.path)) === path.resolve(mediaRoot) && projectId) return `outputs/${projectId}/${base}`;
   return `imported/${createHash("sha1").update(location).digest("hex").slice(0, 12)}/${base}`;
 }
 
