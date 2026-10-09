@@ -7,6 +7,7 @@ x-media-s3: &media-s3
   MEDIA_S3_BUCKET: ${MEDIA_S3_BUCKET:-saarnavideo-media}
   MEDIA_S3_PREFIX: ${MEDIA_S3_PREFIX:-media}
   MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-http://minio:9000}
+  MEDIA_S3_ENDPOINT_PUBLIC: ${MEDIA_S3_ENDPOINT_PUBLIC:-http://localhost:9000}
   AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
 
