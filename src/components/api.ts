@@ -4,7 +4,11 @@
  * or non-JSON body is treated as `{}`.
  */
 export async function requestJson<T = Record<string, unknown>>(url: string, init: RequestInit | undefined, fallback: string): Promise<T & { error?: string }> {
-  const response = await fetch(url, init);
+  // A network failure (server down, connection refused) throws a TypeError such as "Failed to fetch";
+  // report the translated fallback instead, since that message is shown next to the control.
+  const response = await fetch(url, init).catch(() => {
+    throw new Error(fallback);
+  });
   const data = await response.json().catch(() => ({})) as T & { error?: string };
   if (!response.ok) throw new Error(data.error ?? fallback);
   return data;
@@ -59,12 +63,17 @@ export function uploadWithProgress(
     };
     xhr.onload = () => {
       if (signal) signal.removeEventListener("abort", abort);
+      // Copy every response header: callers read ETag from S3 part uploads.
+      const responseHeaders = new Headers();
+      for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) {
+        const separator = line.indexOf(":");
+        if (separator > 0) responseHeaders.append(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+      }
+      if (!responseHeaders.has("Content-Type")) responseHeaders.set("Content-Type", "application/json");
       const response = new Response(xhr.responseText || "", {
         status: xhr.status,
         statusText: xhr.statusText,
-        headers: {
-          "Content-Type": xhr.getResponseHeader("Content-Type") ?? "application/json",
-        },
+        headers: responseHeaders,
       });
       resolve(response);
     };

@@ -2,9 +2,9 @@ import { S3Client, PutObjectCommand, CreateMultipartUploadCommand, UploadPartCom
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Initialize S3 client from environment
-export function getS3Client() {
+export function getS3Client(endpointOverride?: string) {
   const bucket = process.env.MEDIA_S3_BUCKET;
-  const endpoint = process.env.MEDIA_S3_ENDPOINT;
+  const endpoint = endpointOverride ?? process.env.MEDIA_S3_ENDPOINT;
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
@@ -38,6 +38,10 @@ export function getS3Client() {
     // Force path-style URLs for S3-compatible services (required for non-AWS S3)
     // This tells the SDK to use /bucket/key instead of bucket.s3.endpoint/key
     forcePathStyle: true,
+    // Newer SDKs add a CRC32 checksum to presigned URLs, computed over an empty body. The browser's
+    // real bytes then mismatch and S3 returns 403. Only add checksums when a request requires them.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
 }
 
@@ -45,8 +49,9 @@ export function getS3Client() {
  * Generate a presigned PUT URL for direct S3 upload.
  * The client can upload directly to S3 without going through the Node.js server.
  * 
- * For the frontend/browser, we need to use a publicly-accessible S3 URL (e.g., localhost:9000),
- * not the internal Docker container URL.
+ * The URL is signed for the browser-reachable endpoint (MEDIA_S3_ENDPOINT_PUBLIC), not the internal
+ * Docker one. SigV4 covers the Host header, so rewriting the host after signing makes S3 reject the
+ * request with 403 and the browser sees a connection reset.
  */
 export async function generatePresignedUploadUrl(
   bucket: string,
@@ -54,34 +59,18 @@ export async function generatePresignedUploadUrl(
   contentType: string,
   expiresIn: number = 3600
 ): Promise<string> {
-  const client = getS3Client();
+  const client = getPublicS3Client();
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: key,
     ContentType: contentType,
   });
-  let url = await getSignedUrl(client, command, { expiresIn });
+  return getSignedUrl(client, command, { expiresIn });
+}
 
-  // Replace internal Docker S3 URL with public S3 URL for frontend access
-  // With forcePathStyle: true, the URL is path-style: http://ENDPOINT/BUCKET/KEY
-  if (process.env.MEDIA_S3_ENDPOINT_PUBLIC && process.env.MEDIA_S3_ENDPOINT) {
-    try {
-      const internalUrl = new URL(process.env.MEDIA_S3_ENDPOINT);
-      const publicUrl = new URL(process.env.MEDIA_S3_ENDPOINT_PUBLIC);
-
-      let endpointPattern = internalUrl.hostname;
-      if (internalUrl.port) endpointPattern += `:${internalUrl.port}`;
-
-      let endpointReplacement = publicUrl.hostname;
-      if (publicUrl.port) endpointReplacement += `:${publicUrl.port}`;
-
-      url = url.replace(endpointPattern, endpointReplacement);
-    } catch (err) {
-      console.error("Failed to replace S3 endpoint:", err);
-    }
-  }
-
-  return url;
+/** Client used only for presigning (no network calls), bound to the endpoint the browser uses. */
+function getPublicS3Client() {
+  return getS3Client(process.env.MEDIA_S3_ENDPOINT_PUBLIC || undefined);
 }
 
 export async function createMultipartUploadSession(
@@ -108,7 +97,7 @@ export async function generateMultipartPartUrl(
   partNumber: number,
   expiresIn: number = 3600,
 ): Promise<string> {
-  const client = getS3Client();
+  const client = getPublicS3Client();
   const command = new UploadPartCommand({
     Bucket: bucket,
     Key: key,

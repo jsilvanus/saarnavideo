@@ -11,6 +11,7 @@ import { UploadProgress } from "@/components/UploadProgress";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { ProjectTitle } from "./ProjectTitle";
+import { InlineError } from "./InlineError";
 
 export default function SourceStep() {
   const {
@@ -62,6 +63,7 @@ export default function SourceStep() {
               >
                 {uploadMode === "now" ? t("src.uploadSelected") : t("src.addPending")}
               </button>
+              <InlineError scope="upload" />
             </label>
             <label>
               {t("src.youtubeLink")}
@@ -69,6 +71,7 @@ export default function SourceStep() {
               <button onClick={() => void addYoutube()} disabled={busy || !youtubeUrl.trim()}>
                 {t("src.addYoutube")}
               </button>
+              <InlineError scope="youtube" />
             </label>
           </div>
           {uploadProgress !== null && (
@@ -124,6 +127,7 @@ export default function SourceStep() {
                     {t("common.remove")}
                   </button>
                 )}
+                <InlineError scope={`source:${s.id}`} />
               </article>
             ))}
             {!selected.sources.length && <p className="muted">{t("src.none")}</p>}

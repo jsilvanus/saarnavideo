@@ -138,13 +138,28 @@ export function useWorkspaceState() {
     [uploadProgress, setUploadProgress] = useState<number | null>(null),
     [uploadSession, setUploadSession] = useState<UploadSessionState | null>(null),
     [uploadAbort, setUploadAbort] = useState<(() => void) | null>(null);
+  // Errors shown next to the control that caused them (see InlineError), keyed by scope.
+  const [scopedErrors, setScopedErrors] = useState<Record<string, string>>({});
 
-  async function withBusy(fallback: string, fn: () => Promise<void>, setFlag: (busy: boolean) => void = setBusy) {
+  function setScopedError(scope: string, message: string) {
+    setScopedErrors((current) => ({ ...current, [scope]: message }));
+  }
+
+  // scope: when set, a failure is shown by <InlineError scope={scope} /> instead of the page-bottom banner.
+  async function withBusy(
+    fallback: string,
+    fn: () => Promise<void>,
+    setFlag: (busy: boolean) => void = setBusy,
+    scope?: string,
+  ) {
+    if (scope) setScopedError(scope, "");
     setFlag(true);
     try {
       await fn();
     } catch (e) {
-      setError(errorMessage(e, fallback));
+      const message = errorMessage(e, fallback);
+      if (scope) setScopedError(scope, message);
+      else setError(message);
     } finally {
       setFlag(false);
     }
@@ -455,7 +470,7 @@ export function useWorkspaceState() {
       const result = await runSourceUpload(selected.id, match, uploadSession.sourceId);
       if (!result) return;
       await openProject(selected.id);
-    });
+    }, setBusy, "upload");
   }
 
   async function addUploads() {
@@ -468,7 +483,7 @@ export function useWorkspaceState() {
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.sourcesUploaded"));
-    });
+    }, setBusy, "upload");
   }
   async function addDeferredUploads() {
     if (!selected || !uploadFiles.length) return;
@@ -484,15 +499,17 @@ export function useWorkspaceState() {
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.pendingAdded"));
-    });
+    }, setBusy, "upload");
   }
   async function uploadPendingSource(source: Source) {
     if (!selected) return false;
+    const scope = `source:${source.id}`;
     const file = pendingFiles[source.id];
     if (!file) {
-      setError(t("ws.chooseLocalFile", { name: source.originalName || source.id }));
+      setScopedError(scope, t("ws.chooseLocalFile", { name: source.originalName || source.id }));
       return false;
     }
+    setScopedError(scope, "");
 
     try {
       const result = await runSourceUpload(selected.id, file, source.id);
@@ -515,7 +532,7 @@ export function useWorkspaceState() {
       }
       return true;
     } catch (e) {
-      setError(errorMessage(e, t("ws.uploadFailed")));
+      setScopedError(scope, errorMessage(e, t("ws.uploadFailed")));
       setUploadSession(null);
       setUploadAbort(null);
       return false;
@@ -534,7 +551,7 @@ export function useWorkspaceState() {
       });
       await openProject(selected.id);
       setMessage(t("ws.deleted"));
-    });
+    }, setBusy, `source:${source.id}`);
   }
   async function addYoutube() {
     if (!selected || !youtubeUrl.trim()) return;
@@ -543,7 +560,7 @@ export function useWorkspaceState() {
       setYoutubeUrl("");
       await openProject(selected.id);
       setMessage(t("ws.youtubeAdded"));
-    });
+    }, setBusy, "youtube");
   }
   function currentDefinition(): Definition {
     return (
@@ -861,7 +878,7 @@ export function useWorkspaceState() {
         ),
       );
       await openProject(selected.id);
-    });
+    }, setBusy, "header");
   }
   async function previewRender() {
     if (!selected) return;
@@ -876,6 +893,7 @@ export function useWorkspaceState() {
         await openProject(selected.id);
       },
       setPreviewBusy,
+      "header",
     );
   }
   const sourceNames = useMemo(() => Object.fromEntries((selected?.sources ?? []).map((s) => [s.id, sourceLabel(s)])), [selected]);
@@ -958,6 +976,8 @@ export function useWorkspaceState() {
     setConfirmDeleteGraphicId,
     previewBusy,
     setPreviewBusy,
+    scopedErrors,
+    setScopedError,
     withBusy,
     refreshProjects,
     refreshPublications,
