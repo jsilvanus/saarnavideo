@@ -115,6 +115,8 @@ export function useWorkspaceState() {
     [title, setTitle] = useState(""),
     [templateValue, setTemplateValue] = useState("builtin:sermon"),
     [uploadFiles, setUploadFiles] = useState<File[]>([]),
+    [captionFile, setCaptionFile] = useState<File | null>(null),
+    [captionLanguage, setCaptionLanguage] = useState("fi"),
     [uploadMode, setUploadMode] = useState<"now" | "later">("now"),
     [pendingFiles, setPendingFiles] = useState<Record<string, File>>({}),
     [youtubeUrl, setYoutubeUrl] = useState("");
@@ -449,7 +451,7 @@ export function useWorkspaceState() {
     const finalized = await finalizeUploadedSource(projectId, session.sourceId, file);
     setUploadAbort(null);
     setUploadSession(null);
-    return finalized;
+    return { ...finalized, sourceId: session.sourceId };
   }
 
   async function pauseUpload() {
@@ -473,13 +475,25 @@ export function useWorkspaceState() {
     }, setBusy, "upload");
   }
 
+  /** Stores a VTT file as the transcript of an uploaded source (the same import as Lähde → Transcriptions). */
+  async function importUploadedCaptions(sourceId: string, file: File, language: string) {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("language", language);
+    await requestJson(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, t("src.captionFailed"));
+  }
+
   async function addUploads() {
     if (!selected || !uploadFiles.length) return;
+    // A caption file belongs to one video, so it is only accepted with a single upload.
     await withBusy(t("ws.uploadFailed"), async () => {
+      if (captionFile && uploadFiles.length !== 1) throw new Error(t("src.captionNeedsOneVideo"));
       for (const file of uploadFiles) {
         const result = await runSourceUpload(selected.id, file);
         if (!result) return;
+        if (captionFile) await importUploadedCaptions(result.sourceId, captionFile, captionLanguage);
       }
+      setCaptionFile(null);
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.sourcesUploaded"));
@@ -931,6 +945,10 @@ export function useWorkspaceState() {
     setTemplateValue,
     uploadFiles,
     setUploadFiles,
+    captionFile,
+    setCaptionFile,
+    captionLanguage,
+    setCaptionLanguage,
     uploadMode,
     setUploadMode,
     pendingFiles,

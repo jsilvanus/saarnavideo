@@ -18,6 +18,10 @@ export default function SourceStep() {
     selected,
     uploadFiles,
     setUploadFiles,
+    captionFile,
+    setCaptionFile,
+    captionLanguage,
+    setCaptionLanguage,
     uploadMode,
     setUploadMode,
     pendingFiles,
@@ -64,6 +68,17 @@ export default function SourceStep() {
                 {uploadMode === "now" ? t("src.uploadSelected") : t("src.addPending")}
               </button>
               <InlineError scope="upload" />
+            </label>
+            <label>
+              {t("src.captionsFile")}
+              <input type="file" accept=".vtt,text/vtt" onChange={(e) => setCaptionFile(e.target.files?.[0] ?? null)} />
+              <select value={captionLanguage} onChange={(e) => setCaptionLanguage(e.target.value)}>
+                <option value="fi">{t("tr.lang.fi")}</option>
+                <option value="en">{t("tr.lang.en")}</option>
+                <option value="sv">{t("tr.lang.sv")}</option>
+              </select>
+              <small className="muted">{t("src.captionsHint")}</small>
+              {captionFile && <small>{t("src.selectedFile", { name: captionFile.name })}</small>}
             </label>
             <label>
               {t("src.youtubeLink")}
