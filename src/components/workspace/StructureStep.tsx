@@ -7,6 +7,7 @@ import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
 import VoiceoverPanel from "@/components/VoiceoverPanel";
 import SectionManager from "@/components/SectionManager";
+import SequenceTimeline from "@/components/SequenceTimeline";
 import TimelineView from "@/components/TimelineView";
 import ReframeEditor from "@/components/ReframeEditor";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
@@ -60,6 +61,12 @@ export default function StructureStep() {
         title={t("str.sections.title")}
         text={t("str.sections.text")}
       >
+        <SequenceTimeline
+          sources={selected.sources}
+          sections={selected.definition?.sections ?? []}
+          pendingFiles={pendingFiles}
+          onSave={saveSections}
+        />
         <SectionManager
           scope="SOURCE"
           suggestedNames={selected.definition?.template?.sectionNames}

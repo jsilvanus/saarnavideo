@@ -8,8 +8,8 @@ import styles from "./CaptionEditorDialog.module.css";
 
 /*
  * Keyboard scheme for time-based editing. The caption editor uses it now; the
- * sequence timeline (planned: drag a sequence's start and end under the video)
- * must use the same keys, so one player behaves the same everywhere:
+ * sequence timeline (drag a sequence's start and end under the video) uses the same
+ * keys, so one player behaves the same everywhere:
  *   Ctrl+Left / Ctrl+Right   back / forward 10 s
  *   Shift+Left / Shift+Right back / forward 3 s (Shift wins over Ctrl)
  *   Ctrl+Down                set the end of the current item to the playhead
@@ -18,7 +18,9 @@ import styles from "./CaptionEditorDialog.module.css";
  *   Shift+Enter              new line inside the text
  *   Ctrl+Enter               new item right after the current one
  * Plain arrows keep their normal meaning, so typing and text selection still work.
- * Keep this table and captionKeyAction in step when the scheme changes.
+ * The sequence timeline (SequenceTimeline.tsx) uses the same keys: there Enter selects the
+ * next sequence and Ctrl+Enter does nothing. Keep this table and captionKeyAction in step
+ * when the scheme changes.
  */
 export type CaptionKeyAction =
   | { type: "seek"; seconds: number }
