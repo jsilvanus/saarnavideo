@@ -149,10 +149,6 @@ button.secondary:hover {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
 }
 
-body:has(#sidebar-toggle:checked) .sidebar { width: 64px !important; padding: 20px 8px !important; }
-body:has(#sidebar-toggle:checked) .sidebar .brand,
-body:has(#sidebar-toggle:checked) .sidebar .new,
-body:has(#sidebar-toggle:checked) .sidebar .projects { display: none !important; }
 body:has(#sidebar-toggle:checked) .sidebar-toggle { left: 50px; }
 
 /* Composition: compact thumbnails on the right, with the section hierarchy retained. */

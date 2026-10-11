@@ -56,12 +56,21 @@ describe("job recovery", () => {
       data: { projectId, status: "QUEUED", type: "TRANSCRIBE", dependsOnJobId: dependency.id, priority: 1, parameters: { language: "fi", rangeStartSeconds: 0, rangeEndSeconds: 1 } },
     });
 
-    // Disable foreign key constraints, then set dependsOnJobId to a non-existent ID to simulate data corruption
-    await prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
-    try {
-      await prisma.$executeRawUnsafe(`UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}';`);
-    } finally {
-      await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+    // Set dependsOnJobId to a non-existent ID to simulate data corruption, with the foreign key check off.
+    // SQLite: PRAGMA. PostgreSQL (CI): SET LOCAL inside one transaction, so the pooled connection is the same for both statements.
+    const corrupt = `UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}';`;
+    if ((process.env.DATABASE_URL ?? "").startsWith("postgres")) {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica;");
+        await tx.$executeRawUnsafe(corrupt);
+      });
+    } else {
+      await prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
+      try {
+        await prisma.$executeRawUnsafe(corrupt);
+      } finally {
+        await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+      }
     }
     
     // After a second query, this job should fail because the dependency doesn't exist

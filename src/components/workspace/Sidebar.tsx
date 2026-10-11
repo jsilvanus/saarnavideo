@@ -2,30 +2,31 @@
 
 import { useWorkspace } from "./useWorkspace";
 import { useT } from "@/i18n/I18nProvider";
+import styles from "./Sidebar.module.css";
 
 export default function Sidebar() {
   const { projects, selectedId, setCreating, menuId, setMenuId, setConfirmDelete, openProject, duplicateProject } = useWorkspace();
   const t = useT();
   return (
-    <aside className="sidebar">
-      <div className="brand">SaarnaVideo</div>
-      <button className="new" onClick={() => setCreating(true)}>
+    <aside className={styles.sidebar}>
+      <div className={styles.brand}>SaarnaVideo</div>
+      <button className={styles.new} onClick={() => setCreating(true)}>
         {t("sidebar.new")}
       </button>
-      <div className="projects">
+      <div className={styles.projects}>
         {projects.map((p) => (
-          <div key={p.id} className={`project ${selectedId === p.id ? "selected" : ""}`}>
-            <button className="project-main" onClick={() => void openProject(p.id)}>
+          <div key={p.id} className={`${styles.project} ${selectedId === p.id ? styles.selected : ""}`}>
+            <button className={styles.projectMain} onClick={() => void openProject(p.id)}>
               <strong>{p.title}</strong>
             </button>
-            <button className="more" aria-label={t("sidebar.actions", { title: p.title })} onClick={() => setMenuId(menuId === p.id ? null : p.id)}>
+            <button className={styles.more} aria-label={t("sidebar.actions", { title: p.title })} onClick={() => setMenuId(menuId === p.id ? null : p.id)}>
               ⋯
             </button>
             {menuId === p.id && (
-              <div className="menu">
+              <div className={styles.menu}>
                 <button onClick={() => void duplicateProject(p)}>{t("sidebar.duplicate")}</button>
                 <button
-                  className="danger"
+                  className={styles.danger}
                   onClick={() => {
                     setConfirmDelete(p);
                     setMenuId(null);
