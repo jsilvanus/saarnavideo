@@ -5,6 +5,10 @@ import { useT } from "@/i18n/I18nProvider";
 import { errorMessage, jsonInit, requestJson } from "./api";
 import { formatTime, sourceLabel } from "./format";
 import { SourcePlayer, useSourcePlayer } from "./SourcePlayer";
+import Dialog from "./Dialog";
+import CaptionEditorDialog, { isWithinSegment } from "./CaptionEditorDialog";
+
+export { isWithinSegment };
 
 type Source = { id: string; type: "UPLOAD" | "YOUTUBE"; status?: "PENDING" | "AVAILABLE"; originalName?: string | null; youtubeUrl?: string | null; youtubeVideoId?: string | null; durationMs?: number | null; referenceDurationMs?: number | null };
 type Job = { id: string; type?: string | null; sourceId?: string | null; status: string; progress: number; phase?: string | null; etaSeconds?: number | null; currentMs?: string | number | null; totalMs?: string | number | null; error?: string | null };
@@ -52,9 +56,8 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
   const [runErrors, setRunErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [newStart, setNewStart] = useState(0);
-  const [newEnd, setNewEnd] = useState(2);
-  const [newText, setNewText] = useState("");
+  const [captionsOpen, setCaptionsOpen] = useState(false);
+  const [plainTextOpen, setPlainTextOpen] = useState(false);
   const [textStart, setTextStart] = useState<number | "">(0);
   const [textEnd, setTextEnd] = useState<number | "">("");
   const [textTitle, setTextTitle] = useState("");
@@ -205,15 +208,15 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
     } catch (e) { setError(errorMessage(e, t("tr.deleteLineFailed"))); }
   }
 
-  async function addSegment() {
-    if (!source) return;
-    if (!(newEnd > newStart)) { setError(t("tr.endAfterStart")); return; }
+  /** Creates a caption from the caption editor; resolves to its id, or null on failure. */
+  async function createSegment(startSeconds: number, endSeconds: number, text: string): Promise<string | null> {
+    if (!source) return null;
     setError("");
     try {
-      await requestJson(`/api/sources/${source.id}/transcript-segments`, jsonInit("POST", { startSeconds: newStart, endSeconds: newEnd, text: newText }), t("tr.addLineFailed"));
-      setNewText(""); setMessage(t("tr.lineAdded"));
+      const created = await requestJson<TranscriptSegment>(`/api/sources/${source.id}/transcript-segments`, jsonInit("POST", { startSeconds, endSeconds, text }), t("tr.addLineFailed"));
       await loadCaptions();
-    } catch (e) { setError(errorMessage(e, t("tr.addLineFailed"))); }
+      return created.id;
+    } catch (e) { setError(errorMessage(e, t("tr.addLineFailed"))); return null; }
   }
 
   // Plain-text export: the range defaults to the whole recording and follows the source.
@@ -253,7 +256,8 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
       <label>{t("tr.language")}<select value={language} onChange={e => setLanguage(e.target.value)}><option value="fi">{t("tr.lang.fi")}</option><option value="en">{t("tr.lang.en")}</option><option value="sv">{t("tr.lang.sv")}</option><option value="auto">{t("tr.lang.auto")}</option></select></label>
     </div>
 
-    <SourcePlayer source={source} player={player} localFile={localFile} remoteSrc={`/api/sources/${source.id}`} onDuration={d => { if (rangeEnd === 60) setRangeEnd(Math.min(60, d)); }} />
+    {/* One player per editor: while the caption dialog is open, the dialog owns it. */}
+    {!captionsOpen && <SourcePlayer source={source} player={player} localFile={localFile} remoteSrc={`/api/sources/${source.id}`} onDuration={d => { if (rangeEnd === 60) setRangeEnd(Math.min(60, d)); }} />}
 
     <div className="transcription-mode-toggle">
       <button type="button" className={mode === "whole" ? "mode-active" : ""} onClick={() => setMode("whole")}>{t("tr.whole")}</button>
@@ -300,40 +304,44 @@ export default function TranscriptionEditor({ projectId, sources, pendingFiles =
       <a href={`/api/sources/${source.id}/captions.srt`} download>{t("tr.downloadSrt")}</a>
     </div>}
 
-    {!!sortedActive.length && <div className="plain-text-export">
-      <h3>{t("tr.plainText")}</h3>
-      <p className="muted">{t("tr.plainHelp")}</p>
-      <div className="range-inputs">
-        <label>{t("tr.startS")}<input type="number" min="0" step=".1" value={textStart} onChange={e => { setTextSectionId(""); setTextStart(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
-        <label>{t("tr.endS")}<input type="number" min="0" step=".1" value={textEnd} onChange={e => { setTextSectionId(""); setTextEnd(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
-        <label>{t("tr.section")}<select value={textSectionId} onChange={e => pickTextSection(e.target.value)}><option value="">{t("tr.wholeRecording")}</option>{textSections.map(x => <option key={x.id} value={x.id}>{x.label} ({formatTime(x.startSeconds!)}–{formatTime(x.endSeconds!)})</option>)}</select></label>
-        <label>{t("tr.titleOptional")}<input value={textTitle} onChange={e => setTextTitle(e.target.value)} /></label>
-      </div>
-      {textRangeError && <p className="error">{textRangeError}</p>}
-      <textarea readOnly rows={8} aria-label={t("tr.previewLabel")} value={textPreview} placeholder={t("tr.noText")} />
-      <div className="downloads">
-        <button type="button" disabled={!textPreview} onClick={() => void copyText()}>{t("tr.copy")}</button>
-        <a href={transcriptTextUrl(source.id, "txt", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>{t("tr.downloadTxt")}</a>
-        <a href={transcriptTextUrl(source.id, "html", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>{t("tr.downloadHtml")}</a>
-        {textStatus && <span className="muted" role="status">{textStatus}</span>}
-      </div>
+    {!!sortedActive.length && <div className="downloads">
+      <button type="button" onClick={() => setPlainTextOpen(true)}>{t("tr.plainText")}</button>
+      <button type="button" onClick={() => setCaptionsOpen(true)}>{t("tr.openCaptions")} ({sortedActive.length})</button>
     </div>}
 
-    <div className="segment-list-head"><h3>{t("tr.lines")}</h3>{captionsLoading && <span className="muted">{t("tr.loading")}</span>}</div>
-    <div className="segment-list">
-      {sortedActive.map(seg => <SegmentRow key={seg.id} segment={seg} current={current} onSeek={seek} onSave={saveSegment} onDelete={deleteSegment} />)}
-      {!sortedActive.length && !captionsLoading && <p className="muted">{t("tr.noLines")}</p>}
-    </div>
-
-    <div className="add-line">
-      <h4>{t("tr.addLine")}</h4>
-      <div className="add-line-fields">
-        <label>{t("tr.start")}<input type="number" min="0" step=".1" value={newStart} onChange={e => setNewStart(Number(e.target.value))} /></label>
-        <label>{t("tr.end")}<input type="number" min="0" step=".1" value={newEnd} onChange={e => setNewEnd(Number(e.target.value))} /></label>
+    {plainTextOpen && <Dialog title={t("tr.plainText")} wide onClose={() => setPlainTextOpen(false)}>
+      <div className="plain-text-export">
+        <p className="muted">{t("tr.plainHelp")}</p>
+        <div className="range-inputs">
+          <label>{t("tr.startS")}<input type="number" min="0" step=".1" value={textStart} onChange={e => { setTextSectionId(""); setTextStart(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
+          <label>{t("tr.endS")}<input type="number" min="0" step=".1" value={textEnd} onChange={e => { setTextSectionId(""); setTextEnd(e.target.value === "" ? "" : Number(e.target.value)); }} /></label>
+          <label>{t("tr.section")}<select value={textSectionId} onChange={e => pickTextSection(e.target.value)}><option value="">{t("tr.wholeRecording")}</option>{textSections.map(x => <option key={x.id} value={x.id}>{x.label} ({formatTime(x.startSeconds!)}–{formatTime(x.endSeconds!)})</option>)}</select></label>
+          <label>{t("tr.titleOptional")}<input value={textTitle} onChange={e => setTextTitle(e.target.value)} /></label>
+        </div>
+        {textRangeError && <p className="error">{textRangeError}</p>}
+        <textarea readOnly rows={8} aria-label={t("tr.previewLabel")} value={textPreview} placeholder={t("tr.noText")} />
+        <div className="downloads">
+          <button type="button" disabled={!textPreview} onClick={() => void copyText()}>{t("tr.copy")}</button>
+          <a href={transcriptTextUrl(source.id, "txt", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>{t("tr.downloadTxt")}</a>
+          <a href={transcriptTextUrl(source.id, "html", { start: textStart, end: textEnd, title: textTitle })} download aria-disabled={!!textRangeError}>{t("tr.downloadHtml")}</a>
+          {textStatus && <span className="muted" role="status">{textStatus}</span>}
+        </div>
       </div>
-      <textarea rows={2} placeholder={t("tr.captionText")} value={newText} onChange={e => setNewText(e.target.value)} />
-      <button type="button" disabled={!newText.trim()} onClick={() => void addSegment()}>{t("tr.addLineBtn")}</button>
-    </div>
+    </Dialog>}
+
+    {captionsOpen && <Dialog title={t("tr.lines")} wide onClose={() => setCaptionsOpen(false)}>
+      <CaptionEditorDialog
+        source={source}
+        player={player}
+        localFile={localFile}
+        remoteSrc={`/api/sources/${source.id}`}
+        segments={sortedActive}
+        onSave={saveSegment}
+        onDelete={deleteSegment}
+        onCreate={createSegment}
+      />
+    </Dialog>}
+
   </div>;
 }
 
@@ -360,24 +368,4 @@ function PendingRunCard({ run, busy, conflict, onApply, onDiscard }: { run: Pend
   </div>;
 }
 
-function SegmentRow({ segment, current, onSeek, onSave, onDelete }: { segment: TranscriptSegment; current: number; onSeek: (seconds: number) => void; onSave: (id: string, patch: Partial<Pick<TranscriptSegment, "text" | "startSeconds" | "endSeconds">>) => void; onDelete: (id: string) => void }) {
-  const t = useT();
-  const [text, setText] = useState(segment.text);
-  const [start, setStart] = useState(segment.startSeconds);
-  const [end, setEnd] = useState(segment.endSeconds);
-  useEffect(() => { setText(segment.text); setStart(segment.startSeconds); setEnd(segment.endSeconds); }, [segment.id, segment.text, segment.startSeconds, segment.endSeconds]);
-  const isCurrent = isWithinSegment(current, segment);
-  return <div className={`segment-row${isCurrent ? " segment-current" : ""}`}>
-    <div className="segment-times">
-      <button type="button" className="segment-seek" onClick={() => onSeek(segment.startSeconds)} title={t("tr.jump")}>▶ {formatTime(segment.startSeconds)}</button>
-      <label>{t("tr.start")}<input type="number" min="0" step=".1" value={start} onChange={e => setStart(Number(e.target.value))} onBlur={() => { if (!(end > start)) { setStart(segment.startSeconds); return; } if (start !== segment.startSeconds) onSave(segment.id, { startSeconds: start }); }} /></label>
-      <label>{t("tr.end")}<input type="number" min="0" step=".1" value={end} onChange={e => setEnd(Number(e.target.value))} onBlur={() => { if (!(end > start)) { setEnd(segment.endSeconds); return; } if (end !== segment.endSeconds) onSave(segment.id, { endSeconds: end }); }} /></label>
-    </div>
-    <textarea rows={2} value={text} onChange={e => setText(e.target.value)} onBlur={() => { if (text !== segment.text) onSave(segment.id, { text }); }} />
-    <button type="button" className="segment-delete" aria-label={t("tr.deleteLine")} onClick={() => onDelete(segment.id)}>🗑</button>
-  </div>;
-}
 
-export function isWithinSegment(current: number, segment: { startSeconds: number; endSeconds: number }) {
-  return current >= segment.startSeconds && current < segment.endSeconds;
-}

@@ -803,4 +803,9 @@ export const fi = {
   "tr.runLines_other": "{count} riviä",
   "tr.jump": "Siirrä soitin tälle riville",
   "tr.deleteLine": "Poista rivi",
+  "tr.noActiveCaption": "Ei valittua tekstitystä. Valitse rivi tai siirrä soitin rivin kohdalle.",
+  "tr.openCaptions": "Muokkaa tekstityksiä",
+  "tr.dialogClose": "Sulje",
+  "tr.newCaption": "Uusi tekstitys",
+  "tr.captionsHelp": "Näppäimet: Ctrl+vasen/oikea −/+10 s, Shift+vasen/oikea −/+3 s, Ctrl+alas aseta lopetus, Ctrl+ylös aseta alku, Enter seuraava tai uusi rivi, Shift+Enter uusi rivi tekstiin, Ctrl+Enter uusi tekstitys nykyisen jälkeen.",
 } as const;

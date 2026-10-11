@@ -805,4 +805,9 @@ export const en: Record<keyof typeof fi, string> = {
   "tr.runLines_other": "{count} lines",
   "tr.jump": "Jump the player to this line",
   "tr.deleteLine": "Delete line",
+  "tr.noActiveCaption": "No caption selected. Pick a caption or move the player into one.",
+  "tr.openCaptions": "Edit captions",
+  "tr.dialogClose": "Close",
+  "tr.newCaption": "New caption",
+  "tr.captionsHelp": "Keys: Ctrl+left/right −/+10 s, Shift+left/right −/+3 s, Ctrl+down set end to now, Ctrl+up set start to now, Enter next or new caption, Shift+Enter new line in the text, Ctrl+Enter new caption after this one.",
 };
