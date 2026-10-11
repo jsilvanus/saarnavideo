@@ -117,27 +117,33 @@
   background: #ef4444;
   pointer-events: none;
 }
+/* Everything on one row: name, colour, start, end. Scrolls sideways on narrow screens instead of wrapping. */
 .editor {
   display: flex;
-  flex-wrap: wrap;
-  align-items: end;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 10px;
-  padding: 10px;
+  padding: 8px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 .editor label {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
 }
 .editor input[type="text"] {
-  min-width: 180px;
+  width: 160px;
 }
 .editor input[type="number"] {
-  width: 96px;
+  width: 84px;
+}
+.editor button {
+  white-space: nowrap;
 }
 .inside {
-  width: 100%;
-  margin: 0;
+  font-size: 13px;
 }

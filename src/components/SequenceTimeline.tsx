@@ -174,7 +174,7 @@ function SelectedSequence({ section, parentLabel, colour, current, onCommit }: {
   const [start, setStart] = useState(String(section.startSeconds ?? 0));
   const [end, setEnd] = useState(String(section.endSeconds ?? 0));
   return <div className={styles.editor}>
-    {parentLabel && <p className={`muted ${styles.inside}`}>{t("seq.inside", { label: parentLabel })}</p>}
+    {parentLabel && <span className={`muted ${styles.inside}`}>{t("seq.inside", { label: parentLabel })}</span>}
     <label>{t("seq.name")}
       <input type="text" value={label} onChange={e => setLabel(e.target.value)}
         onBlur={() => { if (label.trim() && label.trim() !== section.label) onCommit({ label }); else setLabel(section.label); }}
