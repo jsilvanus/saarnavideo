@@ -1,0 +1,64 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.help {
+  margin: 0;
+  font-size: 13px;
+}
+.player {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: white;
+}
+.player video {
+  width: 100%;
+  max-height: 42vh;
+  background: #000;
+}
+.list {
+  display: grid;
+  gap: 6px;
+}
+.row {
+  display: grid;
+  grid-template-columns: auto 92px 92px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.row.active {
+  border-color: #10b981;
+  background: #ecfdf5;
+}
+.row.playing .seek {
+  font-weight: 700;
+}
+.row input,
+.row textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+.row textarea {
+  resize: vertical;
+  min-height: 2.6em;
+}
+.seek,
+.delete {
+  white-space: nowrap;
+  cursor: pointer;
+}
+@media (max-width: 760px) {
+  .row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .row textarea {
+    grid-column: 1 / -1;
+  }
+}

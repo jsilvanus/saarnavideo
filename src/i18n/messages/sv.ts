@@ -805,4 +805,9 @@ export const sv: Record<keyof typeof fi, string> = {
   "tr.runLines_other": "{count} rader",
   "tr.jump": "Hoppa till den här raden i spelaren",
   "tr.deleteLine": "Ta bort raden",
+  "tr.noActiveCaption": "Ingen textning vald. Välj en rad eller flytta spelaren till en rad.",
+  "tr.openCaptions": "Redigera textning",
+  "tr.dialogClose": "Stäng",
+  "tr.newCaption": "Ny textning",
+  "tr.captionsHelp": "Tangenter: Ctrl+vänster/höger −/+10 s, Shift+vänster/höger −/+3 s, Ctrl+ner sätt slut till nu, Ctrl+upp sätt start till nu, Enter nästa eller ny textning, Shift+Enter ny rad i texten, Ctrl+Enter ny textning efter denna.",
 };

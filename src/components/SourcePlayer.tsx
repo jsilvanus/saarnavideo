@@ -13,7 +13,8 @@ export type SourcePlayerState = {
   setCurrent: (seconds: number) => void;
   seek: (seconds: number) => void;
   videoRef: RefObject<HTMLVideoElement | null>;
-  ytHostRef: RefObject<HTMLDivElement | null>;
+  /** Callback ref for the YouTube host element: a state value, so the player is recreated when the host mounts again. */
+  setYtHost: (element: HTMLDivElement | null) => void;
   localUrl: string | null;
 };
 
@@ -26,7 +27,7 @@ export function useSourcePlayer(source: PlayableSource | undefined, sourceId: st
   const [current, setCurrent] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const ytRef = useRef<YouTubePlayer | null>(null);
-  const ytHostRef = useRef<HTMLDivElement>(null);
+  const [ytHost, setYtHost] = useState<HTMLDivElement | null>(null);
   const localUrlRef = useRef<string | null>(null);
   const onResetRef = useRef(onReset);
   onResetRef.current = onReset;
@@ -38,14 +39,14 @@ export function useSourcePlayer(source: PlayableSource | undefined, sourceId: st
   }, [sourceId]);
 
   useEffect(() => {
-    if (source?.type !== "YOUTUBE" || !source.youtubeVideoId || !ytHostRef.current) return;
+    if (source?.type !== "YOUTUBE" || !source.youtubeVideoId || !ytHost) return;
     let timer: ReturnType<typeof setInterval> | undefined;
     let cancelled = false;
     const win = window as YTWindow;
     const create = () => {
-      if (cancelled || !win.YT || !ytHostRef.current || !source.youtubeVideoId) return;
+      if (cancelled || !win.YT || !ytHost || !source.youtubeVideoId) return;
       ytRef.current?.destroy();
-      ytRef.current = new win.YT.Player(ytHostRef.current, { videoId: source.youtubeVideoId, events: { onReady: () => { timer = setInterval(() => setCurrent(ytRef.current?.getCurrentTime() ?? 0), 250); } } });
+      ytRef.current = new win.YT.Player(ytHost, { videoId: source.youtubeVideoId, events: { onReady: () => { timer = setInterval(() => setCurrent(ytRef.current?.getCurrentTime() ?? 0), 250); } } });
     };
     if (win.YT) create();
     else {
@@ -54,7 +55,7 @@ export function useSourcePlayer(source: PlayableSource | undefined, sourceId: st
       win.onYouTubeIframeAPIReady = () => { previous?.(); create(); };
     }
     return () => { cancelled = true; if (timer) clearInterval(timer); ytRef.current?.destroy(); ytRef.current = null; };
-  }, [source?.type, source?.youtubeVideoId, sourceId]);
+  }, [source?.type, source?.youtubeVideoId, sourceId, ytHost]);
 
   useEffect(() => {
     if (source?.status === "PENDING" && localFile) {
@@ -72,7 +73,7 @@ export function useSourcePlayer(source: PlayableSource | undefined, sourceId: st
     else if (videoRef.current) videoRef.current.currentTime = n;
   };
 
-  return { current, setCurrent, seek, videoRef, ytHostRef, localUrl: localUrlRef.current };
+  return { current, setCurrent, seek, videoRef, setYtHost, localUrl: localUrlRef.current };
 }
 
 /** Player plus current time and ±5s/±30s seek buttons; `children` are extra buttons in the same row. */
@@ -81,11 +82,11 @@ export function SourcePlayer({ source, player, localFile, remoteSrc, onDuration,
   onDuration: (seconds: number) => void; children?: ReactNode;
 }) {
   const t = useT();
-  const { current, setCurrent, seek, videoRef, ytHostRef, localUrl } = player;
+  const { current, setCurrent, seek, videoRef, setYtHost, localUrl } = player;
   const hasRemoteVideo = source.type === "UPLOAD" && source.status === "AVAILABLE" && !!source.storagePath;
   return <>
     <div className="picker-player">
-      {source.type === "YOUTUBE" && source.youtubeVideoId ? <div ref={ytHostRef} />
+      {source.type === "YOUTUBE" && source.youtubeVideoId ? <div ref={setYtHost} />
         : source.status === "PENDING" && localFile ? <video ref={videoRef} src={localUrl ?? undefined} controls onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} />
         : source.status === "PENDING" ? <div className="muted">{t("player.chooseLocal")}</div>
         : hasRemoteVideo ? <video ref={videoRef} src={remoteSrc} controls preload="metadata" onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} onLoadedMetadata={e => { if (e.currentTarget.duration) onDuration(e.currentTarget.duration); }} />
