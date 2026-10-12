@@ -268,6 +268,23 @@ export default function WorkspaceStyles() {
         color: #059669;
         font-weight: 600;
       }
+      .graphic-name-input {
+        font: inherit;
+        font-weight: 700;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 2px 4px;
+        margin-left: -4px;
+        color: inherit;
+        min-width: 0;
+      }
+      .graphic-name-input:hover,
+      .graphic-name-input:focus {
+        border-color: #10b981;
+        background: #fff;
+        outline: none;
+      }
       .graphic-editor-actions {
         display: flex;
         gap: 6px;

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useT } from "@/i18n/I18nProvider";
 import GraphicsEditor from "@/components/GraphicsEditor";
 import AssetPicker from "@/components/AssetPicker";
@@ -16,6 +17,29 @@ import { Panel } from "./Panel";
 import { SectionPicker } from "./SectionPicker";
 import { graphicVariables } from "./helpers";
 import type { Definition } from "./types";
+
+// Name of the open graphic, edited in place. Saved on blur or Enter; an empty name is discarded.
+function GraphicNameInput({ name, onRename }: { name: string; onRename: (name: string) => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [name]);
+  return (
+    <input
+      className="graphic-name-input"
+      aria-label={t("str.graphicName")}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next && next !== name) onRename(next);
+        else setDraft(name);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
 
 export default function StructureStep() {
   const {
@@ -50,6 +74,7 @@ export default function StructureStep() {
     createCaptionStyle,
     duplicateGraphic,
     updateGraphic,
+    renameGraphic,
     sourceNames,
     selectedGraphic,
     editorItem,
@@ -179,7 +204,7 @@ export default function StructureStep() {
           <>
             <div className="graphic-editor-header" id="graphic-editor">
               <div>
-                <strong>{selectedGraphic.name}</strong>
+                <GraphicNameInput key={selectedGraphic.id} name={selectedGraphic.name} onRename={(name) => void renameGraphic(selectedGraphic.id, name)} />
                 <small>
                   {selectedGraphic.width} × {selectedGraphic.height}
                 </small>
