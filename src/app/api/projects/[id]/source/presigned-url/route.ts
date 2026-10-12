@@ -12,11 +12,11 @@ import {
   generateS3SourceKey,
 } from "@/app/api/_lib/s3";
 import { jsonError } from "@/app/api/_lib/http";
+import { cleanupStalePendingUploads } from "@/lib/upload-cleanup";
 import {
   completedUploadBytes,
   expectedMultipartPartSize,
   parseSourceUploadSession,
-  sourceUploadIsStale,
   touchSourceUploadSession,
   upsertMultipartUploadPart,
   type SourceUploadSession,
@@ -28,10 +28,6 @@ function multipartThresholdBytes() {
 
 function multipartChunkBytes() {
   return Math.max(5 * 1024 * 1024, Number(process.env.S3_MULTIPART_CHUNK_BYTES ?? 5 * 1024 * 1024));
-}
-
-function uploadStaleAfterMs() {
-  return Math.max(60_000, Number(process.env.UPLOAD_STALE_AFTER_MS ?? 24 * 60 * 60 * 1000));
 }
 
 async function findPendingUploadSource(projectId: string, sourceId: string) {
@@ -63,28 +59,6 @@ function finalizeResponse(session: SourceUploadSession) {
 
 async function removeUploadedObject(bucket: string, key: string) {
   await (await getMediaStore()).remove(s3Ref(bucket, key)).catch(() => undefined);
-}
-
-async function cleanupStalePendingUploads(now = new Date()) {
-  const bucket = process.env.MEDIA_S3_BUCKET;
-  if (!bucket) return;
-  const staleAfterMs = uploadStaleAfterMs();
-  const cutoff = new Date(now.getTime() - staleAfterMs);
-  const pending = await prisma.source.findMany({
-    where: { type: "UPLOAD", status: "PENDING", createdAt: { lte: cutoff } },
-    select: { id: true, createdAt: true, uploadSession: true },
-    orderBy: { createdAt: "asc" },
-    take: 100,
-  });
-  for (const source of pending) {
-    const uploadSession = parseSourceUploadSession(source.uploadSession);
-    if (!uploadSession || !sourceUploadIsStale(uploadSession, staleAfterMs, now, source.createdAt)) continue;
-    if (uploadSession.multipart?.uploadId) {
-      await abortMultipartUpload(bucket, uploadSession.s3Key, uploadSession.multipart.uploadId).catch(() => undefined);
-    }
-    await removeUploadedObject(bucket, uploadSession.s3Key);
-    await prisma.source.delete({ where: { id: source.id } }).catch(() => undefined);
-  }
 }
 
 /**
