@@ -28,7 +28,7 @@ export function layerStyle(l: Layer, selected: boolean): CSSProperties {
   for (const [key, value] of Object.entries(style)) if (key !== "max-lines" && key !== "vertical-align") (css as Record<string, unknown>)[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
   return {
     position: "absolute", left: l.x, top: l.y, width: l.width, height: l.height,
-    boxSizing: "border-box", userSelect: "none", cursor: "move", outline: selected ? "3px solid #38bdf8" : undefined,
+    boxSizing: "border-box", userSelect: "none", cursor: "move", outline: selected ? "calc(3px * var(--ge-inv, 1)) solid #38bdf8" : undefined,
     animation: l.animation || undefined, transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
     ...(l.type === "caption" ? { border: "2px dashed rgba(255,255,255,.55)", lineHeight: 1.2 } : {}),
     ...css,

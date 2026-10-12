@@ -3,11 +3,11 @@ import { useT } from "@/i18n/I18nProvider";
 import type { Layer } from "./types";
 
 export const GraphicsEditorToolbar: FC<{
-  grid: boolean; safe: boolean;
+  grid: boolean; safe: boolean; showValues: boolean; hasVariables: boolean; onToggleValues: () => void;
   onAdd: (type: Layer["type"]) => void;
   onDuplicate: () => void; onDelete: () => void;
   onToggleGrid: () => void; onToggleSafe: () => void;
-}> = ({ grid, safe, onAdd, onDuplicate, onDelete, onToggleGrid, onToggleSafe }) => {
+}> = ({ grid, safe, showValues, hasVariables, onToggleValues, onAdd, onDuplicate, onDelete, onToggleGrid, onToggleSafe }) => {
   const t = useT();
   return (
     <div className="ge-toolbar" aria-label={t("ge.tools")}>
@@ -19,6 +19,7 @@ export const GraphicsEditorToolbar: FC<{
       <span className="ge-spacer" />
       <button onClick={onDuplicate}>{t("ge.duplicate")}</button>
       <button onClick={onDelete}>{t("ge.delete")}</button>
+      {hasVariables && <button className={showValues ? "ge-active" : ""} onClick={onToggleValues} title={t("ge.showValuesTitle")}>{"{{ }}"}</button>}
       <button className={grid ? "ge-active" : ""} onClick={onToggleGrid}>{t("ge.grid")}</button>
       <button className={safe ? "ge-active" : ""} onClick={onToggleSafe}>{t("ge.safeArea")}</button>
     </div>

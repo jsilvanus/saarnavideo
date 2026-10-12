@@ -234,6 +234,7 @@ export default function StructureStep() {
               item={editorItem}
               assets={selected.assets ?? []}
               title={selectedGraphic.name}
+              variables={selected.definition?.variables ?? []}
               onChange={(item) => void updateGraphic(selectedGraphic.id, item)}
               onAssetsChanged={refreshAssets}
             />

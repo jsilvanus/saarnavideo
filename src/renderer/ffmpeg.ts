@@ -138,7 +138,7 @@ function richLayerFilters(input: string, output: string, layers: RichLayer[], ct
       filters.push(`[${idx}:v]format=rgba,colorchannelmixer=aa=${s.opacity},scale=w=${formatSeconds(w)}:h=${formatSeconds(h)}[${next}img]`);
       filters.push(`[${current}][${next}img]overlay=x=${formatSeconds(x)}:y=${formatSeconds(y)}:shortest=1${enableExpr}[${next}]`);
     } else if (layer.type === "text" && layer.text) {
-      const alignX = s.textAlign === "center" ? `(w-text_w)/2` : s.textAlign === "right" ? `w-text_w-${formatSeconds(ctx.width - x - w)}` : formatSeconds(x);
+      const alignX = s.textAlign === "center" ? `${formatSeconds(x)}+(${formatSeconds(w)}-text_w)/2` : s.textAlign === "right" ? `w-text_w-${formatSeconds(ctx.width - x - w)}` : formatSeconds(x);
       const box = s.boxColor ? `:box=1:boxcolor=${s.boxColor}@${s.opacity}:boxborderw=${formatSeconds(10 * ctx.sf)}` : "";
       const color = s.color || ctx.textColor;
       filters.push(`[${current}]drawtext=text='${escapeFilterText(layer.text)}':fontcolor=${color}:fontsize=${s.fontSize}:x=${alignX}:y=${formatSeconds(y)}:fontcolor_expr='${color}'${box}${fontOption(ctx.fontFile)}${enableExpr}[${next}]`);

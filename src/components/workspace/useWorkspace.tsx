@@ -928,7 +928,7 @@ export function useWorkspaceState() {
             template: "rich",
             mode: "standalone" as const,
             durationSeconds: 5,
-            data: { layers: JSON.stringify(selectedGraphic.layers) },
+            data: { layers: JSON.stringify(selectedGraphic.layers), backgroundColor: selectedGraphic.backgroundColor },
           }
         : undefined,
     [selectedGraphic],
