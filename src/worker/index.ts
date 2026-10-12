@@ -29,6 +29,7 @@ import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffm
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
 import { getMediaStore } from "@/lib/media-store";
 import { withLease, type LeaseDb } from "@/lib/lease";
+import { liveWorkerHosts, localStorageHostWarning, pruneWorkers, registerWorker, type RegistryDb } from "@/worker/worker-registry";
 import { cleanupStalePendingUploads } from "@/lib/upload-cleanup";
 import { parseJobLimits, type JobLimits } from "@/worker/job-limits";
 import { HEARTBEAT_MS, heartbeat, recoverStaleJobs, type RecoveryDb } from "@/worker/job-recovery";
@@ -577,7 +578,18 @@ async function processPublication() {
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); await remoteDownloader?.close(); process.exit(0); });
 /** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
 async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }
+/** Renews this worker's lease and warns once if local media storage is used while workers run on several hosts. */
+async function announceWorker(warn: boolean) {
+  const registry = prisma as unknown as RegistryDb;
+  await registerWorker(registry, WORKER_ID);
+  await pruneWorkers(registry);
+  if (!warn) return;
+  const warning = localStorageHostWarning(await liveWorkerHosts(registry), process.env.MEDIA_STORAGE);
+  if (warning) console.warn(`[worker] ${warning}`);
+}
 async function main() {
+  await announceWorker(true).catch(error => console.error("Worker registration failed:", error));
+  setInterval(() => { void announceWorker(false).catch(error => console.error("Worker registration failed:", error)); }, HEARTBEAT_MS);
   setInterval(() => { void heartbeat(prisma as unknown as RecoveryDb, WORKER_ID).catch(error => console.error("Heartbeat failed:", error)); }, HEARTBEAT_MS);
   await recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error));
   setInterval(() => { void recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error)); }, 30_000);

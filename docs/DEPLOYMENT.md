@@ -134,6 +134,18 @@ docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker:latest .   #
 
 Run several workers by scaling the `worker` service (`docker compose up -d --scale worker=3`): they share the database and the media store (a shared volume or S3), and a stale job from a stopped worker is recovered automatically. `MAX_CONCURRENT_JOBS` is per worker; to cap a job type across all workers set `JOB_LIMITS` (for example `JOB_LIMITS=TRANSCRIBE=2` so only two transcriptions run at once however many workers there are). Keep the workers' clocks synchronised (NTP): stale-job recovery compares heartbeat times written by one host with the clock of another.
 
+## Several instances
+
+One app and one worker is the default and needs nothing extra. To run more, everything below is optional and each point is independent.
+
+- **Several workers.** Scale the `worker` service (`docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d --scale worker=3`). Jobs are claimed with one conditional update, so no job runs twice; `MAX_CONCURRENT_JOBS` is per worker, `JOB_LIMITS` (for example `TRANSCRIBE=2,VIDEO=4`) caps a job type across all of them. A job whose worker stops is failed (an interrupted transcription is taken over by another worker) after about 90 seconds without a heartbeat.
+- **Storage must be shared.** Use S3 (`MEDIA_STORAGE=s3`, see above) as soon as workers or app instances run on different hosts. With `MEDIA_STORAGE=local` every host only sees its own `MEDIA_ROOT`; workers on one host share it, workers on several hosts do not. Each worker registers itself in the database, and a worker that sees live workers on more than one host with local storage logs a warning (`MEDIA_STORAGE=local but workers are running on N hosts`). It is a warning, not a refusal, because a shared network volume is a valid setup.
+- **Several app instances.** The app keeps no state in memory: sessions are a signed cookie (the `ACCESS_SECRET` gate), uploads go straight to S3 with their state in the database, and shared chores (stale-upload cleanup, YouTube token refresh) take a short database lease so only one process does them at a time. Put a load balancer in front; no sticky sessions are needed. PostgreSQL is required for more than one process writing at a time (SQLite is for one machine).
+- **Same settings everywhere.** `DATABASE_URL`, `ACCESS_SECRET`, `YOUTUBE_TOKEN_ENCRYPTION_KEY`, `MEDIA_S3_*` and `AWS_*` must be identical on every app and worker.
+- **Clocks.** Keep all hosts on NTP: heartbeats and leases compare times written by one host with the clock of another.
+- **fffleet.** Renders and downloads can run on a fleet instead; one fffleet orchestrator schedules them, so this app does not need to coordinate fleet workers itself.
+- **Not covered.** Several fffleet orchestrators (high availability) and per-worker queues are not part of this app.
+
 ## Production Setup Checklist
 
 ### Database
