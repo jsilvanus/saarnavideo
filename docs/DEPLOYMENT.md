@@ -132,7 +132,7 @@ docker build -f Dockerfile.worker -t saarnavideo-worker:latest .
 docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker:latest .   # only for fleet downloads
 ```
 
-Run several workers by scaling the `worker` service (`docker compose up -d --scale worker=3`): they share the database and the media store (a shared volume or S3), and a stale job from a stopped worker is recovered automatically.
+Run several workers by scaling the `worker` service (`docker compose up -d --scale worker=3`): they share the database and the media store (a shared volume or S3), and a stale job from a stopped worker is recovered automatically. `MAX_CONCURRENT_JOBS` is per worker; to cap a job type across all workers set `JOB_LIMITS` (for example `JOB_LIMITS=TRANSCRIBE=2` so only two transcriptions run at once however many workers there are). Keep the workers' clocks synchronised (NTP): stale-job recovery compares heartbeat times written by one host with the clock of another.
 
 ## Production Setup Checklist
 

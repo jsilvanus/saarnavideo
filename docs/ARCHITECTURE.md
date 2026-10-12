@@ -74,7 +74,7 @@ Pure code, no I/O: it turns a definition into ffmpeg arguments, so it is testabl
 
 `src/worker/index.ts` (`main`):
 
-- **Lanes.** Up to `MAX_CONCURRENT_JOBS` media jobs run side by side (1 locally, 4 with a fleet). Publications run in their own lane so a slow upload does not block renders.
+- **Lanes.** Up to `MAX_CONCURRENT_JOBS` media jobs run side by side (1 locally, 4 with a fleet). Publications run in their own lane so a slow upload does not block renders. With several workers, `MAX_CONCURRENT_JOBS` is per process; `JOB_LIMITS` (for example `TRANSCRIBE=2`) caps a job type across all workers. A claim is one conditional update, so no job is handed to two workers; a limited type is re-checked right after the claim and a job over the limit goes back to the queue.
 - **Claiming.** Atomic update of a `QUEUED` row; jobs with an unfinished dependency are skipped.
 - **Heartbeat and recovery.** Each worker has a `workerId` and refreshes `heartbeatAt` on its running jobs. `job-recovery.ts` fails jobs whose worker stopped, and lets another worker take over an interrupted transcription.
 - **Files.** `media-io.ts` gives each job a `JobFiles`: local references are used as they are, S3 references are downloaded into a size-capped cache, and outputs written to a scratch folder are uploaded when the job finishes.

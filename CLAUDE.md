@@ -309,6 +309,7 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 
 ### Worker lanes
 The worker loop (`main`, `src/worker/index.ts`) claims queued `MediaJob`s and runs up to `MAX_CONCURRENT_JOBS` at a time: default 1, or 4 when `RENDER_EXECUTOR=fffleet` (a local ffmpeg already uses the machine's cores, a fleet does not). Publications (`processPublication`) run in their own lane, so a slow Facebook upload cannot hold up renders.
+- **Several workers:** `claimJob` (`src/worker/index.ts`) flips a QUEUED job to RUNNING with one conditional `updateMany` (only one worker wins; the others try the next candidate), so no job runs twice. `JOB_LIMITS` (`TYPE=count,...`, parsed by `parseJobLimits`, `src/worker/job-limits.ts`) caps a job type across all workers: types already at their limit are left out of the candidate query, and after a claim the first `limit` RUNNING jobs of that type (oldest `startedAt`, then id) keep their place while a job over the limit goes back to QUEUED, so two workers racing cannot exceed it. Heartbeat staleness compares worker-written times with the checker's clock, so hosts need synchronised clocks (NTP). Tests: `job-limits.test.ts` (parsing) and the claim tests in `job-recovery.test.ts` (kept in one file because the DB tests share a database file).
 
 ### Template System
 A template seeds a new project; afterwards the project is ordinary data and nothing refers back to the template. Details and the API are in `docs/TEMPLATE_CREATION.md`.
