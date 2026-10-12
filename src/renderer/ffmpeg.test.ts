@@ -553,7 +553,7 @@ describe("centred text layers", () => {
   it("centres text inside the layer box, not the whole frame", () => {
     const layers = JSON.stringify([{ id: "t", type: "text", x: 100, y: 50, width: 800, height: 100, text: "Hi", style: { "text-align": "center", "font-size": "40px" } }]);
     const plan = buildCompositionRenderPlan(
-      { ...base, composition: { ...baseComposition, items: [{ type: "slate", template: "rich", durationSeconds: 2, data: { layers } }] } },
+      { ...base, composition: { ...baseComposition, items: [{ type: "slate", template: "rich", mode: "standalone", durationSeconds: 2, data: { layers } }] } },
       new Map(),
       "/tmp/output.mp4",
     );
