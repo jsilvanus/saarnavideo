@@ -201,7 +201,7 @@ Run several workers by scaling the `worker` service (`docker compose up -d --sca
 - PostgreSQL on dedicated database server (`schema.postgresql.prisma`)
 - Media storage: `MEDIA_STORAGE=s3` (no shared volume) or local disk on NFS/SMB shared by every app and worker instance
 - Several app instances behind a load balancer: the app keeps no state outside the database and the media store. Set `ACCESS_SECRET` (shared-secret login) or put your own authentication in front of it; the app has no per-user login
-- Several workers: jobs are claimed atomically, running jobs carry a heartbeat, and a worker that dies has its interrupted transcription taken over by another worker (other stale jobs are failed). Run `prisma db push` after upgrading (new `MediaJob.workerId` / `heartbeatAt` columns)
+- Several workers: jobs are claimed atomically, running jobs carry a heartbeat, and a worker that dies has its interrupted transcription taken over by another worker (other stale jobs are failed). Run `prisma db push` after upgrading (new `MediaJob.workerId` / `heartbeatAt` columns, and the `Lease` table)
 - Workers on dedicated machines; with S3 media each needs scratch disk for `MEDIA_ROOT` and the download cache
 
 ### Object Storage (S3)

@@ -28,6 +28,8 @@ import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
 import { getMediaStore } from "@/lib/media-store";
+import { withLease, type LeaseDb } from "@/lib/lease";
+import { cleanupStalePendingUploads } from "@/lib/upload-cleanup";
 import { parseJobLimits, type JobLimits } from "@/worker/job-limits";
 import { HEARTBEAT_MS, heartbeat, recoverStaleJobs, type RecoveryDb } from "@/worker/job-recovery";
 import { randomUUID } from "node:crypto";
@@ -579,6 +581,10 @@ async function main() {
   setInterval(() => { void heartbeat(prisma as unknown as RecoveryDb, WORKER_ID).catch(error => console.error("Heartbeat failed:", error)); }, HEARTBEAT_MS);
   await recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error));
   setInterval(() => { void recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error)); }, 30_000);
+  // Stale direct uploads: one worker at a time (lease), so several workers do not repeat the same S3 deletes.
+  const cleanUploads = () => withLease(prisma as unknown as LeaseDb, "upload-cleanup", WORKER_ID, 5 * 60_000, () => cleanupStalePendingUploads()).catch(error => console.error("Upload cleanup failed:", error));
+  void cleanUploads();
+  setInterval(() => { void cleanUploads(); }, 10 * 60_000);
   void publicationLane();
   const running = new Set<Promise<void>>();
   while (true) {

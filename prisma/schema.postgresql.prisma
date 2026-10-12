@@ -207,6 +207,13 @@ model YouTubeConnection {
   updatedAt DateTime @updatedAt
 }
 
+/// Short-lived "only one process does this" locks (see src/lib/lease.ts). Rows are tiny and expire by themselves.
+model Lease {
+  name String @id
+  owner String
+  expiresAt DateTime
+}
+
 /// yt-dlp cookies for YouTube downloads (Netscape format), AES-256-GCM encrypted; singleton row. Never returned by the API.
 model YtDlpCookies {
   id String @id @default(cuid())
