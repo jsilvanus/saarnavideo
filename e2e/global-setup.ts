@@ -23,6 +23,10 @@ declare module "vitest" {
     storage: "local" | "s3";
     /** Base URL of the fake S3 server when storage is "s3", else "". */
     s3Url: string;
+    /** Number of worker processes started (E2E_WORKERS, default 1). */
+    workers: number;
+    /** Prisma DATABASE_URL of the throwaway database, for tests that look at rows the API does not expose. */
+    databaseUrl: string;
   }
 }
 
@@ -134,13 +138,15 @@ export default async function setup(project: TestProject) {
   execFileSync(path.join(BIN, "prisma"), ["db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], { cwd: ROOT, env, stdio: "ignore" });
 
   const server = start(path.join(BIN, "next"), ["dev", "--port", String(port)], env, "next");
-  const worker = start(path.join(BIN, "tsx"), ["src/worker/index.ts"], env, "worker");
+  // E2E_WORKERS=2 runs two worker processes on the same database (the multi-worker test needs it).
+  const workerCount = Math.max(1, Number(process.env.E2E_WORKERS) || 1);
+  const workers = Array.from({ length: workerCount }, (_, index) => start(path.join(BIN, "tsx"), ["src/worker/index.ts"], env, `worker${index + 1}`));
   const baseUrl = `http://127.0.0.1:${port}`;
   try {
     await waitForServer(`${baseUrl}/api/projects`, server);
   } catch (error) {
     stop(server);
-    stop(worker);
+    for (const worker of workers) stop(worker);
     await fakeGraph.close();
     await fakeYouTube.close();
     throw error;
@@ -154,10 +160,12 @@ export default async function setup(project: TestProject) {
   project.provide("youtubeUrl", fakeYouTube.url);
   project.provide("storage", fakeS3 ? "s3" : "local");
   project.provide("s3Url", fakeS3?.url ?? "");
+  project.provide("workers", workerCount);
+  project.provide("databaseUrl", env.DATABASE_URL!);
 
   return async () => {
     stop(server);
-    stop(worker);
+    for (const worker of workers) stop(worker);
     await fakeGraph.close();
     await fakeYouTube.close();
     await fakeS3?.close();
