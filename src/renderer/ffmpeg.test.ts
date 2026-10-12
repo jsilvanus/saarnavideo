@@ -549,6 +549,18 @@ describe("output size and reframing", () => {
   });
 });
 
+describe("centred text layers", () => {
+  it("centres text inside the layer box, not the whole frame", () => {
+    const layers = JSON.stringify([{ id: "t", type: "text", x: 100, y: 50, width: 800, height: 100, text: "Hi", style: { "text-align": "center", "font-size": "40px" } }]);
+    const plan = buildCompositionRenderPlan(
+      { ...base, composition: { ...baseComposition, items: [{ type: "slate", template: "rich", mode: "standalone", durationSeconds: 2, data: { layers } }] } },
+      new Map(),
+      "/tmp/output.mp4",
+    );
+    expect(plan.args[plan.args.indexOf("-filter_complex") + 1]).toContain("x=100+(800-text_w)/2");
+  });
+});
+
 describe("preview option", () => {
   const definition = { ...base, composition: { ...baseComposition, items: [{ type: "source-clip" as const, sourceId: "a", startSeconds: 0, endSeconds: 5 }] } };
   const sources = new Map([["a", "/a.mp4"]]);
