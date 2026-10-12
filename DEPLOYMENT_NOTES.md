@@ -1,3 +1,5 @@
+> **Historical.** These are notes from the first presigned-upload deployment test. Hostname replacement was replaced by `MEDIA_S3_ENDPOINT_PUBLIC`; the current description is in `docs/LARGE_FILE_UPLOADS.md`, `docs/DEPLOYMENT.md` and `docs/INSTALL.md`.
+
 # Deployment Notes: Presigned S3 URLs with Hostname Replacement
 
 ## Status: ✅ BROWSER ACCESS FIXED

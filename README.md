@@ -41,6 +41,7 @@ Before anyone else can reach the app, set `ACCESS_SECRET` (a shared-secret login
 | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Wiring up fffleet (rendering and downloads on workers), S3, varfetch connectors, speech-to-text, YouTube, Facebook |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production notes, checklist, scaling, backups, troubleshooting |
 | [docs/API.md](docs/API.md) | HTTP API reference |
+| [docs/LARGE_FILE_UPLOADS.md](docs/LARGE_FILE_UPLOADS.md) | Direct-to-S3 source uploads (presigned, multipart, resumable) |
 | [docs/TEMPLATE_CREATION.md](docs/TEMPLATE_CREATION.md), [docs/GRAPHIC_PACKAGE.md](docs/GRAPHIC_PACKAGE.md) | Templates and the `.svgraphic` graphic package format |
 | [docs/YOUTUBE_OAUTH_SETUP.md](docs/YOUTUBE_OAUTH_SETUP.md), [docs/FACEBOOK_SETUP.md](docs/FACEBOOK_SETUP.md) | Publishing setup |
 | [CLAUDE.md](CLAUDE.md) | Detailed behaviour of every feature, for contributors and coding assistants |

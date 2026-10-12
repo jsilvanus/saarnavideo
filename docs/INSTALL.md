@@ -111,11 +111,13 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | `MEDIA_ROOT` | `/data/media` (`.env.example` sets `./data/media`) | app, worker | Folder for media; with S3 only scratch space on the worker |
 | `MEDIA_STORAGE` | `local` | app, worker | `local` or `s3` |
 | `MEDIA_S3_BUCKET`, `MEDIA_S3_PREFIX`, `MEDIA_S3_ENDPOINT` | | app, worker | Bucket, key prefix, endpoint for S3-compatible stores |
+| `MEDIA_S3_ENDPOINT_PUBLIC` | `MEDIA_S3_ENDPOINT` | app | Endpoint the **browser** can reach; presigned upload URLs are signed for it. Set it when `MEDIA_S3_ENDPOINT` is an internal address |
+| `S3_MULTIPART_THRESHOLD_BYTES`, `S3_MULTIPART_CHUNK_BYTES` | 8 MB, 5 MB (minimum 5 MB) | app | Direct uploads above the threshold use S3 multipart in chunks of this size |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | | app, worker | S3 credentials (also used for fleet staging) |
 | `MEDIA_CACHE_MAX_BYTES` | 20 GB | worker | Size of the worker's cache of downloaded S3 files |
 | `MAX_SOURCE_SIZE_BYTES` | 50 GB | worker | Largest source |
 | `MAX_OUTPUT_SIZE_BYTES` | 100 GB | worker | Largest output |
-| `MAX_UPLOAD_BYTES` | 5 GB (`.env.example` sets 50 GB) | app | Largest upload |
+| `MAX_UPLOAD_BYTES` | 5 GB (`.env.example` sets 50 GB) | app | Largest upload (direct S3 uploads: the declared size) |
 | `UPLOAD_STALE_AFTER_MS` | 86400000 (24 h) | app | Abort/remove stale pending direct-upload sessions and their partial S3 objects |
 | `MAX_ASSET_SIZE_BYTES` | 10 MB | app | Largest library image |
 | `MAX_AUDIO_ASSET_SIZE_BYTES` | 200 MB | app | Largest library audio file |

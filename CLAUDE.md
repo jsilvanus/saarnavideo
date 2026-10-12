@@ -67,6 +67,7 @@ Core domain models using Zod for type-safe validation:
 - **`saved-templates.ts`** - Capture a project as a template and apply it again
 - **`source-ids.ts`** - Translate source ids in a definition (project duplication)
 - **`transcription.ts`** - Transcription data structures
+- **`source-upload.ts`**, **`sequence-timeline.ts`** - Direct-upload session state; sequence timeline rows and edits
 - **`validation.ts`** - Shared validation utilities
 - **`*.test.ts`** - Unit tests for domain logic
 
@@ -79,6 +80,7 @@ Core domain models using Zod for type-safe validation:
 - **`SidebarToggle.tsx`** - UI toggle component
 - **`/graphics-editor/`** - Graphics editor subcomponents, geometry and types
 - **`SourcePlayer.tsx`** - Shared YouTube/local source preview player hook
+- **`CaptionEditorDialog.tsx`**, **`Dialog.tsx`**, **`SequenceTimeline.tsx`**, **`UploadProgress.tsx`** - Caption editor, shared dialog, sequence timeline, upload progress (see "Direct S3 source uploads" and "Caption editor, sequences and VTT import")
 - **`TemplatePicker.tsx`** - Template list for the new-project dialog and the "save as template" block
 - **`TimelineView.tsx`** - Read-only output timeline (Video / Grafiikat / Ääni), horizontal or vertical
 - **`VariablesEditor.tsx`** - Project variables editor (`{{name}}` values for graphics)
@@ -125,7 +127,7 @@ FFmpeg-based rendering pipeline:
 
 Models:
 - **Project** - Composition project with template reference
-- **Source** - Media input (upload or YouTube reference)
+- **Source** - Media input (upload or YouTube reference); `status` PENDING while a direct S3 upload runs, `uploadSession` holds its resume state
 - **MediaJob** - Async job (render, preview, thumbnail, podcast, download, transcribe) claimed by the worker
 - **Output** - Generated video or thumbnail artifact
 - **Publication** - YouTube or Facebook upload record
@@ -272,7 +274,7 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 - **Tests:** unit `reframe.test.ts`, `output-presets.test.ts`, `render-settings.test.ts`, `duration-report.test.ts`, `ffmpeg.test.ts`; `e2e/reframe.e2e.test.ts` (fixture `split.mp4`: left half red, right half green) checks the crop, fit, section/clip override and exact sizes by pixel colour and ffprobe.
 
 ### Project workspace UI (quick publish and three steps)
-`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules; self-contained pieces already use CSS modules: `TimelineView`, `VariablesEditor`, `FetchVariables` and the step bar of `OpenProject`, so new styles go into a `*.module.css` next to the component) groups the project into three steps (all interface text goes through `useT()`, see "Interface language"):
+`src/components/workspace/` (state and handlers in `useWorkspace.tsx`, one component per step: `SourceStep`, `StructureStep`, `PublishStep`; `OpenProject` has the header and step bar; `WorkspaceStyles` still holds the page's global `<style jsx global>` rules; self-contained pieces already use CSS modules: `TimelineView`, `VariablesEditor`, `FetchVariables`, `Dialog`, `CaptionEditorDialog`, `SequenceTimeline`, `Sidebar` and the step bar of `OpenProject`, so new styles go into a `*.module.css` next to the component) groups the project into three steps (all interface text goes through `useT()`, see "Interface language"):
 - **Pikajulkaisu** (`QuickStep.tsx`, step `quick`, first in the step bar and the landing step of a newly created project; existing projects open on Lähde): one page with five cards using the same handlers as the detailed steps: source (YouTube link or file), title plus `FetchVariables` and the variables editor, sections ("Käytä koko tallennetta" adds the whole source as one section via `addSegment`, with a manual duration field when the duration is unknown; otherwise a link to Rakenne), caption mode with preview/final render and job progress, and `PublishPanel`. `generate`/`previewRender` keep the user on this step when it is active (otherwise they jump to Julkaisu).
 - **Lähde:** sources (one or more), transcriptions, output size (OutputSettings) and project info: title plus **project variables**.
 - **Rakenne:** source sections (each root section has a source picker when the project has several sources, plus Reframe), graphics, voiceover audio, and the timeline: `TimelineView` (overview) above `CompositionEditor` (editing); composition sections are folded under "Koostuksen omat osiot".
@@ -377,7 +379,9 @@ A `MediaJob` goes QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. While R
 - `GET/POST /api/templates`, `DELETE /api/templates/[id]` - Built-in and saved templates
 
 ### Sources
-- `POST /api/projects/[id]/source` - Add source to project
+- `POST /api/projects/[id]/source` - Add source to project (multipart file, YouTube link, or JSON to create a pending upload)
+- `POST /api/projects/[id]/source/presigned-url`, `POST /api/projects/[id]/source/[sourceId]/finalize` - Direct S3 upload (S3 storage only)
+- `POST /api/sources/[sourceId]/transcription-runs/upload` - Import a VTT as a transcription run
 - `DELETE /api/projects/[id]/source/[sourceId]` - Remove source
 - `GET /api/sources/[sourceId]` - Get source details
 - `DELETE /api/sources/[sourceId]` - Delete source directly
@@ -473,7 +477,22 @@ export type Composition = z.infer<typeof compositionSchema>;
 - Errors stored in MediaJob.error
 
 ### Media store (S3 or local)
-`src/lib/media-store/` is the storage layer for media files (`createMediaStoreFromEnv`, `getMediaStore`). A stored reference (`storagePath`) is either an absolute local path (every existing row) or `s3://bucket/key`; reads/deletes follow the reference, writes go to `MEDIA_STORAGE` (`local` default, `s3` needs `MEDIA_S3_BUCKET` + `AWS_*`, no silent fallback). Local storage is the install-time fallback (`docs/DEPLOYMENT.md`, "Media storage"). Routes serve, read and delete through the store (`rangedFileResponse`, `readStoredFile`, `removeStoredFile` in `src/app/api/_lib/files.ts`; S3 files are proxied). Uploads are streamed into it (`saveSourceFile`, `storeLibraryFile`; audio is hashed and probed in `MEDIA_ROOT/tmp/uploads` first and then moved in). The worker gets a `JobFiles` per job (`src/worker/media-io.ts`): `local(ref)` returns local paths as they are and downloads S3 files into a size-capped cache (`MEDIA_ROOT/cache`, `MEDIA_CACHE_MAX_BYTES`); `finalize` uploads outputs written to `MEDIA_ROOT/work/<job>` (local storage writes straight to the final path and does nothing). `npm run media:migrate -- --to s3|local` moves existing files (`src/lib/media-migrate.ts`). Several workers: `MediaJob.workerId/heartbeatAt` and `src/worker/job-recovery.ts` (stale jobs fail, an interrupted transcription is taken over atomically). Tests: `src/lib/media-store/*.test.ts` (fake S3 server `fake-s3-server.ts`), `media-io.test.ts`, `media-migrate.test.ts`, `job-recovery.test.ts`, and `E2E_STORAGE=s3 npm run test:e2e` runs the whole e2e suite against a fake S3 bucket (CI job `e2e-s3`). Never run against a real bucket.
+`src/lib/media-store/` is the storage layer for media files (`createMediaStoreFromEnv`, `getMediaStore`). A stored reference (`storagePath`) is either an absolute local path (every existing row) or `s3://bucket/key`; reads/deletes follow the reference, writes go to `MEDIA_STORAGE` (`local` default, `s3` needs `MEDIA_S3_BUCKET` + `AWS_*`, no silent fallback). Local storage is the install-time fallback (`docs/DEPLOYMENT.md`, "Media storage"). Routes serve, read and delete through the store (`rangedFileResponse`, `readStoredFile`, `removeStoredFile` in `src/app/api/_lib/files.ts`; S3 files are proxied). Library assets and local-storage source uploads are streamed into it (`saveSourceFile`, `storeLibraryFile`; audio is hashed and probed in `MEDIA_ROOT/tmp/uploads` first and then moved in). With `MEDIA_STORAGE=s3` the browser uploads **source videos directly to the bucket** (see "Direct S3 source uploads"). The worker gets a `JobFiles` per job (`src/worker/media-io.ts`): `local(ref)` returns local paths as they are and downloads S3 files into a size-capped cache (`MEDIA_ROOT/cache`, `MEDIA_CACHE_MAX_BYTES`); `finalize` uploads outputs written to `MEDIA_ROOT/work/<job>` (local storage writes straight to the final path and does nothing). `npm run media:migrate -- --to s3|local` moves existing files (`src/lib/media-migrate.ts`). Several workers: `MediaJob.workerId/heartbeatAt` and `src/worker/job-recovery.ts` (stale jobs fail, an interrupted transcription is taken over atomically). Tests: `src/lib/media-store/*.test.ts` (fake S3 server `fake-s3-server.ts`), `media-io.test.ts`, `media-migrate.test.ts`, `job-recovery.test.ts`, and `E2E_STORAGE=s3 npm run test:e2e` runs the whole e2e suite against a fake S3 bucket (CI job `e2e-s3`). Never run against a real bucket.
+
+### Direct S3 source uploads
+With `MEDIA_STORAGE=s3` the app never carries source video bytes; the browser PUTs them to the bucket (guide: `docs/LARGE_FILE_UPLOADS.md`). Flow: `POST /api/projects/[id]/source/presigned-url` (`{ fileName, contentType, sizeBytes, sourceId? }`) creates a `Source` with `status: PENDING` and returns either one presigned PUT URL or, above `S3_MULTIPART_THRESHOLD_BYTES` (default 8 MB), a multipart session (`chunkSizeBytes`, at least 5 MB, `S3_MULTIPART_CHUNK_BYTES`) and a presigned URL per part; then `POST .../source/[sourceId]/finalize` (optional `durationMs`) checks the object's size against the declared `sizeBytes` (mismatch: object removed, 409), completes the multipart upload and sets the source AVAILABLE.
+- **Crash-safe:** the session (S3 key, multipart upload id, uploaded parts) is kept in `Source.uploadSession` (JSON, both prisma schemas; helpers in `src/domain/source-upload.ts`). Calling `presigned-url` again with the same `sourceId` resumes after a refresh instead of creating a duplicate; the UI shows progress (`UploadProgress.tsx`) and can remove a pending or loaded upload.
+- **Browser URLs:** presigned URLs are signed for `MEDIA_S3_ENDPOINT_PUBLIC` (the endpoint the browser can reach; defaults to `MEDIA_S3_ENDPOINT`, which may be an internal address). The bucket needs a CORS rule for the app origin (`deploy-media` sets it up) and an abort-incomplete-multipart lifecycle rule.
+- **Cleanup:** pending sources older than `UPLOAD_STALE_AFTER_MS` (default 24 h) are aborted and their objects removed when the next upload is requested. `MAX_UPLOAD_BYTES` bounds the declared size.
+- **Gate:** the routes answer 503 in production when `ACCESS_SECRET` is not set (`uploadAuthRequired`, `src/app/api/_lib/upload-auth.ts`).
+- **Local storage:** unchanged, `POST /api/projects/[id]/source` with multipart `file` (the JSON form only creates a PENDING upload row). Library assets (images, audio) still go through `formData()` in the app, see `Consider.md` #5.
+- **Tests:** `presigned-url/route.test.ts`, `src/domain/source-upload` tests; the e2e S3 run uses the fake S3 server.
+
+### Caption editor, sequences and VTT import
+- **Caption editor dialog** (`CaptionEditorDialog.tsx` with `Dialog.tsx`, opened from the Transcriptions panel): video on top, captions below with start, end and text on one row; the plain-text export moved to its own dialog. The source player mounts only while the dialog is closed. The **keyboard scheme** is documented once, in `CaptionEditorDialog.tsx`: Ctrl+arrows jump 10 s, Shift+arrows 3 s, Ctrl+Down / Ctrl+Up set the end / start to the playhead, Enter moves to the next caption or creates one, Shift+Enter adds a line, Ctrl+Enter creates a caption after the current one. `SequenceTimeline` uses the same keys; keep the two in step.
+- **Sequence timeline** (`SequenceTimeline.tsx`, pure helpers in `src/domain/sequence-timeline.ts`): in step Rakenne, under the source video, the source's positioned sections (sequences) on a timeline. Drag an edge to change start/end (tenth-of-a-second positions, minimum `MIN_SEQUENCE_SECONDS` = 0.5 s), click to select, rename or recolour in the panel below. Nested sequences are indented under their parent and kept inside it. Sections have an optional `color` (hex, `src/domain/sections.ts`); nested ones inherit the parent's.
+- **VTT with the upload:** the Lähde step has an optional caption file and language next to the file picker. After a single video uploads, the file goes through `POST /api/sources/[sourceId]/transcription-runs/upload` and becomes the source's transcript like an import in the Transcriptions tab. Several videos at once are refused (one caption file belongs to one video).
+- **Graphic rename:** the open graphic's name is an editable field in the graphics editor header (saved on blur or Enter; an empty name is discarded).
 
 ### Media retention
 Project media (sources, outputs, assets) is persistent; nothing expires and the worker runs no cleanup. The `expiresAt` columns in the schema are legacy and unused; nothing reads or writes them. Files are removed only by explicit deletes (project, source, asset).

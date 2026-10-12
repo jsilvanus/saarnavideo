@@ -54,7 +54,7 @@ The composition itself is **one JSON document**, `Project.definition`, validated
 
 ## Request flow: from recording to published video
 
-1. **Source.** A file is streamed into the media store, or a YouTube link creates a `Source` and a `DOWNLOAD` job. The worker downloads with yt-dlp (locally or on a fleet worker, with the stored cookies if any) and records the file.
+1. **Source.** A file is streamed into the media store (with S3 storage the browser uploads it directly to the bucket through presigned, resumable multipart URLs and the app only finalizes the `Source`), or a YouTube link creates a `Source` and a `DOWNLOAD` job. The worker downloads with yt-dlp (locally or on a fleet worker, with the stored cookies if any) and records the file.
 2. **Transcription (optional).** A `TRANSCRIBE` job hands the audio to the speech-to-text service, polls it, and stores the result as a pending `TranscriptionRun`; the user applies it and the segments become the active transcript.
 3. **Editing.** The browser edits `definition` through `PATCH /api/projects/[id]`. Server-side validation (`validateRenderSettings`) rejects odd sizes, invalid reframes and bad variable names.
 4. **Generate.** `POST /api/projects/[id]/generate` links the library assets the definition uses, checks the options, returns warnings (duration, unresolved asset references) and queues a `VIDEO` (or `PREVIEW`, `PODCAST`) job plus a thumbnail job.
