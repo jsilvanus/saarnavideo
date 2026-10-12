@@ -824,6 +824,14 @@ export function useWorkspaceState() {
     const layers = parseLayers<Graphic["layers"][number]>(item.data?.layers) ?? graphic.layers;
     await saveDefinition({ ...def, graphics: (def.graphics ?? []).map((g) => (g.id === id ? { ...g, layers } : g)) });
   }
+  async function renameGraphic(id: string, name: string) {
+    const def = currentDefinition();
+    const graphic = def.graphics?.find((g) => g.id === id);
+    const next = name.trim();
+    if (!graphic || !next || next === graphic.name) return;
+    await saveDefinition({ ...def, graphics: (def.graphics ?? []).map((g) => (g.id === id ? { ...g, name: next } : g)) });
+    setMessage(t("ws.graphicRenamed"));
+  }
   async function deleteGraphic(id: string) {
     const def = currentDefinition();
     if ((def.composition.items ?? []).some((i) => i.graphicId === id)) {
@@ -1031,6 +1039,7 @@ export function useWorkspaceState() {
     createCaptionStyle,
     duplicateGraphic,
     updateGraphic,
+    renameGraphic,
     deleteGraphic,
     stopJob,
     uploadPendingSources,
