@@ -4,7 +4,8 @@ Cleanups found by the `/simplify` review of #23 that were **not** done in #25 (a
 
 ## Efficiency
 
-### 5. Uploads are still parsed into memory by `request.formData()`
+### 5. Library asset uploads are still parsed into memory by `request.formData()`
+- **Scope:** only library images and audio. Source videos no longer pass through the app on S3 storage (direct presigned and multipart uploads, `docs/LARGE_FILE_UPLOADS.md`); on local storage they still go through `POST /api/projects/[id]/source`.
 - **Where:** both upload routes (`src/app/api/assets/route.ts`, `src/app/api/projects/[id]/assets/route.ts`).
 - **Done:** audio is no longer copied again: `readAudioUpload` streams the file into a temporary file while hashing it, and the library file is a rename (`src/app/api/_lib/assets.ts`).
 - **Remaining cost:** `formData()` itself holds the whole multipart body, so a 200 MB upload still takes about 200 MB of heap per concurrent upload.
