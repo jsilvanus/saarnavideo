@@ -128,7 +128,8 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | Variable | Default | Meaning |
 |---|---|---|
 | `WORKER_POLL_MS` | 750 | How often the worker looks for queued jobs |
-| `MAX_CONCURRENT_JOBS` | 1 (4 when `RENDER_EXECUTOR=fffleet`) | Jobs run side by side. Publications always have their own lane |
+| `MAX_CONCURRENT_JOBS` | 1 (4 when `RENDER_EXECUTOR=fffleet`) | Jobs run side by side in one worker process. Publications always have their own lane |
+| `JOB_LIMITS` | unset (no limits) | worker | Caps per job type across **all** workers, for example `TRANSCRIBE=2,VIDEO=4`. Types: `DOWNLOAD`, `THUMBNAIL`, `PREVIEW`, `VIDEO`, `PODCAST`, `TRANSCRIBE`. A typo stops the worker at startup |
 | `REQUEST_TIMEOUT_SECONDS` | 3600 | Part of the worker's resource limits |
 | `FFMPEG_PATH`, `YTDLP_PATH` | `ffmpeg`, `yt-dlp` | Binaries |
 

@@ -28,6 +28,7 @@ import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
 import { getMediaStore } from "@/lib/media-store";
+import { parseJobLimits, type JobLimits } from "@/worker/job-limits";
 import { HEARTBEAT_MS, heartbeat, recoverStaleJobs, type RecoveryDb } from "@/worker/job-recovery";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
@@ -68,27 +69,56 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 async function logJobEvent(jobId: string, level: "DEBUG" | "INFO" | "WARN" | "ERROR", message: string, data?: Record<string, unknown>) { try { await prisma.jobLog.create({ data: { jobId, level, message, data: data ? JSON.stringify(data) : undefined } }); } catch (error) { console.error(`Failed to log job event: ${error}`); } }
 async function updateProgress(jobId: string, data: Record<string, unknown>, force = false) { const write = async () => { progressTimers.delete(jobId); try { await prisma.mediaJob.update({ where: { id: jobId }, data }); } catch (error) { console.error(`Failed to update job progress: ${error}`); } }; if (force) { const timer = progressTimers.get(jobId); if (timer) clearTimeout(timer); await write(); return; } if (progressTimers.has(jobId)) return; progressTimers.set(jobId, setTimeout(() => void write(), PROGRESS_WRITE_MS)); }
 
-export async function claimJob() {
-  const candidates = await prisma.mediaJob.findMany({ where: { status: "QUEUED" }, orderBy: [{ priority: "desc" }, { createdAt: "asc" }], take: 10 });
+/** Global per-type caps from `JOB_LIMITS` (empty = none). Read once; a bad value stops the worker at startup. */
+const JOB_LIMITS = parseJobLimits(process.env.JOB_LIMITS);
+
+type ClaimOptions = { workerId?: string; limits?: JobLimits };
+
+/** Job types that already have as many RUNNING jobs, across all workers, as their limit allows. */
+async function saturatedTypes(limits: JobLimits): Promise<string[]> {
+  const types = Object.keys(limits);
+  if (!types.length) return [];
+  const rows = await prisma.mediaJob.groupBy({ by: ["type"], where: { status: "RUNNING", type: { in: types as never } }, _count: { _all: true } });
+  return rows.filter(row => row._count._all >= (limits[row.type] ?? Infinity)).map(row => row.type);
+}
+
+/**
+ * Flips one QUEUED job to RUNNING for this worker; false when another worker got it first or its type is at its limit.
+ * The claim is one conditional update. Two workers can still both pass the limit check, so a limited type is verified
+ * after the claim: only the first `limit` RUNNING jobs (oldest start, then id) keep their place, the others go back to the queue.
+ */
+async function tryClaim(candidate: { id: string; type: string }, workerId: string, limits: JobLimits): Promise<boolean> {
+  const now = new Date();
+  const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: now, workerId, heartbeatAt: now, phase: "STARTING", message: "Worker claimed job" } });
+  if (result.count !== 1) return false;
+  const limit = limits[candidate.type];
+  if (limit === undefined) return true;
+  const keepers = await prisma.mediaJob.findMany({ where: { status: "RUNNING", type: candidate.type as never }, orderBy: [{ startedAt: "asc" }, { id: "asc" }], take: limit, select: { id: true } });
+  if (keepers.some(job => job.id === candidate.id)) return true;
+  await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "RUNNING", workerId }, data: { status: "QUEUED", startedAt: null, workerId: null, heartbeatAt: null, phase: null, message: "Waiting: job type limit reached" } });
+  return false;
+}
+
+export async function claimJob(options: ClaimOptions = {}) {
+  const workerId = options.workerId ?? WORKER_ID;
+  const limits = options.limits ?? JOB_LIMITS;
+  const blocked = await saturatedTypes(limits);
+  const candidates = await prisma.mediaJob.findMany({ where: { status: "QUEUED", ...(blocked.length ? { type: { notIn: blocked as never } } : {}) }, orderBy: [{ priority: "desc" }, { createdAt: "asc" }], take: 10 });
   for (const candidate of candidates) {
-    if (!candidate.dependsOnJobId) {
-      const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
-      if (result.count === 1) return candidate;
-      continue;
-    }
-    const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } });
-    if (!dependency) {
-      await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency job not found", error: "Dependency job not found" } }).catch(() => undefined);
-      continue;
-    }
-    if (dependency.status !== "COMPLETED") {
-      if (dependency.status === "FAILED" || dependency.status === "CANCELLED") {
-        await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency did not complete", error: "Dependency did not complete" } }).catch(() => undefined);
+    if (candidate.dependsOnJobId) {
+      const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } });
+      if (!dependency) {
+        await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency job not found", error: "Dependency job not found" } }).catch(() => undefined);
+        continue;
       }
-      continue;
+      if (dependency.status !== "COMPLETED") {
+        if (dependency.status === "FAILED" || dependency.status === "CANCELLED") {
+          await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency did not complete", error: "Dependency did not complete" } }).catch(() => undefined);
+        }
+        continue;
+      }
     }
-    const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
-    if (result.count === 1) return candidate;
+    if (await tryClaim(candidate, workerId, limits)) return candidate;
   }
   return null;
 }
