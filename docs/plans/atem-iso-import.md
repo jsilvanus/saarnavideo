@@ -1,6 +1,6 @@
 # Import of ATEM Mini Extreme ISO recordings: every ISO feed plus program
 
-**Status:** plan only, nothing built (2026-10-13). Study and plan; written in parallel with `docs/plans/lcyt-import.md`, whose shape it reuses (`Import`, `feedGroupId`, `syncOffsetMs`, `IMPORT` job, feed swap, auto sync). Build it after the LCYT import has landed S1 and S2, so the two share one implementation of the common parts.
+**Status:** plan only, nothing built (2026-10-13). Study and plan; written in parallel with `docs/plans/lcyt-import.md`, whose shape it reuses (`Import`, `feedGroupId`, `syncOffsetMs`, `IMPORT` job, feed swap, auto sync). The LCYT import has landed (#68: `Import`, feed groups, `moveToSource` feed swap, `IMPORT` job), so the common parts exist and this plan builds on them.
 
 ## Goal
 
@@ -22,7 +22,7 @@ From the vendor's spec sheets (see Sources). Items marked **unverified** must be
 | Piece | LCYT import | ATEM import |
 |---|---|---|
 | `Import` table (`system`, `externalId`, status, `projectId`, `error`) | `system = "lcyt"` | `system = "atem"`, `externalId` = hash of the sorted file list (names, sizes, mtimes) so the same recording is not imported twice |
-| `Source.feedGroupId`, `feedRole`, `syncOffsetMs`, `origin` | 3 roles (CLEAN/PROGRAM/DSK) | PROGRAM plus eight ISO sources. Needs one more enum value `ISO` and a free label column `Source.feedLabel` (`"Cam 1"`, input name); LCYT roles stay unchanged. **Coordination:** add `ISO` and `feedLabel` in the LCYT import's migration or in a small shared PR first, so the two plans do not each edit the enum |
+| `Source.feedGroupId`, `feedRole`, `syncOffsetMs`, `origin` | 3 roles (CLEAN/PROGRAM/DSK) | PROGRAM plus eight ISO sources. `FeedRole.ISO` and `Source.feedLabel` (`"Cam 1"`, input name) already exist in main since the LCYT import (#68); the ATEM import only uses them |
 | `IMPORT` job type, claimed by any worker lane, resumable | fetch feeds from URLs | scan, probe, register, proxy (below) |
 | Feed swap in a section/clip (LCYT S2) | clean to program | any angle of the group, many choices instead of two |
 | Auto sync by audio cross-correlation (LCYT S5) | fallback for missing offsets | verification step for every file against program, always run (cheap) |
@@ -51,7 +51,7 @@ All three create the same `Import` and `Source` rows. The scanner (`src/lib/atem
 ### Data and project creation
 
 - `Source` rows: `feedRole` PROGRAM or ISO, `feedLabel`, `feedGroupId`, `syncOffsetMs`, `origin` `{ system: "atem", importId, fileName }`, status AVAILABLE once probed. No transcoding at import: the originals are the sources.
-- Audio WAVs: stored as `Asset`-like audio sources? Proposed: attach them to the group as `Source` rows of a new kind `AUDIO` only if the existing `SourceType`/audio-clip machinery cannot take them; first check whether `Asset.type = AUDIO` (library) is enough. Decision rule: voiceover/podcast needs a per-use trim, which `audio-clip` already supports against library assets, so register them as library audio assets (content-hash dedupe, `durationMs` probed) linked to the project, named `<recording>-<input>`, and keep them out of the source list. Open question below.
+- Audio WAVs: **decided (Juha, 2026-10-13): library audio assets.** `audio-clip` already trims and mixes against library assets, so each WAV is stored as an `Asset` of type AUDIO (content-hash dedupe, `durationMs` probed), linked to the project and named `<recording>-<input>`; they stay out of the source list. Consequences to handle when building: library files are content-addressed under `MEDIA_ROOT/assets/library` (or the bucket), so WAVs are **copied**, not registered in place; 24-bit/48 kHz stereo is about 1 GB per hour per file, so the import path must bypass or raise `MAX_AUDIO_ASSET_SIZE_BYTES` (default 200 MB) with a separate import limit, stream the hash instead of buffering, and the browser-upload route needs the same streaming; optionally offer a 16-bit or compressed copy for editing and keep the original on request.
 - Project: created with the chosen template (default none), title from the folder name or the user, dates from file mtime/probe `creation_time`. Opens on Lähde with program as the working source and an import notice list.
 - One recording = one project; "add to existing project" can wait.
 
@@ -93,7 +93,7 @@ Nine streams at up to 70 Mb/s is up to about 280 GB per hour in the worst case (
 ## Open questions
 
 - File names, folder layout, timecode and `.drp` format from a real recording. **First task** of the build: Juha records a short test (a minute, all inputs, a few cuts) and shares file listings plus `ffprobe` output (no content needed); the plan's scanner is then adjusted.
-- WAV handling: library audio assets (proposed) or sources of a new kind.
+- ~~WAV handling~~ Decided: library audio assets (see Data and project creation).
 - Register in place vs copy into the store as the default for local installs (proposed: in place, with an explicit "copy to media storage" action).
 - Proxies at import or on demand (proposed: program and cut angles first, others in background; storage cost of nine proxies is small).
 - Is A3 (as-aired cut list) worth building without a readable `.drp`? Decide after the format study; the frame-matching route needs a threshold tuned on real footage.
