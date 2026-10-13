@@ -1,6 +1,6 @@
 # Import of ATEM Mini Extreme ISO recordings: every ISO feed plus program
 
-**Status:** plan only, nothing built (2026-10-13). Study and plan; written in parallel with `docs/plans/lcyt-import.md`, whose shape it reuses (`Import`, `feedGroupId`, `syncOffsetMs`, `IMPORT` job, feed swap, auto sync). Build it after the LCYT import has landed S1 and S2, so the two share one implementation of the common parts.
+**Status:** plan only, nothing built (2026-10-13). Study and plan; written in parallel with `docs/plans/lcyt-import.md`, whose shape it reuses (`Import`, `feedGroupId`, `syncOffsetMs`, `IMPORT` job, feed swap, auto sync). The LCYT import has landed (#68: `Import`, feed groups, `moveToSource` feed swap, `IMPORT` job), so the common parts exist and this plan builds on them.
 
 ## Goal
 
@@ -22,7 +22,7 @@ From the vendor's spec sheets (see Sources). Items marked **unverified** must be
 | Piece | LCYT import | ATEM import |
 |---|---|---|
 | `Import` table (`system`, `externalId`, status, `projectId`, `error`) | `system = "lcyt"` | `system = "atem"`, `externalId` = hash of the sorted file list (names, sizes, mtimes) so the same recording is not imported twice |
-| `Source.feedGroupId`, `feedRole`, `syncOffsetMs`, `origin` | 3 roles (CLEAN/PROGRAM/DSK) | PROGRAM plus eight ISO sources. Needs one more enum value `ISO` and a free label column `Source.feedLabel` (`"Cam 1"`, input name); LCYT roles stay unchanged. **Coordination:** add `ISO` and `feedLabel` in the LCYT import's migration or in a small shared PR first, so the two plans do not each edit the enum |
+| `Source.feedGroupId`, `feedRole`, `syncOffsetMs`, `origin` | 3 roles (CLEAN/PROGRAM/DSK) | PROGRAM plus eight ISO sources. `FeedRole.ISO` and `Source.feedLabel` (`"Cam 1"`, input name) already exist in main since the LCYT import (#68); the ATEM import only uses them |
 | `IMPORT` job type, claimed by any worker lane, resumable | fetch feeds from URLs | scan, probe, register, proxy (below) |
 | Feed swap in a section/clip (LCYT S2) | clean to program | any angle of the group, many choices instead of two |
 | Auto sync by audio cross-correlation (LCYT S5) | fallback for missing offsets | verification step for every file against program, always run (cheap) |
