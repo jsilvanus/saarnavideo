@@ -526,7 +526,7 @@ Project media (sources, outputs, assets) is persistent; nothing expires and the 
 ---
 
 ## Open work
-See `Consider.md` (refactor backlog) and the "not implemented" notes in the sections above. Known gaps: no per-user accounts (shared-secret gate only), API connector secrets not encrypted at rest, fleet/S3/Google/Facebook paths never run against the real services, PostgreSQL schema not exercised by the e2e suite, `WorkspaceStyles.tsx` global CSS not yet moved to modules. `docs/plan.md` is the original roadmap and is partly outdated. Planned, not built: `docs/plans/lcyt-import.md` (import of finished LCYT streams) and `docs/plans/atem-iso-import.md` (ATEM Mini Extreme ISO recordings: all ISO feeds plus program).
+See `Consider.md` (refactor backlog) and the "not implemented" notes in the sections above. Known gaps: no per-user accounts (shared-secret gate only), API connector secrets not encrypted at rest, fleet/S3/Google/Facebook paths never run against the real services, PostgreSQL schema not exercised by the e2e suite, `WorkspaceStyles.tsx` global CSS not yet moved to modules. `docs/plan.md` is the original roadmap and is partly outdated. The LCYT import is built (`docs/plans/lcyt-import.md` keeps the plan; what it leaves out is `Consider.md` 9-14) but has never run against a real LCYT: the first real run is on the Windows Docker Desktop stack (`deploy-media/docs/windows-test.md`). Planned, not built: `docs/plans/atem-iso-import.md` (ATEM Mini Extreme ISO recordings: all ISO feeds plus program, ISO WAVs become library audio assets).
 
 ---
 
