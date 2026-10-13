@@ -1,0 +1,7 @@
+.feed { display: grid; gap: 6px; margin-top: 8px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #eef2ff; color: #3730a3; font-size: 0.75rem; font-weight: 600; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cut input { width: 5.5rem; }
+.events { max-height: 220px; overflow: auto; font-size: 0.8rem; }
+.events table { width: 100%; border-collapse: collapse; }
+.events th, .events td { text-align: left; padding: 2px 6px; border-bottom: 1px solid #e5e5e5; word-break: break-word; }

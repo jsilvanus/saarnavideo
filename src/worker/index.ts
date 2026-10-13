@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { prisma } from "@/lib/prisma";
 import { timelineDuration } from "@/domain/timeline";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
+import type { FeedKey } from "@/renderer/ffmpeg";
 import type { ProjectDefinition } from "@/domain/project";
 import { resolveSourcePaths } from "@/worker/source-resolution";
 import { withDownloadCookies } from "@/integrations/ytdlp-cookies";
@@ -37,6 +38,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { openJobFiles, resolveLocalFile, type JobFiles } from "@/worker/media-io";
 import { createTranscriptionStaging } from "@/worker/transcription-staging";
+import { reconcileImports, runLcytImport } from "@/worker/lcyt-import";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -235,13 +237,13 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
     const videoPath = await files.local(video.storagePath); const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await runSimpleFfmpeg(job.id, ["-hide_banner", "-y", "-ss", "1", "-i", videoPath, "-frames:v", "1", "-q:v", "2", outputPath], { files: [videoPath], outputPath }); await createOutput(files, project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
-  const sourcePaths = await localizePaths(files, resolveSourcePaths(definition, project.sources)); const assetRefs = new Map<string, string>(); for (const asset of project.assets) { assetRefs.set(asset.assetKey, asset.storagePath); assetRefs.set(asset.id, asset.storagePath); assetRefs.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
+  const sourcePaths = await localizePaths(files, resolveSourcePaths(definition, project.sources, { includeFeedOverlays: true })); const feedKeys = new Map(project.sources.filter(source => source.keyParams && typeof source.keyParams === "object").map(source => [source.id, source.keyParams as FeedKey] as const)); const assetRefs = new Map<string, string>(); for (const asset of project.assets) { assetRefs.set(asset.assetKey, asset.storagePath); assetRefs.set(asset.id, asset.storagePath); assetRefs.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
   for (const warning of findUnresolvedImageRefs(definition, project.assets)) await logJobEvent(job.id, "WARN", warning);
   // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
   for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetRefs.set(asset.id, asset.storagePath);
   const assetPaths = await localizePaths(files, assetRefs);
   const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
-  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined });
+  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined, feedKeys });
   const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const outputSeconds = definition.composition.items.length ? timelineDuration(definition.composition.items) : definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds; const totalMs = Math.max(1, Math.round(outputSeconds * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
   const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };
@@ -520,6 +522,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
 async function recoverInterruptedJobs() {
   const { resume, failed } = await recoverStaleJobs(prisma as unknown as RecoveryDb, WORKER_ID);
   if (failed) console.warn(`Marked ${failed} stale job(s) as failed: their worker stopped`);
+  await reconcileImports().catch(error => console.error("Import reconcile failed:", error));
   for (const { id } of resume) {
     const job = await prisma.mediaJob.findUnique({ where: { id } });
     if (!job) continue;
@@ -527,7 +530,27 @@ async function recoverInterruptedJobs() {
   }
 }
 
-async function runClaimedJob(job: MediaJobRow) { let files: JobFiles | undefined; try { if (job.type === "TRANSCRIBE") await processTranscription(job); else { files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: job.id, cacheMaxBytes: process.env.MEDIA_CACHE_MAX_BYTES ? Number(process.env.MEDIA_CACHE_MAX_BYTES) : undefined }); if (job.type === "DOWNLOAD") await processDownload(job, files); else if (job.type === "PODCAST") await runPodcastJob(job, files); else await runFfmpegJob(job, job.type, files); } } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } finally { await files?.cleanup(); } }
+/** IMPORT job: fetches the recordings, captions and metadata of an LCYT broadcast into the project (see src/worker/lcyt-import.ts). */
+async function processImport(job: MediaJobRow, files: JobFiles) {
+  const importId = (job.parameters as { importId?: string } | null)?.importId;
+  if (!importId) throw new Error("IMPORT job has no importId");
+  let cancelled = false;
+  const stopWatching = watchCancel(job.id, () => { cancelled = true; });
+  try {
+    await runLcytImport(importId, {
+      files, mediaRoot: MEDIA_ROOT, maxFileBytes: RESOURCE_LIMITS.maxSourceFileSizeBytes,
+      log: (level, message) => logJobEvent(job.id, level, message),
+      progress: async (progress, message) => { await updateProgress(job.id, { progress, phase: "IMPORTING", message }); if (cancelled) throw new JobCancelled(); },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.import.update({ where: { id: importId }, data: { status: "FAILED", error: message.slice(0, 1000) } }).catch(() => undefined);
+    throw error;
+  } finally { stopWatching(); }
+  await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Import complete", completedAt: new Date() }, true);
+}
+
+async function runClaimedJob(job: MediaJobRow) { let files: JobFiles | undefined; try { if (job.type === "TRANSCRIBE") await processTranscription(job); else { files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: job.id, cacheMaxBytes: process.env.MEDIA_CACHE_MAX_BYTES ? Number(process.env.MEDIA_CACHE_MAX_BYTES) : undefined }); if (job.type === "DOWNLOAD") await processDownload(job, files); else if (job.type === "IMPORT") await processImport(job, files); else if (job.type === "PODCAST") await runPodcastJob(job, files); else await runFfmpegJob(job, job.type as "VIDEO" | "PREVIEW" | "THUMBNAIL", files); } } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } finally { await files?.cleanup(); } }
 
 const captionPublishDeps: CaptionPublishDeps = {
   findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),

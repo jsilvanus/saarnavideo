@@ -19,6 +19,12 @@ export type Source = {
   durationMs?: number | null;
   referenceDurationMs?: number | null;
   uploadSession?: SourceUploadSession | null;
+  /** Set on sources from an imported live stream (LCYT): which recording this is and how it lines up with the others. */
+  feedRole?: "CLEAN" | "PROGRAM" | "DSK" | "ISO" | null;
+  feedGroupId?: string | null;
+  feedLabel?: string | null;
+  syncOffsetMs?: number | null;
+  keyParams?: { hasAlpha?: boolean; color?: string; similarity?: number; blend?: number } | null;
 };
 export type Asset = {
   id: string;
@@ -58,7 +64,10 @@ export type Job = {
 export type Segment = { id: string; label: string; startSeconds: number; endSeconds: number; sourceId?: string };
 export type Transition = { type: "cut" | "fade" | "crossfade"; durationSeconds: number };
 export type Item = {
-  type: "source-clip" | "overlay" | "slate" | "audio-clip";
+  type: "source-clip" | "overlay" | "slate" | "audio-clip" | "feed-overlay";
+  sourceStartSeconds?: number;
+  anchorSourceId?: string;
+  anchorStartSeconds?: number;
   assetId?: string;
   volume?: number;
   atSeconds?: number;
