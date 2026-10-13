@@ -9,7 +9,13 @@ export function remapSourceIds<T>(definition: T, idMap: ReadonlyMap<string, stri
     sections?: Array<Record<string, unknown>>;
     composition?: { items?: Array<Record<string, unknown>> } & Record<string, unknown>;
   } & Record<string, unknown>;
-  const remap = <Row extends Record<string, unknown>>(row: Row): Row => (typeof row?.sourceId === "string" && idMap.has(row.sourceId) ? { ...row, sourceId: idMap.get(row.sourceId) } : row);
+  const remap = <Row extends Record<string, unknown>>(row: Row): Row => {
+    let next = row;
+    if (typeof next?.sourceId === "string" && idMap.has(next.sourceId)) next = { ...next, sourceId: idMap.get(next.sourceId) };
+    // A feed overlay also names the clip it accompanies.
+    if (typeof next?.anchorSourceId === "string" && idMap.has(next.anchorSourceId)) next = { ...next, anchorSourceId: idMap.get(next.anchorSourceId) };
+    return next;
+  };
   return {
     ...def,
     ...(Array.isArray(def.semanticSegments) ? { semanticSegments: def.semanticSegments.map(remap) } : {}),

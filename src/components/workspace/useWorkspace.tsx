@@ -10,6 +10,7 @@ import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { timelineDuration } from "@/domain/timeline";
 import { selectionFromValue } from "@/components/TemplatePicker";
 import { addSourceSection } from "@/domain/templates";
+import { cutOutFeedOverlays, feedDeltaSeconds, moveToSource, withFeedOverlays, withoutFeedOverlays, type FeedSource } from "@/domain/feed-group";
 import { type ProjectVariable } from "@/domain/variables";
 import DurationNotice from "@/components/DurationNotice";
 import type { Reframe } from "@/domain/reframe";
@@ -670,6 +671,18 @@ export function useWorkspaceState() {
       grew = false;
       for (const x of def.sections ?? []) if (x.parentId && ids.has(x.parentId) && !ids.has(x.id)) (ids.add(x.id), (grew = true));
     }
+    // Two recordings of one imported stream do not start at the same moment: the section's times shift by their offset.
+    const feed = (id: string): FeedSource | undefined => {
+      const source = selected?.sources.find((x) => x.id === id);
+      return source ? { id: source.id, feedRole: source.feedRole ?? null, feedGroupId: source.feedGroupId ?? null, syncOffsetMs: source.syncOffsetMs ?? null } : undefined;
+    };
+    const delta = section.sourceId ? feedDeltaSeconds(feed(section.sourceId), feed(sourceId)) : null;
+    if (delta !== null && section.sourceId) {
+      const toDuration = selected?.sources.find((x) => x.id === sourceId)?.durationMs;
+      await saveDefinition(moveToSource(def as unknown as ProjectDefinition, section.sourceId, sourceId, delta, { sectionIds: ids, toDurationSeconds: toDuration ? toDuration / 1000 : undefined }) as unknown as Definition);
+      setMessage(t("ws.sectionSourceChanged", { label: section.label, source: sourceNames[sourceId] ?? sourceId }));
+      return;
+    }
     const moved = (def.sections ?? []).filter((x) => ids.has(x.id));
     const cutFrom = (i: Item) =>
       i.type === "source-clip" &&
@@ -681,6 +694,46 @@ export function useWorkspaceState() {
       composition: { ...def.composition, items: def.composition.items.map((i) => (cutFrom(i) ? { ...i, sourceId } : i)) },
     });
     setMessage(t("ws.sectionSourceChanged", { label: section.label, source: sourceNames[sourceId] ?? sourceId }));
+  }
+  const feedOf = (id: string): FeedSource | undefined => {
+    const source = selected?.sources.find((x) => x.id === id);
+    return source ? { id: source.id, feedRole: source.feedRole ?? null, feedGroupId: source.feedGroupId ?? null, syncOffsetMs: source.syncOffsetMs ?? null } : undefined;
+  };
+  /** Cuts every clip from another recording of the same imported stream (clean or program), keeping the sections on the same moments. */
+  async function switchFeed(toSourceId: string) {
+    const def = currentDefinition() as unknown as ProjectDefinition;
+    const to = selected?.sources.find((x) => x.id === toSourceId);
+    if (!to?.feedGroupId) return;
+    const siblings = new Set((selected?.sources ?? []).filter((x) => x.feedGroupId === to.feedGroupId && x.feedRole !== "DSK" && x.id !== toSourceId).map((x) => x.id));
+    let next = def;
+    for (const fromId of siblings) {
+      const delta = feedDeltaSeconds(feedOf(fromId), feedOf(toSourceId));
+      if (delta !== null) next = moveToSource(next, fromId, toSourceId, delta, { toDurationSeconds: to.durationMs ? to.durationMs / 1000 : undefined });
+    }
+    // The program feed already has the graphics in its picture; laying the graphics recording over it would show them twice.
+    if (to.feedRole === "PROGRAM") for (const dsk of (selected?.sources ?? []).filter((x) => x.feedGroupId === to.feedGroupId && x.feedRole === "DSK")) next = withoutFeedOverlays(next, dsk.id);
+    await saveDefinition(next as unknown as Definition);
+    setMessage(t("ws.feedSwitched", { feed: sourceNames[toSourceId] ?? toSourceId }));
+  }
+  /** Lays the graphics recording over the clean picture wherever the timeline cuts from the clean recording. */
+  async function addFeedGraphics(dskSourceId: string) {
+    const dsk = selected?.sources.find((x) => x.id === dskSourceId);
+    const clean = selected?.sources.find((x) => x.feedGroupId === dsk?.feedGroupId && x.feedRole === "CLEAN");
+    if (!dsk || !clean) { setError(t("ws.feedNoClean")); return; }
+    const def = currentDefinition() as unknown as ProjectDefinition;
+    if (!def.composition.items.some((item) => item.type === "source-clip" && item.sourceId === clean.id)) { setError(t("ws.feedUseClean")); return; }
+    const next = withFeedOverlays(def, feedOf(clean.id)!, feedOf(dsk.id)!, dsk.durationMs ? dsk.durationMs / 1000 : undefined);
+    await saveDefinition(next as unknown as Definition);
+    setMessage(t("ws.feedGraphicsAdded"));
+  }
+  async function removeFeedGraphics(dskSourceId: string) {
+    await saveDefinition(withoutFeedOverlays(currentDefinition() as unknown as ProjectDefinition, dskSourceId) as unknown as Definition);
+    setMessage(t("ws.feedGraphicsRemoved"));
+  }
+  async function cutOutFeedGraphics(dskSourceId: string, from: number, to: number) {
+    if (!(to > from)) { setError(t("ws.endAfterStart")); return; }
+    await saveDefinition(cutOutFeedOverlays(currentDefinition() as unknown as ProjectDefinition, dskSourceId, from, to) as unknown as Definition);
+    setMessage(t("ws.feedGraphicsCut"));
   }
   async function saveOutput(patch: Record<string, unknown>) {
     const def = currentDefinition(),
@@ -1025,6 +1078,10 @@ export function useWorkspaceState() {
     saveVariables,
     saveTitle,
     changeSectionSource,
+    switchFeed,
+    addFeedGraphics,
+    removeFeedGraphics,
+    cutOutFeedGraphics,
     saveOutput,
     saveSectionReframe,
     durationNotice,

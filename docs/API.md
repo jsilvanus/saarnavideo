@@ -668,6 +668,15 @@ Connectors are global (like the asset library) and configured on the Asetukset p
 
 Private-network targets are blocked by default. Allow or deny hosts with the env vars `CONNECTOR_ALLOW` / `CONNECTOR_DENY` (comma lists; deny wins). They are env-only because the app has no login.
 
+## Imports from LCYT
+
+See [INTEGRATIONS.md](INTEGRATIONS.md#import-from-lcyt-finished-live-streams). All routes sit behind the access gate like the rest.
+
+- `POST /api/imports/lcyt` - `{ manifestUrl }` (a signed link to LCYT's handoff manifest) or an inline `manifest`; optional `templateKey`, `userTemplateId`, `defaultFeed` (`clean` | `program`). Validates the manifest, creates the project, the import and an `IMPORT` job. **202** `{ importId, projectId, status: "PENDING", created: true }`; **200** with `created: false` when that broadcast was already delivered (a failed import is queued again and reports `status: "PENDING"`); 400 request not usable, 422 manifest breaks the contract, 502 the manifest could not be fetched (including addresses the guard blocks), 404 unknown template.
+- `GET /api/imports` - the 50 latest imports.
+- `GET /api/imports/[id]` - `{ id, system, externalId, status: PENDING|DOWNLOADING|READY|FAILED, projectId, error, summary }`; `?events=1` adds `summary.dskEvents`, the graphics log. The stored manifest (it holds download links) is never returned.
+- `POST /api/imports/[id]/retry` - queue a failed import again (409 when it is not failed).
+
 ## Rate Limiting (Future)
 
 Planned for production deployment:

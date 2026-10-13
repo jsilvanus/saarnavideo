@@ -66,6 +66,7 @@ Core domain models using Zod for type-safe validation:
 - **`graphics.ts`** - Graphic elements and scene graphs
 - **`saved-templates.ts`** - Capture a project as a template and apply it again
 - **`source-ids.ts`** - Translate source ids in a definition (project duplication)
+- **`lcyt-manifest.ts`**, **`lcyt-import.ts`**, **`feed-group.ts`** - LCYT handoff manifest v1 (Zod copy), what an import makes of it (working feed, sections, variables), feed groups (offsets, feed swap, DSK graphics layer)
 - **`transcription.ts`** - Transcription data structures
 - **`source-upload.ts`**, **`sequence-timeline.ts`** - Direct-upload session state; sequence timeline rows and edits
 - **`validation.ts`** - Shared validation utilities
@@ -108,6 +109,7 @@ FFmpeg-based rendering pipeline:
 - **`source-resolution.ts`** - Download/acquire source media
 - **`sources.ts`** - Source file operations
 - **`media-io.ts`** - Per-job file access (local or S3 cache); **`job-recovery.ts`** - heartbeats and stale-job recovery
+- **`lcyt-import.ts`**, **`lcyt-feed.ts`** - IMPORT job (fetch feeds, join parts, captions, project) and the ffmpeg join of a feed's parts
 - **`remote-ffmpeg.ts`**, **`remote-download.ts`** - fffleet render and download executors; **`transcription-staging.ts`**, **`s3-presign.ts`** - S3 staging for transcription
 - **`captions.ts`**, **`caption-publish.ts`**, **`facebook-publish.ts`**, **`podcast.ts`** - caption options, publishing helpers, podcast job
 - **`*.test.ts`** - Worker logic tests
@@ -115,6 +117,7 @@ FFmpeg-based rendering pipeline:
 #### `/src/lib` - Utilities
 - **`prisma.ts`** - Prisma client singleton
 - **`media-store/`** - Local and S3 storage behind `storagePath`
+- **`lcyt-import.ts`**, **`import-fetch.ts`** - start/retry an LCYT import; SSRF-guarded fetching (manifest, VTT, files)
 - **`access-gate.ts`** - Shared-secret helpers (Web Crypto) used by the middleware and the login routes
 - **`asset-link.ts`**, **`duration-report.ts`**, **`transcript-text.ts`**, **`media-migrate.ts`** - asset auto-linking, duration notices, plain-text transcript, local/S3 migration
 
@@ -127,19 +130,21 @@ FFmpeg-based rendering pipeline:
 
 Models:
 - **Project** - Composition project with template reference
-- **Source** - Media input (upload or YouTube reference); `status` PENDING while a direct S3 upload runs, `uploadSession` holds its resume state
+- **Source** - Media input (upload or YouTube reference); `status` PENDING while a direct S3 upload runs, `uploadSession` holds its resume state; `feedRole` (CLEAN/PROGRAM/DSK/ISO), `feedGroupId`, `feedLabel`, `syncOffsetMs`, `origin`, `keyParams` when it came from an import
 - **MediaJob** - Async job (render, preview, thumbnail, podcast, download, transcribe) claimed by the worker
 - **Output** - Generated video or thumbnail artifact
 - **Publication** - YouTube or Facebook upload record
 - **Asset** - Library image or audio file (overlay, background, logo, font; audio for voiceovers and podcast intro/outro, with `durationMs`)
 - **JobLog** - Job process logs
+- **Import** - A finished stream handed over by LCYT (`system`, `externalId` unique together, `status`, `projectId`, `manifest` with short-lived links until READY, `summary`)
 - **Lease** - Short-lived named lock (`name`, `owner`, `expiresAt`) so only one process does a shared chore (`src/lib/lease.ts`)
 - **TranscriptionRun / TranscriptSegment**, **AssetFolder**, **UserTemplate**, **ApiConnector / ApiRequest**, **YouTubeConnection** - see the sections below
 
 Enums:
 - SourceType (UPLOAD, YOUTUBE)
 - OutputType (VIDEO, THUMBNAIL, CAPTIONS_SRT, CAPTIONS_VTT, AUDIO)
-- MediaJobType (DOWNLOAD, THUMBNAIL, PREVIEW, VIDEO, PODCAST, TRANSCRIBE)
+- MediaJobType (DOWNLOAD, THUMBNAIL, PREVIEW, VIDEO, PODCAST, TRANSCRIBE, IMPORT)
+- FeedRole (CLEAN, PROGRAM, DSK, ISO), ImportStatus (PENDING, DOWNLOADING, READY, FAILED)
 - MediaJobStatus (QUEUED → RUNNING → COMPLETED/FAILED/CANCELLED)
 - AssetType (OVERLAY, BACKGROUND, LOGO, FONT, AUDIO)
 - PublicationStatus (QUEUED → UPLOADING → COMPLETED/FAILED)
@@ -302,6 +307,15 @@ Audio lives in the same asset library as images: `Asset.type = AUDIO` (label; `A
 - **Cookies:** stored in the `YtDlpCookies` table (singleton, AES-256-GCM via `youtube-token-crypto`, `cookieCount` kept so status needs no decrypt) and managed on `/settings` ("YouTube cookies", `YouTubeCookiesSettings`) through `GET/PUT/DELETE /api/integrations/youtube/cookies`; the text is write-only, only `{configured, source, cookieCount, updatedAt, envFallback}` comes back. `withDownloadCookies` (`src/integrations/ytdlp-cookies.ts`) wraps the download in `processDownload` for both executors: DB cookies are decrypted into a private temp file for the run, passed to yt-dlp (`--cookies` locally, staged copy on the fleet), saved back re-encrypted if yt-dlp rewrote them, and the temp file is always removed; `YTDLP_COOKIES_FILE` is the fallback when the DB has none (used in place, fleet write-back goes to that file). Needs `YOUTUBE_TOKEN_ENCRYPTION_KEY` (PUT answers 503 without it) and `prisma db push`. Tests: `src/integrations/ytdlp-cookies.test.ts`.
 - **Tests:** `fleet/download-executor.test.ts` (fake runtime, fake `yt-dlp` on PATH from `fleet/fake-ytdlp.test-helper.mjs`: cookie copy, no leaks, updated cookies, abort kills, exit errors, payload validation) and `src/worker/remote-download.test.ts` (in-process fleet and disk bucket). Never run against a real fleet or real YouTube.
 
+### Import from LCYT (finished live streams)
+`POST /api/imports/lcyt` (`{ manifestUrl }` or inline `manifest`, optional `templateKey`/`userTemplateId`/`defaultFeed`) is where LCYT hands in a broadcast (LCYT's "Send to Saarnavideo", `SAARNAVIDEO_URL`/`SAARNAVIDEO_TOKEN`; the token is `ACCESS_SECRET` as Bearer). The route validates the manifest (`lcytManifestSchema`, `src/domain/lcyt-manifest.ts`, a copy of LCYT's contract that drops unknown fields), then `startLcytImport` (`src/lib/lcyt-import.ts`) creates in one transaction the project (template or blank), the `Import` row (unique on `system` + `externalId` = `origin.groupId`, so one broadcast = one project) and an `IMPORT` job: 202 when new, 200 with the existing ids when the broadcast was delivered before, a FAILED import is queued again. `GET /api/imports`, `/api/imports/[id]` (`?events=1` adds the DSK log), `POST /api/imports/[id]/retry`.
+- **Fetching:** everything goes through `src/lib/import-fetch.ts`: varfetch's address guard (private targets only via `CONNECTOR_ALLOW`/`IMPORT_ALLOW`), every redirect hop checked, size limits, query strings (signed tokens) scrubbed from errors and logs. The job (`runLcytImport`, `src/worker/lcyt-import.ts`, any worker) downloads each feed's `parts`; several parts are joined by ffmpeg (`buildJoinArgs`, `src/worker/lcyt-feed.ts`) with a gap filler (black, the key colour for DSK) so a file always runs on one timeline from its first part. One `Source` per file feed (`feedGroupId` = the import id, `syncOffsetMs` = first part's start on the clean clock); an `aliasOf` feed has no file. Resumable: existing sources/caption runs are kept. `reconcileImports` fails imports whose job vanished. The manifest column is cleared when READY.
+- **Captions** become a transcript run per language on every non-DSK source, shifted by that source's offset (`shiftCues`). The DSK event log is kept in `Import.summary` (first 5000 events). Variables fill `definition.variables` (invalid names skipped, noted). The working source is `program` when it has a file (else `clean`, or the `defaultFeed`), cut into sections by `importSections` (one per cue marker, else one).
+- **Feed groups** (`src/domain/feed-group.ts`): a moment at `s` in file A is at `s + (offsetA - offsetB)/1000` in file B. `moveToSource` swaps clips/sections/segments between feeds with that shift (UI: `switchFeed`, `changeSectionSource` when both sources are in one group). `withFeedOverlays` makes one `feed-overlay` timeline item per clean clip; `cutOutFeedOverlays` / `withoutFeedOverlays` edit them. A `feed-overlay` (`feedOverlaySchema`, `src/domain/project.ts`) takes no time: `sourceId` (the DSK source), `sourceStartSeconds`, output `startSeconds`/`endSeconds`, `anchorSourceId`/`anchorStartSeconds` (the clip whose reframe it follows).
+- **Render** (`feedOverlayFilters`, `src/renderer/ffmpeg.ts`): trim, shift to the output time, `colorkey` (colour/similarity/blend from `Source.keyParams`, passed as `RenderPlanOptions.feedKeys`; skipped when `hasAlpha`), the clip's reframe (fit pads transparent), `overlay` with `eof_action=pass`, below the user's own overlays. The worker passes the DSK source as an extra input (`resolveSourcePaths(..., { includeFeedOverlays: true })`, video renders only). Choosing the program feed removes the layer (its graphics are already in the picture).
+- **UI:** `ImportNotice` (progress, error + retry, notices) and `FeedSourceActions` (role, offset, use this picture, graphics layer, cut-out, event log) in the Lähde step; the timeline overview shows the layer in the graphics lane. i18n keys `feed.*`, `import.*`.
+- **Not built:** scoped import token, pull page, mapping the DSK log to graphics (S4), audio auto sync (S5), `s3://` refs. Tests: `lcyt-manifest.test.ts`, `lcyt-import.test.ts`, `feed-group.test.ts` (domain), `src/renderer/feed-overlay.test.ts` (real ffmpeg, pixel checks of the key and the timing), `src/lib/import-fetch.test.ts`, `src/worker/lcyt-import.test.ts` (DB + ffmpeg + a local HTTP server), `src/app/api/imports/imports.test.ts`. Never run against a real LCYT. Needs `prisma db push` (new table and columns). Details: `docs/INTEGRATIONS.md`, `docs/plans/lcyt-import.md`.
+
 ### Transcription staging in S3
 `AUDITOR_STT_FETCH=s3` (default `upload`) changes only how a TRANSCRIBE job hands its audio to the auditor service: `src/worker/transcription-staging.ts` puts the 16 kHz mono WAV (the whole source is extracted too, not only partial ranges) in `FFFLEET_S3_BUCKET` under `<prefix>/tmp/<jobId>/`, `presignGetUrl` (`src/worker/s3-presign.ts`, SigV4 query auth) makes a one-hour URL, `AuditorSttClient.submitUrl` posts it as `source_url`, and the object is deleted as soon as the submit call returns (the service downloads before it answers). The service needs `AUDITOR_STT_SOURCE_URL_HOSTS`. Polling, resume and range-offset handling are unchanged. `AUDITOR_STT_FETCH=s3-source` stages the original file instead (whole sources only; partial ranges keep the audio path), so no ffmpeg runs in the worker: the auditor strips it on a fleet worker (`AUDITOR_STT_STRIP=fleet`). The staged object is kept until the job ends (`stagedKey` in the job parameters, `releaseStagedSource` on every exit and on failure). Tests: `s3-presign.test.ts` (AWS documentation vector), `transcription-staging.test.ts`, `auditorStt/client.test.ts`.
 
@@ -413,6 +427,9 @@ A `MediaJob` goes QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. While R
 
 ### Outputs
 - `GET /api/outputs/[id]` - Download generated video
+
+### Imports
+- `POST /api/imports/lcyt`, `GET /api/imports`, `GET /api/imports/[id]`, `POST /api/imports/[id]/retry` - LCYT hand-in (see "Import from LCYT")
 
 ### Integrations
 - `GET /api/integrations/youtube/connect` - Start OAuth flow

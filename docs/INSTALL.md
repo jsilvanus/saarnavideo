@@ -103,6 +103,8 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | `ACCESS_SECRET` | unset (no gate) | app | Shared-secret login, see above |
 | `YOUTUBE_TOKEN_ENCRYPTION_KEY` | | app, worker | 32-byte hex key; encrypts YouTube tokens and stored yt-dlp cookies |
 | `CONNECTOR_ALLOW` / `CONNECTOR_DENY` | | app | Hosts the API connectors (Settings) may or may not call. Private and loopback addresses are blocked unless allowed; deny wins |
+| `IMPORT_ALLOW` / `IMPORT_DENY` | | app, worker | Added to the connector lists for fetching an LCYT import (manifest and files). The `deploy-media` stack must allow LCYT's host name here or in `CONNECTOR_ALLOW` |
+| `LCYT_IMPORT_TEMPLATE` | `basic` | app | Template key for projects made by an LCYT import (`basic` = blank, sized like the recording) |
 
 ### Media and limits
 

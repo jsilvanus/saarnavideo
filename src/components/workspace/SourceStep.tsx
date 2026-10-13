@@ -1,5 +1,7 @@
 "use client";
 
+import FeedSourceActions from "@/components/FeedSourceActions";
+import ImportNotice from "@/components/ImportNotice";
 import { useT } from "@/i18n/I18nProvider";
 import { formatTime, sourceLabel } from "@/components/format";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
@@ -49,6 +51,7 @@ export default function SourceStep() {
   return (
     <div className="step-grid">
       <div className="step-main">
+        <ImportNotice projectId={selected.id} />
         <Panel
           title={t("src.panel.title")}
           text={t("src.panel.text")}
@@ -137,6 +140,7 @@ export default function SourceStep() {
                     {pendingFiles[s.id] && <small>{t("src.selectedFile", { name: pendingFiles[s.id].name })}</small>}
                   </div>
                 )}
+                <FeedSourceActions source={s} />
                 {(s.type === "UPLOAD" || s.type === "YOUTUBE") && (
                   <button onClick={() => void deleteSource(s)} disabled={busy} style={{ marginTop: 8 }}>
                     {t("common.remove")}

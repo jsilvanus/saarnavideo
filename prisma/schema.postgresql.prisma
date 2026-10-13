@@ -11,6 +11,19 @@ enum SourceType {
   UPLOAD
   YOUTUBE
 }
+/// Role of a source inside a feed group (a finished live stream imported as several recordings).
+enum FeedRole {
+  CLEAN
+  PROGRAM
+  DSK
+  ISO // one camera input of a switcher recording (ATEM), see docs/plans/atem-iso-import.md
+}
+enum ImportStatus {
+  PENDING
+  DOWNLOADING
+  READY
+  FAILED
+}
 enum SourceStatus {
   PENDING
   AVAILABLE
@@ -29,6 +42,7 @@ enum MediaJobType {
   VIDEO
   PODCAST
   TRANSCRIBE
+  IMPORT
 }
 enum MediaJobStatus {
   QUEUED
@@ -107,6 +121,12 @@ model Source {
   durationMs Int?
   referenceDurationMs Int?
   uploadSession Json?
+  feedRole FeedRole? // set on sources made by an import of separate recordings (clean, program, dsk)
+  feedGroupId String? // shared by the sources of one import
+  feedLabel String? // free name of the feed ("Cam 1"), for ISO feeds
+  syncOffsetMs Int? // where this file's t=0 lies on the clean feed's timeline
+  origin Json? // { system, instance, broadcastId, videoId, groupId, manifestVersion }
+  keyParams Json? // DSK feed: { color, similarity, blend } or { hasAlpha: true }
   createdAt DateTime @default(now())
   expiresAt DateTime? // legacy: unused, media is persistent
   projects Project[]
@@ -339,4 +359,19 @@ model ApiRequest {
   updatedAt DateTime @updatedAt
   @@unique([connectorId, name])
   @@index([connectorId])
+}
+
+/// A finished stream handed over by another system (LCYT). Unique per (system, externalId) so one broadcast makes one project.
+model Import {
+  id String @id @default(cuid())
+  system String
+  externalId String
+  status ImportStatus @default(PENDING)
+  projectId String?
+  manifest Json? // short-lived download URLs inside; cleared when the import is READY
+  summary Json?
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([system, externalId])
 }

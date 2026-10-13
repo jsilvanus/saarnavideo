@@ -124,6 +124,8 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
       const range = item.type === "overlay" ? overlayOutputRange(item, items, { sections }) : { startSeconds: item.startSeconds, endSeconds: item.endSeconds };
       if (!range) return;
       blocks.push({ key: `graphic-${index}`, lane: "graphics", start: range.startSeconds, end: range.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || t("tl.graphic"), detail: item.type === "slate" ? t("tl.overlayBackground") : t("tl.overlay"), tone: "graphic" });
+    } else if (item.type === "feed-overlay") {
+      blocks.push({ key: `feed-${index}`, lane: "graphics", start: item.startSeconds, end: item.endSeconds, label: t("tl.feedGraphics"), detail: t("tl.feedGraphicsDetail"), tone: "graphic" });
     } else if (item.type === "audio-clip" && item.mode === "mix") {
       const start = item.atSeconds ?? 0;
       blocks.push({ key: `mix-${index}`, lane: "audio", start, end: start + Math.max(0, item.endSeconds - item.startSeconds), label: audioName(item.assetId), detail: item.duckSourceVolume !== undefined && item.duckSourceVolume < 1 ? t("tl.mixedDucked") : t("tl.mixed"), tone: "audio" });

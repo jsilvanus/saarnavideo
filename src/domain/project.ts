@@ -76,7 +76,29 @@ export const audioClipSchema = z.object({
   transitionIn: transitionSchema.optional(),
 }).refine(...endAfterStart);
 
-export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema, overlaySchema, slateSchema, audioClipSchema]);
+/**
+ * The graphics recording of an imported live stream (the DSK feed) laid over the picture for a stretch of the output.
+ * The recording shows the graphics on a key colour (or with alpha); the renderer keys it and reframes it exactly like the
+ * clip it accompanies, so it lands on the same pixels as on air. Taking it out or trimming it removes or shortens the
+ * on-air graphics without touching the clean picture. Overlays take no time of their own.
+ */
+export const feedOverlaySchema = z.object({
+  type: z.literal("feed-overlay"),
+  /** The DSK source. */
+  sourceId: z.string().min(1),
+  /** Seconds into the DSK recording where this stretch starts. */
+  sourceStartSeconds: z.number().nonnegative(),
+  /** Where the graphics show, in output-timeline seconds. */
+  startSeconds: z.number().nonnegative(),
+  endSeconds: z.number().positive(),
+  /** The clip this accompanies (source and start in that source): the reframe is resolved as for that clip. */
+  anchorSourceId: z.string().min(1).optional(),
+  anchorStartSeconds: z.number().nonnegative().optional(),
+  reframe: reframeSchema.optional(),
+  opacity: z.number().min(0).max(1).default(1),
+}).refine(...endAfterStart);
+
+export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema, overlaySchema, slateSchema, audioClipSchema, feedOverlaySchema]);
 
 export const semanticSegmentSchema = z.object({
   id: z.string().min(1),
@@ -158,6 +180,7 @@ export type TimelineItem = z.infer<typeof timelineItemSchema>;
 /** The two TimelineItem variants that carry graphic-editor state (`data`, `graphicId`) and are drawn by the graphics pipeline. */
 export type GraphicCarrierItem = Extract<TimelineItem, { type: "overlay" }> | Extract<TimelineItem, { type: "slate" }>;
 export type AudioClipItem = Extract<TimelineItem, { type: "audio-clip" }>;
+export type FeedOverlayItem = Extract<TimelineItem, { type: "feed-overlay" }>;
 export type PodcastSettings = z.infer<typeof podcastSettingsSchema>;
 /** Timeline items that occupy time in sequence: source clips, standalone slates and standalone audio clips. */
 export type BaseItem = Extract<TimelineItem, { type: "source-clip" }> | Extract<TimelineItem, { type: "slate" }> | AudioClipItem;
@@ -213,9 +236,9 @@ export function migrateProjectDefinition(input: unknown, fallbackSourceId?: stri
 
 export function validateCompositionSources(definition: ProjectDefinition, sourceIds: string[]) {
   const sourceIdSet = new Set(sourceIds);
-  const missingSourceIds = definition.composition.items.filter(isSourceClip).map((item) => item.sourceId).filter((sourceId) => !sourceIdSet.has(sourceId));
+  const missingSourceIds = definition.composition.items.filter((item): item is Extract<TimelineItem, { type: "source-clip" | "feed-overlay" }> => item.type === "source-clip" || item.type === "feed-overlay").map((item) => item.sourceId).filter((sourceId) => !sourceIdSet.has(sourceId));
   if (missingSourceIds.length > 0) throw new Error(`Composition references missing sources: ${Array.from(new Set(missingSourceIds)).join(", ")}`);
   const graphicIds = new Set(definition.graphics.map((graphic) => graphic.id));
-  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem | AudioClipItem => item.type !== "source-clip" && !!item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
+  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem | AudioClipItem => item.type !== "source-clip" && item.type !== "feed-overlay" && !!item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
   if (missingGraphics.length > 0) throw new Error(`Composition references missing graphics: ${Array.from(new Set(missingGraphics)).join(", ")}`);
 }

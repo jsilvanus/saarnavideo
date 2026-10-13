@@ -1,6 +1,6 @@
 # Import from LCYT: finished streams as editable projects
 
-**Status:** plan only, nothing built (2026-10-12). Companion plan in live-captions-yt: `docs/plans/plan_saarnavideo_handoff.md`, which owns the manifest contract (v1) described there.
+**Status:** S1 (import), S2 (feed swap with offsets) and S3 (keyed DSK graphics layer) built 2026-10-13, see `docs/INTEGRATIONS.md`, "Import from LCYT". Not built: S4 (graphics log to SaarnaVideo graphics), S5 (audio sync), the pull page, the scoped import token. Differences from the text below: only the push route exists; project creation happens in the request (the job only fills it); partial deliveries resume instead of keeping a PARTIAL state; `Source.feedRole` also has `ISO` and `Source.feedLabel` exists for `docs/plans/atem-iso-import.md`; LCYT sends `https` links (no `s3://` references yet) and feeds in `parts`. Original plan: Companion plan in live-captions-yt: `docs/plans/plan_saarnavideo_handoff.md`, which owns the manifest contract (v1) described there.
 
 ## Goal
 

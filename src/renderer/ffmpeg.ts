@@ -1,12 +1,12 @@
 import { DESIGN_CANVAS } from "@/domain/output-presets";
 import { resolveReframe, type Reframe } from "@/domain/reframe";
 import { layoutTimeline } from "@/domain/timeline";
-import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem } from "@/domain/project";
+import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type FeedOverlayItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem } from "@/domain/project";
 
 export type CaptionTrackInput = { path: string; language: string };
 /** Burned-in captions: an ASS file rendered onto the picture with libass after overlays/slates (and before any preview downscale). */
 export type BurnedCaptionInput = { assPath: string; /** Directory libass searches for font files (the template font's directory). */ fontsDir?: string };
-export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput; /** Low-cost preview: the picture is downscaled to `width` (aspect kept) after overlays and burned captions, and encoded fast. */ preview?: { width: number } };
+export type RenderPlanOptions = { /** Soft subtitle track muxed into the MP4 as mov_text; `language` must be an ISO 639-2 code. */ captions?: CaptionTrackInput; burnedCaptions?: BurnedCaptionInput; /** Low-cost preview: the picture is downscaled to `width` (aspect kept) after overlays and burned captions, and encoded fast. */ preview?: { width: number }; /** Key settings of DSK sources by source id, for `feed-overlay` items. */ feedKeys?: Map<string, FeedKey> };
 export type FfmpegPlan = { sourcePaths: Map<string, string>; assetPaths?: Map<string, string>; outputPath: string; args: string[] };
 
 type SourceClipItem = Extract<TimelineItem, { type: "source-clip" }>;
@@ -59,6 +59,38 @@ export function sourceVideoFilters(inputIndex: number, start: number, duration: 
     : "";
   return [`${trimmed},${crop}${cover},setsar=1[${label}]`];
 }
+/** A key colour for ffmpeg's `colorkey`: `#rrggbb` becomes `0xrrggbb`, a colour name keeps only safe characters. */
+export function ffmpegKeyColor(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return `0x${raw.slice(1)}`;
+  if (/^0x[0-9a-fA-F]{6}$/.test(raw)) return raw;
+  return raw.replace(/[^0-9a-zA-Z]/g, "") || "0x00B140";
+}
+
+/** Key settings of a DSK source (`Source.keyParams`): the colour LCYT keyed on air, or "has alpha" for a recording with a real alpha channel. */
+export type FeedKey = { hasAlpha?: boolean; color?: string; similarity?: number; blend?: number };
+
+const unit = (value: unknown, fallback: number) => (Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : fallback);
+
+/**
+ * Filters for the DSK recording laid over the picture: trim to the stretch, shift it onto the output timeline, key out the
+ * key colour (unless the file has alpha), and fit the frame like the clip underneath (so graphics land on the same pixels):
+ * fill and custom crop and cover, fit shrinks into a transparent frame. Ends with `label` as an RGBA stream.
+ */
+export function feedOverlayFilters(inputIndex: number, item: FeedOverlayItem, label: string, frame: { width: number; height: number }, reframe: Reframe, key: FeedKey | undefined): string[] {
+  const { width: W, height: H } = frame;
+  const duration = item.endSeconds - item.startSeconds;
+  const keyed = key?.hasAlpha ? "format=rgba" : `colorkey=${ffmpegKeyColor(key?.color)}:${formatSeconds(unit(key?.similarity, 0.3))}:${formatSeconds(unit(key?.blend, 0.1))},format=rgba`;
+  const crop = reframe.mode === "custom" && reframe.crop
+    ? `crop=w=trunc(iw*${formatSeconds(reframe.crop.w)}/2)*2:h=trunc(ih*${formatSeconds(reframe.crop.h)}/2)*2:x=trunc(iw*${formatSeconds(reframe.crop.x)}/2)*2:y=trunc(ih*${formatSeconds(reframe.crop.y)}/2)*2,`
+    : "";
+  const geometry = reframe.mode === "fit"
+    ? `scale=w=${W}:h=${H}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black@0`
+    : `${crop}scale=w=${W}:h=${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;
+  const opacity = item.opacity !== undefined && item.opacity < 1 ? `,colorchannelmixer=aa=${formatSeconds(item.opacity)}` : "";
+  return [`[${inputIndex}:v]trim=start=${formatSeconds(item.sourceStartSeconds)}:duration=${formatSeconds(duration)},setpts=PTS-STARTPTS+${formatSeconds(item.startSeconds)}/TB,${keyed},${geometry},setsar=1,format=rgba${opacity}[${label}]`];
+}
+
 /** Path of an audio-clip's asset; throws when it is missing from `assetPaths`. */
 export function audioAssetPath(assetPaths: Map<string, string> | undefined, assetId: string): string {
   const found = assetPaths?.get(assetId);
@@ -219,6 +251,16 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     args.push("-loop", "1", "-i", assetPaths.get(key)!);
   }
 
+  // DSK recordings laid over the picture: one input per recording, however many stretches use it.
+  const feedOverlays = items.filter((item): item is FeedOverlayItem => item.type === "feed-overlay");
+  const feedIndexBySource = new Map<string, number>();
+  for (const item of feedOverlays) {
+    if (feedIndexBySource.has(item.sourceId)) continue;
+    if (!sourcePaths.has(item.sourceId)) throw new Error(`Missing source path for sourceId: ${item.sourceId}`);
+    feedIndexBySource.set(item.sourceId, nextInput++);
+    args.push("-i", sourcePaths.get(item.sourceId)!);
+  }
+
   const sx = width / DESIGN_CANVAS.width, sy = height / DESIGN_CANVAS.height;
   const ctx: RichContext = { width, height, sx, sy, sf: Math.min(sx, sy), textColor, imageIndexByAsset, counter: { value: 0 }, fontFile: template?.fontFile };
   const filters: string[] = [];
@@ -282,6 +324,13 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
 
   let outputVideo = currentVideo;
   let overlayCounter = 0;
+  feedOverlays.forEach((item, index) => {
+    const reframe = resolveReframe({ sourceId: item.anchorSourceId ?? item.sourceId, startSeconds: item.anchorStartSeconds ?? item.sourceStartSeconds, endSeconds: (item.anchorStartSeconds ?? item.sourceStartSeconds) + (item.endSeconds - item.startSeconds), reframe: item.reframe }, definition.sections, template?.reframe);
+    const keyed = `fo${index}`, next = `fov${index}`;
+    filters.push(...feedOverlayFilters(feedIndexBySource.get(item.sourceId)!, item, keyed, { width, height }, reframe, options.feedKeys?.get(item.sourceId)));
+    filters.push(`[${outputVideo}][${keyed}]overlay=x=0:y=0:eof_action=pass${enableBetween({ start: item.startSeconds, end: item.endSeconds })}[${next}]`);
+    outputVideo = next;
+  });
   for (const item of overlays) {
     const next = `ol${overlayCounter++}`;
     const range = { start: item.startSeconds, end: item.endSeconds };

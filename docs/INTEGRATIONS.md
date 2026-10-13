@@ -148,6 +148,33 @@ Set it on the app and on every worker. Startup fails if the bucket or keys are m
 
 You can use the same bucket for render staging (`FFFLEET_S3_BUCKET`) or a different one; staged objects live under their own prefix and are deleted after use, media is kept.
 
+## Import from LCYT (finished live streams)
+
+[LCYT](https://github.com/jsilvanus/live-captions-yt) can hand a finished broadcast to SaarnaVideo: the recordings, the captions, the on-air graphics log and the broadcast's details become a **new project**. The manifest contract (v1) is owned by LCYT (`docs/plans/plan_saarnavideo_handoff.md`); `src/domain/lcyt-manifest.ts` is SaarnaVideo's copy and ignores fields it does not know.
+
+**Set up.** On LCYT set `SAARNAVIDEO_URL` (this app's address), `SAARNAVIDEO_TOKEN` and `PUBLIC_URL` (LCYT's own address, which SaarnaVideo must be able to reach). With `ACCESS_SECRET` set on the app, `SAARNAVIDEO_TOKEN` is that secret (it is sent as `Authorization: Bearer`); a scoped import token is a planned follow-up, so keep the secret out of untrusted hands. LCYT then posts `{ manifestUrl }` to `POST /api/imports/lcyt` from its "Send to Saarnavideo" button (or automatically with `HANDOFF_AUTO_SEND`). A **worker** must be running: it does the fetching (job type `IMPORT`, any worker, one per import).
+
+**Network.** The app and worker fetch the manifest and every file from LCYT's links. They use the same address guard as the API connectors: private, loopback and link-local targets are refused unless listed in `CONNECTOR_ALLOW` or `IMPORT_ALLOW` (comma lists, `CONNECTOR_DENY` / `IMPORT_DENY` win). In the `deploy-media` stack LCYT is on the private network, so allow its host name there. Links carry a short-lived token in the query string; it is never written to logs or error messages, and the stored manifest is cleared once the import is ready.
+
+**What arrives.**
+- Each feed with a file becomes a source of the new project (`Source.feedRole` CLEAN, PROGRAM or DSK, `feedGroupId` = the import id, `syncOffsetMs` = where the file's start lies on the clean feed's clock). `program` is the broadcast as aired; it is an alias of `clean` (no second file) when no graphics were composited. A feed that was recorded in several parts is joined into one file, with a gap (black, or the key colour for the graphics recording) where the stream was not recording, so every file keeps one timeline.
+- Captions (VTT) become one transcript run per language on every picture feed, moved onto that file's own time (so the caption editor, burned and soft captions work on whichever feed you cut from).
+- The new project starts from the template named in the request (`templateKey` or `userTemplateId`), else `LCYT_IMPORT_TEMPLATE`, else a blank project sized like the recording. Its title is the broadcast title; the manifest's `variables` fill the project variables (names the variable rules refuse are skipped and listed in the notices). The working source is `program` when it has a file (or the `defaultFeed` asked for), cut into one section for the whole recording, or one per cue marker.
+- The graphics log (`dskEvents`) is kept with the import and shown in the Lähde step; it is not yet mapped to SaarnaVideo graphics.
+
+**Editing with the separate feeds** (Lähde step, on each source card):
+1. *Use this picture for the clips* moves the clips, sections and segments to another recording of the same stream, shifted by the offset, so every section stays on the same moment. A single section can be moved the same way from the section's source picker.
+2. *Lay the graphics over the clean picture* (on the graphics recording) adds one `feed-overlay` per clean clip. The renderer keys out the key colour LCYT used on air (`colorkey`, or nothing when the recording has alpha), fits the picture exactly like the clip underneath, and overlays it. The result equals the broadcast as aired, but the graphics are now a layer: *Cut out of the graphics* removes a stretch (a wrong lower third), and removing the layer leaves the clean picture. Graphics you add yourself still sit on top.
+3. Choosing the program feed removes the graphics layer, because those graphics are already in its picture.
+
+A key colour on H.264 leaves faint colour edges around the graphics; a recording with real alpha (a later LCYT option) avoids that.
+
+**Idempotent.** One broadcast (`origin.groupId`) makes one project. Delivering it again returns the existing import (HTTP 200); only a failed import is queued again, and it resumes: sources and caption runs that already arrived are kept. A job whose worker disappeared is marked failed within about 30 s, so the Lähde step offers *Try again*.
+
+**Data protection.** Recordings and transcripts of worship services can reveal religious belief and show identifiable people. Nothing is fetched unless an authenticated call asks, handoff is off by default on the LCYT side, and the files stay until someone deletes the project or source. Fixtures in this repository are synthetic.
+
+**Not done yet** (see `docs/plans/lcyt-import.md`): a scoped import token, a pull page that lists broadcasts from LCYT, mapping the graphics log to SaarnaVideo graphics, automatic audio sync when offsets are missing, `s3://` references (LCYT currently sends https links), a run against a real LCYT.
+
 ## API connectors and church-year data (varfetch)
 
 **Settings** (top right) manages connectors: a base address, authentication (bearer, API-key header, basic; the secret is stored but never shown again) and requests with `{{name}}` placeholders and JSONPath mappings to project variable names. Requests run through the [varfetch](https://github.com/jsilvanus/varfetch) package (`^0.3.0`; only `fireRequest` on the server, types in the browser).

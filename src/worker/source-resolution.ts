@@ -8,18 +8,19 @@ export type SourceRecord = {
   youtubeUrl: string | null;
 };
 
-export function getReferencedSourceIds(definition: ProjectDefinition): string[] {
+/** Sources the composition cuts from; with `includeFeedOverlays` also the DSK recordings laid over the picture (video renders only). */
+export function getReferencedSourceIds(definition: ProjectDefinition, options: { includeFeedOverlays?: boolean } = {}): string[] {
   const sourceIds = new Set<string>();
   for (const item of definition.composition.items) {
-    if (item.type === "source-clip") {
+    if (item.type === "source-clip" || (options.includeFeedOverlays && item.type === "feed-overlay")) {
       sourceIds.add(item.sourceId);
     }
   }
   return [...sourceIds];
 }
 
-export function resolveSourcePaths(definition: ProjectDefinition, sources: readonly SourceRecord[]): Map<string, string> {
-  const sourceIds = new Set(getReferencedSourceIds(definition));
+export function resolveSourcePaths(definition: ProjectDefinition, sources: readonly SourceRecord[], options: { includeFeedOverlays?: boolean } = {}): Map<string, string> {
+  const sourceIds = new Set(getReferencedSourceIds(definition, options));
   const sourcePaths = new Map<string, string>();
 
   for (const source of sources) {
