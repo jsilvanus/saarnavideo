@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -50,8 +50,10 @@ function definitionWith(items: unknown[], extra: Record<string, unknown> = {}): 
   });
 }
 
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
+
 /** Real ffmpeg: a blue "clean" picture and a "graphics" recording (key green with a red box from t = 1 s); checks which pixels survive the key. */
-describe("feed overlay render", () => {
+describe.skipIf(!hasFfmpeg)("feed overlay render", () => {
   let dir: string;
   const clean = () => path.join(dir, "clean.mp4"), dsk = () => path.join(dir, "dsk.mp4");
 

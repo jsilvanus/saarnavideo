@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import { buildJoinArgs, gapsBetween, probeVideo } from "@/worker/lcyt-feed";
 import { sampleManifest } from "@/domain/lcyt-manifest.fixture";
 
 const run = promisify(execFile);
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 const rules = { allow: ["127.0.0.1"] };
 
 let dir: string;
@@ -35,10 +36,12 @@ beforeAll(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "lcyt-import-"));
   mediaRoot = path.join(dir, "media");
   setMediaStore(createMediaStore({ mode: "local", root: mediaRoot }));
-  files.set("clean-1.mp4", await clip("c.mp4", 4, "blue"));
-  files.set("program-1.mp4", await clip("p.mp4", 4, "red"));
-  files.set("dsk-1.mp4", await clip("d1.mp4", 2, "0x00B140", false));
-  files.set("dsk-2.mp4", await clip("d2.mp4", 1, "0x00B140", false));
+  if (hasFfmpeg) {
+    files.set("clean-1.mp4", await clip("c.mp4", 4, "blue"));
+    files.set("program-1.mp4", await clip("p.mp4", 4, "red"));
+    files.set("dsk-1.mp4", await clip("d1.mp4", 2, "0x00B140", false));
+    files.set("dsk-2.mp4", await clip("d2.mp4", 1, "0x00B140", false));
+  }
   files.set("captions.fi.vtt", "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nalku\n\n00:00:02.000 --> 00:00:03.500\nsaarna\n");
   files.set("dsk-events.json", JSON.stringify({ version: 1, events: [{ atMs: 500, kind: "overlay", data: { name: "lower-third" } }, { atMs: 2500, kind: "overlay", data: null }] }));
   server = createServer((request, response) => {
@@ -56,7 +59,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  server.close();
+  server?.close();
   // The test database outlives the run: remove what the tests made.
   const imports = await prisma.import.findMany({ where: { externalId: { endsWith: `-${unique}` } } });
   await prisma.project.deleteMany({ where: { id: { in: imports.flatMap((record) => (record.projectId ? [record.projectId] : [])) } } });
@@ -95,7 +98,7 @@ describe("joining the parts of a feed", () => {
   });
 });
 
-describe("LCYT import", () => {
+describe.skipIf(!hasFfmpeg)("LCYT import", () => {
   it("fetches the feeds, joins parts with the gap, moves captions and keeps the events", async () => {
     const manifest = manifestFor("g-full", { feeds: feeds(), markers: [{ atMs: 3000, kind: "cue", label: "Saarna" }], variables: { otsikko: "Pyhäpäivä", "bad key": "x" } });
     const started = await startLcytImport(manifest);
