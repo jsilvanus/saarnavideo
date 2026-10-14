@@ -879,6 +879,7 @@ export const en: Record<keyof typeof fi, string> = {
   "queue.kind.video": "Video",
   "queue.kind.podcast": "Podcast",
   "queue.kind.transcribe": "Transcription",
+  "queue.kind.thumbnail": "Thumbnail",
   "queue.kind.download": "Download",
   "queue.kind.preview": "Preview",
   "feed.role.ISO": "Camera picture (ISO)",
