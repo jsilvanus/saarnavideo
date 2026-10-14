@@ -877,6 +877,7 @@ export const fi = {
   "queue.kind.video": "Video",
   "queue.kind.podcast": "Podcast",
   "queue.kind.transcribe": "Transkriptio",
+  "queue.kind.thumbnail": "Pikkukuva",
   "queue.kind.download": "Lataus",
   "queue.kind.preview": "Esikatselu",
   "feed.role.ISO": "Kamerakuva",
