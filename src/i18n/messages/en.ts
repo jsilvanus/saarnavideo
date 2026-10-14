@@ -876,6 +876,9 @@ export const en: Record<keyof typeof fi, string> = {
   "import.done": "Broadcast imported from LCYT. Working source: {feed}.",
   "import.captions": "Captions imported: {languages}.",
   "import.events": "Graphics changes kept: {count}.",
-    "queue.kind.preview": "Preview",
+  "queue.kind.video": "Video",
+  "queue.kind.podcast": "Podcast",
+  "queue.kind.transcribe": "Transcription",
+  "queue.kind.preview": "Preview",
   "feed.role.ISO": "Camera picture (ISO)",
 };
