@@ -879,6 +879,7 @@ export const sv: Record<keyof typeof fi, string> = {
   "queue.kind.video": "Video",
   "queue.kind.podcast": "Podcast",
   "queue.kind.transcribe": "Transkribering",
+  "queue.kind.download": "Nedladdning",
   "queue.kind.preview": "Förhandsvisning",
   "feed.role.ISO": "Kamerabild (ISO)",
 };
