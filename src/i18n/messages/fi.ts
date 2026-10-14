@@ -874,5 +874,6 @@ export const fi = {
   "import.done": "Lähetys tuotu LCYT:stä. Päälähde: {feed}.",
   "import.captions": "Tekstitys tuotu: {languages}.",
   "import.events": "Grafiikkamuutoksia tallennettu: {count}.",
+    "queue.kind.preview": "Esikatselu",
   "feed.role.ISO": "Kamerakuva",
 } as const;
