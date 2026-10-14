@@ -876,6 +876,9 @@ export const sv: Record<keyof typeof fi, string> = {
   "import.done": "Sändningen importerad från LCYT. Huvudkälla: {feed}.",
   "import.captions": "Textning importerad: {languages}.",
   "import.events": "Sparade grafikändringar: {count}.",
-    "queue.kind.preview": "Förhandsvisning",
+  "queue.kind.video": "Video",
+  "queue.kind.podcast": "Podcast",
+  "queue.kind.transcribe": "Transkribering",
+  "queue.kind.preview": "Förhandsvisning",
   "feed.role.ISO": "Kamerabild (ISO)",
 };
