@@ -577,6 +577,15 @@ export function useWorkspaceState() {
       setMessage(t("ws.youtubeAdded"));
     }, setBusy, "youtube");
   }
+  /** Queues the download of a YouTube source's video now, instead of waiting for a render or transcription to need it. */
+  async function downloadSource(source: Source) {
+    if (!selected) return;
+    await withBusy(t("ws.downloadFailed"), async () => {
+      await requestJson(`/api/projects/${selected.id}/source/${source.id}/download`, { method: "POST" }, t("ws.downloadFailed"));
+      await openProject(selected.id);
+      setMessage(t("ws.downloadQueued"));
+    }, setBusy, `source:${source.id}`);
+  }
   function currentDefinition(): Definition {
     return (
       selected?.definition ?? {
@@ -1070,6 +1079,7 @@ export function useWorkspaceState() {
     uploadPendingSource,
     deleteSource,
     addYoutube,
+    downloadSource,
     currentDefinition,
     saveDefinition,
     addSegment,

@@ -144,6 +144,27 @@ For direct-to-S3 uploads, use `POST /projects/{projectId}/source/presigned-url`,
 - Supported formats: MP4, MOV, MKV, WebM
 - Kept permanently in the shared library
 
+#### YouTube Source
+
+```
+POST /projects/{projectId}/source
+Content-Type: application/json
+
+{ "youtubeUrl": "https://www.youtube.com/watch?v=..." }
+
+Response: 201 Created
+{ "id": "source-id", "type": "YOUTUBE", "status": "AVAILABLE", "youtubeVideoId": "...", "youtubeUrl": "...", "originalName": "Video title" }
+```
+
+`originalName` is the video title from YouTube's public oEmbed document (5 s timeout). When the lookup fails it is `null` and the URL stands in for the name. The video itself is not downloaded yet.
+
+```
+POST /projects/{projectId}/source/{sourceId}/download
+Response: 202 Accepted { "id": "job-id", "type": "DOWNLOAD", "status": "QUEUED", "progress": 0 }
+```
+
+Queues the DOWNLOAD job of a YouTube source (the same job a render or transcription queues when it needs the file). `400` for an uploaded source, `404` for a source of another project, `409` when the file is already on the server or a download of it is queued or running.
+
 **Identical bytes already in the library** are reused (200 instead of 201): the existing asset and its `assetKey` stay, and the response adds `"reused": true` and, when the name asked for differs, `"requestedKey": "logo"` so the caller knows overlays must use the returned `assetKey`.
 
 ### Assets (Images for Slates/Overlays)

@@ -14,6 +14,8 @@ export type Source = {
   originalName?: string | null;
   youtubeUrl?: string | null;
   youtubeVideoId?: string | null;
+  /** Set once the file is on the server (a YouTube source is downloaded on demand). */
+  storagePath?: string | null;
   sizeBytes?: string | number | null;
   mimeType?: string | null;
   durationMs?: number | null;
