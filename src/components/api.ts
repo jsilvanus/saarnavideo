@@ -1,3 +1,11 @@
+/** A failed API response; `status` lets a caller show its own text for a known status (see requestJson). */
+export class HttpStatusError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "HttpStatusError";
+  }
+}
+
 /**
  * Fetches a JSON API route and returns its body. Throws an Error carrying the
  * route's `error` field (or `fallback`) when the response is not ok. A missing
@@ -10,7 +18,7 @@ export async function requestJson<T = Record<string, unknown>>(url: string, init
     throw new Error(fallback);
   });
   const data = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(data.error ?? fallback);
+  if (!response.ok) throw new HttpStatusError(data.error ?? fallback, response.status);
   return data;
 }
 

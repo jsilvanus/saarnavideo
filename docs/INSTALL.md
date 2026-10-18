@@ -88,7 +88,7 @@ Set one long random string on the **app**:
 ACCESS_SECRET="$(openssl rand -base64 32)"
 ```
 
-Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication.
+Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication. The upload screen then shows "Uploads are off on this server: the operator must set ACCESS_SECRET" instead of the raw error.
 
 ## Environment reference
 
