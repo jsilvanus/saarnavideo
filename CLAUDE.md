@@ -132,7 +132,7 @@ Models:
 - **Project** - Composition project with template reference
 - **Source** - Media input (upload or YouTube reference); `status` PENDING while a direct S3 upload runs, `uploadSession` holds its resume state; `feedRole` (CLEAN/PROGRAM/DSK/ISO), `feedGroupId`, `feedLabel`, `syncOffsetMs`, `origin`, `keyParams` when it came from an import
 - **MediaJob** - Async job (render, preview, thumbnail, podcast, download, transcribe) claimed by the worker
-- **Output** - Generated video or thumbnail artifact
+- **Output** - Generated video or thumbnail artifact; `label` (nullable) is the name the user gave it (download name; `prisma db push` after pulling this change)
 - **Publication** - YouTube or Facebook upload record
 - **Asset** - Library image or audio file (overlay, background, logo, font; audio for voiceovers and podcast intro/outro, with `durationMs`)
 - **JobLog** - Job process logs
@@ -237,7 +237,8 @@ Captions come from the active `TranscriptSegment`s of each source (see `docs/tra
 - **Request:** `POST /api/projects/[id]/generate` accepts `captions: { mode: "none" | "soft" | "burn" | "both", language?, styleGraphicId? }` (Zod: `captionOptionsSchema` in `src/domain/captions.ts`; modes `none | soft | burn | both`, plus `styleGraphicId` for burned captions, see below). It is stored in `MediaJob.parameters.captions` and read by the worker (`readCaptionOptions`, `src/worker/captions.ts`). The UI selector is on the Generate panel.
 - **Timing:** `mapCaptionsToTimeline` (`src/renderer/caption-timeline.ts`, pure) puts each source's segments on the output timeline: per source-clip it keeps overlapping segments, clips them to the clip range and shifts by the clip's output start (`layoutTimeline`, `src/domain/timeline.ts`, is the one layout that `buildCompositionRenderPlan` and `buildPodcastRenderPlan` also use: crossfades pull the next item back by the transition, standalone slates take time and carry no cues, overlays take none). Output cues never overlap (an earlier cue is cut where the next starts), because mov_text cannot hold overlapping cues.
 - **Soft mode:** the worker writes `<output>.srt`/`.vtt`, passes the SRT to `buildCompositionRenderPlan(..., { captions: { path, language } })` (extra last `-i`, `-map N:0 -c:s mov_text -metadata:s:s:0 language=<iso639-2>` appended after the video/audio maps), and stores two extra `Output` rows of type `CAPTIONS_SRT` / `CAPTIONS_VTT` (with `Output.language`) beside the `VIDEO` row. Previews get them too (`preview = true`). No transcript in range = render without a track (WARN job log).
-- **Downloads:** `GET /api/outputs/[id]` picks extension/mime from the output type (`outputExtension`, `CAPTION_MIME` in `src/domain/captions.ts`). A `Range` header or `?inline=1` returns a seekable `rangedFileResponse` (206, no attachment header); the podcast player uses `?inline=1`.
+- **Downloads:** `GET /api/outputs/[id]` picks extension/mime from the output type (`outputExtension`, `CAPTION_MIME` in `src/domain/captions.ts`). A `Range` header or `?inline=1` returns a seekable `rangedFileResponse` (206, no attachment header); the podcast player uses `?inline=1`. The download name is `outputDownloadName` (`src/domain/output-labels.ts`): the output's `label` when set (sanitised, extension added once), else `saarnavideo-<type>`; `attachmentDisposition` adds the UTF-8 `filename*`.
+- **Output labels and render groups:** `Output.label` (nullable, both prisma schemas; `npx prisma db push` after pulling) is the user's name for a file. `PATCH /api/outputs/[id]` (`{ label }`, trimmed, max 120, empty clears, 404 unknown) sets it. The Julkaisu step's file list (`src/components/workspace/OutputList.tsx`) shows one group per render: `groupOutputsByRender` (`src/domain/output-groups.ts`) groups outputs by `jobId` (an output without a job stands alone), newest render first, and `formatRenderTime` writes the heading ("Tänään 14.32" / the date and time) from `Output.createdAt` (the newest output of the group) with Intl. Rename is inline (edit button; Enter or blur saves, Escape cancels).
 - **YouTube:** after a successful video upload `processPublication` uploads the job's SRT sidecar with `captions.insert` (`uploadCaptionToYouTube`, `src/worker/caption-publish.ts`). Fails soft (WARN JobLog + console). Needs the `youtube.force-ssl` OAuth scope, which `youtube-oauth.ts` now requests; connections made earlier must be reconnected for caption upload to work (the video upload is unaffected). `captions.insert` costs 400 API quota units.
 - **Not covered:** captions in the legacy no-items render path.
 
@@ -427,7 +428,8 @@ A `MediaJob` goes QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. While R
 - `POST /api/projects/[id]/jobs/[jobId]/cancel` - Cancel running job
 
 ### Outputs
-- `GET /api/outputs/[id]` - Download generated video
+- `GET /api/outputs/[id]` - Download generated video (named after the output's label when it has one)
+- `PATCH /api/outputs/[id]` - Rename an output (`{ label }`; empty clears)
 
 ### Imports
 - `POST /api/imports/lcyt`, `GET /api/imports`, `GET /api/imports/[id]`, `POST /api/imports/[id]/retry` - LCYT hand-in (see "Import from LCYT")

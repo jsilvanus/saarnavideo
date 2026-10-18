@@ -44,6 +44,10 @@ export type Output = {
   preview?: boolean;
   mimeType?: string;
   language?: string | null;
+  /** The name the user gave the file (the download name); null when none. */
+  label?: string | null;
+  /** The render (MediaJob) that made the file; outputs with the same job are one group. */
+  jobId?: string | null;
   storagePath?: string;
   createdAt?: string;
 };

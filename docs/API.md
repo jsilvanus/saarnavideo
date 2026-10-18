@@ -389,6 +389,26 @@ Add a `Range` header (or `?inline=1`, which also advertises `Accept-Ranges: byte
 Caption outputs carry a `language` (BCP 47 tag) and are named `saarnavideo-captions-<language>.<ext>`.
 They exist only for renders queued with `captions.mode = "soft"`, and share the video's `jobId`.
 
+When the output has a `label` (see below) the file is named after it instead: the label is sanitised for file names (path and shell characters become spaces), the extension comes from the output type, and `Content-Disposition` also carries the UTF-8 name as `filename*=UTF-8''...`, so `Pääsiäinen.mp4` arrives intact.
+
+#### Rename an output
+
+```
+PATCH /outputs/{outputId}
+Content-Type: application/json
+
+{ "label": "Sunnuntai 14.6. klo 10" }
+
+Response: 200 OK
+{ "id": "...", "projectId": "...", "jobId": "...", "type": "VIDEO", "preview": false,
+  "mimeType": "video/mp4", "language": null, "label": "Sunnuntai 14.6. klo 10",
+  "sizeBytes": "1234567890", "createdAt": "2026-10-18T14:32:01.000Z" }
+```
+
+- `label` is trimmed and kept to 120 characters (longer: `400`). An empty string (or `null`) clears it, and the download goes back to the default name.
+- Unknown output: `404`. Body without `label` or not JSON: `400`.
+- `GET /projects/{projectId}` lists every output with its `label`, `jobId` and `createdAt` (newest first). The outputs of one render share a `jobId`; the Julkaisu step groups them by it, newest render first, and shows each render's time (Intl, locale aware).
+
 #### Audio assets (voiceovers, podcast intro/outro)
 
 `POST /assets` and `POST /projects/{projectId}/assets` also accept audio: MP3, M4A, WAV, OGG or WebM
