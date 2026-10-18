@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { JobResultSegment } from "@/integrations/auditorStt/client";
-import { applyRangeOffset, confidenceFromAvgLogprob, isPartialRange } from "./transcription-range";
+import { applyRangeOffset, confidenceFromAvgLogprob, isPartialRange, resolveTranscriptionRange } from "./transcription-range";
 
 function segment(overrides: Partial<JobResultSegment> = {}): JobResultSegment {
   return { start: 0, end: 1, text: "x", avg_logprob: null, no_speech_prob: null, words: [], ...overrides };
@@ -65,5 +65,20 @@ describe("confidenceFromAvgLogprob", () => {
 
   it("returns undefined when avg_logprob is null", () => {
     expect(confidenceFromAvgLogprob(null)).toBeUndefined();
+  });
+});
+
+describe("resolveTranscriptionRange", () => {
+  it("keeps an explicit range even when the duration is known", () => {
+    expect(resolveTranscriptionRange({ rangeStartSeconds: 5, rangeEndSeconds: 60 }, 120)).toEqual({ rangeStartSeconds: 5, rangeEndSeconds: 60 });
+  });
+
+  it("takes the whole source when the job carries no range", () => {
+    expect(resolveTranscriptionRange({}, 123.5)).toEqual({ rangeStartSeconds: 0, rangeEndSeconds: 123.5 });
+  });
+
+  it("throws when there is no range and the duration is unknown", () => {
+    expect(() => resolveTranscriptionRange({}, undefined)).toThrow(/duration is unknown/);
+    expect(() => resolveTranscriptionRange({ rangeStartSeconds: 0 }, 0)).toThrow(/duration is unknown/);
   });
 });
