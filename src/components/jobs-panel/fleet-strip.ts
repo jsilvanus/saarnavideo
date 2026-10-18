@@ -1,4 +1,4 @@
-import type { TFunction } from "@/i18n/translate";
+import type { Translate } from "./job-panel";
 
 /**
  * The numbers behind the one-line fleet strip in the job panel. Every block is optional so a missing source
@@ -18,7 +18,7 @@ export type FleetStripData = {
 };
 
 /** The strip as parts; the panel joins them with a middle dot. */
-export function fleetStripParts(data: FleetStripData, t: TFunction): string[] {
+export function fleetStripParts(data: FleetStripData, t: Translate): string[] {
   const parts: string[] = [];
   const { fleet, local } = data;
   if (fleet?.state === "offline") parts.push(t("fleetStrip.offline"));
@@ -38,7 +38,7 @@ export function fleetStripParts(data: FleetStripData, t: TFunction): string[] {
   return parts;
 }
 
-export const formatFleetStrip = (data: FleetStripData, t: TFunction): string => fleetStripParts(data, t).join(" · ");
+export const formatFleetStrip = (data: FleetStripData, t: Translate): string => fleetStripParts(data, t).join(" · ");
 
 /** Summarises the orchestrator's answers into the fleet block. `workers` and `pools` are the admin-only lists (null when refused). */
 export function summariseFleet(

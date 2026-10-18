@@ -1,6 +1,6 @@
 import { createTokenProvider } from "fffleet";
 import { AuditorSttClient } from "@/integrations/auditorStt/client";
-import { summariseFleet, type FleetStripData } from "@/domain/fleet-strip";
+import { summariseFleet, type FleetStripData } from "@/components/jobs-panel/fleet-strip";
 import { prisma } from "@/lib/prisma";
 
 /**

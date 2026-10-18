@@ -1,4 +1,12 @@
-import type { TFunction } from "@/i18n/translate";
+/**
+ * SHARED-COMPONENT NOTICE: the jobs panel (this folder) exists in more than one place: SaarnaVideo
+ * (`src/components/jobs-panel/`) and LCYT (`packages/lcyt-web/src/components/jobs-panel/`). It is copied, not a shared
+ * package, and there is no single source of truth: when you change one, look at the others and port what fits.
+ * See README.md in this folder.
+ */
+
+/** Translate function the panel needs (keys are listed in README.md). Bivariant so an app's narrower typed `t` fits. */
+export type Translate = { bivarianceHack(key: string, params?: Record<string, string | number>): string }["bivarianceHack"];
 
 export type PanelJob = {
   id: string;
@@ -26,7 +34,7 @@ export const POLL_IDLE_MS = 15000;
 export const pollInterval = (open: boolean, activeCount: number) => (open || activeCount > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS);
 
 /** "5 min ago" style age of an ISO time. */
-export function formatJobAge(iso: string | null, now: number, t: TFunction): string {
+export function formatJobAge(iso: string | null, now: number, t: Translate): string {
   if (!iso) return "";
   const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
   if (seconds < 60) return t("jobs.ago.s", { n: seconds });
