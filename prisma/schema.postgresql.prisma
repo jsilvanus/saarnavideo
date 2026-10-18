@@ -181,6 +181,7 @@ model Output {
   storagePath String
   mimeType String
   language String?
+  label String? // a name the user gave the file (download name); null = the default name
   sizeBytes BigInt?
   createdAt DateTime @default(now())
   expiresAt DateTime? // legacy: unused, media is persistent
