@@ -1,5 +1,6 @@
 "use client";
 
+import { readChapters } from "@/domain/youtube-chapters";
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useT } from "@/i18n/I18nProvider";
 import { SourcePlayer, useSourcePlayer } from "./SourcePlayer";
@@ -24,13 +25,15 @@ import styles from "./SequenceTimeline.module.css";
  * without a range (typed by name on a source of unknown length, or from a template) is listed in a "no range yet"
  * group instead of vanishing; setting its start or end from the playhead gives it a range.
  */
-export default function SequenceTimeline({ sources, sections, pendingFiles, onSave, onAdd }: {
+export default function SequenceTimeline({ sources, sections, pendingFiles, onSave, onAdd, onUseChapters }: {
   sources: Source[];
   sections: Section[];
   pendingFiles: Record<string, File>;
   onSave: (sections: Section[]) => Promise<void>;
   /** Adds a top-level sequence with its clip (the workspace's addSegment). */
   onAdd: (sourceId: string, label: string, start: number, end: number) => Promise<void> | void;
+  /** Replaces the source's sequences with its YouTube chapters (the workspace's useYouTubeChapters). */
+  onUseChapters: (sourceId: string) => Promise<void> | void;
 }) {
   const t = useT();
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
@@ -43,15 +46,23 @@ export default function SequenceTimeline({ sources, sections, pendingFiles, onSa
       </select>
     </label>}
     {/* A new source mounts a fresh player and timeline state. */}
-    <SourceTimeline key={source.id} source={source} sections={sections} localFile={pendingFiles[source.id]} onSave={onSave} onAdd={onAdd} />
+    <SourceTimeline key={source.id} source={source} sections={sections} localFile={pendingFiles[source.id]} onSave={onSave} onAdd={onAdd} onUseChapters={onUseChapters} />
   </div>;
 }
 
-function SourceTimeline({ source, sections, localFile, onSave, onAdd }: {
+function SourceTimeline({ source, sections, localFile, onSave, onAdd, onUseChapters }: {
   source: Source; sections: Section[]; localFile?: File; onSave: (sections: Section[]) => Promise<void>;
   onAdd: (sourceId: string, label: string, start: number, end: number) => Promise<void> | void;
+  onUseChapters: (sourceId: string) => Promise<void> | void;
 }) {
   const t = useT();
+  const chapters = useMemo(() => readChapters(source.chapters), [source.chapters]);
+  const sourceSections = sections.filter(section => section.scope === "SOURCE" && section.sourceId === source.id).length;
+  function useChapters() {
+    // Existing sequences of this source are replaced, so ask first.
+    if (sourceSections > 0 && !window.confirm(t("seq.chapters.confirm", { count: sourceSections, chapters: chapters.length }))) return;
+    void onUseChapters(source.id);
+  }
   const player = useSourcePlayer(source, source.id, localFile, () => undefined);
   const { current, seek } = player;
   const rows = useMemo(() => timelineRows(sections, source.id), [sections, source.id]);
@@ -162,6 +173,10 @@ function SourceTimeline({ source, sections, localFile, onSave, onAdd }: {
     <p className={`muted ${styles.hint}`}>{t("seq.hint")}</p>
     <p className={`muted ${styles.hint}`}>{t("seq.keys")}</p>
     {!knownDuration && <p className="muted">{t("seq.noDuration")}</p>}
+    {source.type === "YOUTUBE" && <div className={styles.chapters}>
+      <span className="muted">{chapters.length ? t("seq.chapters.found", { count: chapters.length }) : t(source.storagePath ? "seq.chapters.none" : "seq.chapters.afterDownload")}</span>
+      <button type="button" disabled={chapters.length === 0} onClick={useChapters}>{t("seq.chapters.use")}</button>
+    </div>}
     <form className={styles.creator} aria-label={t("seq.new.title")} onSubmit={event => { event.preventDefault(); void addSequence(); }}>
       <label>{t("seq.name")}
         <input type="text" value={newLabel} placeholder={t("seq.new.defaultName")} onChange={e => setNewLabel(e.target.value)} />

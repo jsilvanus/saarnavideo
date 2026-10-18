@@ -27,6 +27,8 @@ export type Source = {
   feedLabel?: string | null;
   syncOffsetMs?: number | null;
   keyParams?: { hasAlpha?: boolean; color?: string; similarity?: number; blend?: number } | null;
+  /** YouTube chapters found in the downloaded file (see youtube-chapters.ts). */
+  chapters?: Array<{ startSeconds: number; endSeconds: number; title: string }> | null;
 };
 export type Asset = {
   id: string;

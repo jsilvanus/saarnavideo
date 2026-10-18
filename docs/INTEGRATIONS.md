@@ -115,6 +115,8 @@ It is the published worker plus python3, yt-dlp and `fleet/download-executor.mjs
 DOWNLOAD_EXECUTOR=fffleet      # plus the same FFFLEET_* and AWS_* settings as above
 ```
 
+Downloads pass `--embed-chapters` (also in the fleet job's `extraArgs`), so a video with YouTube chapters carries them in the mp4; the worker reads them with ffprobe afterwards and offers them as sequences in the Rakenne step (the fleet worker needs ffmpeg, which every fffleet worker has).
+
 The job type is `download`; the worker advertises `type:download`, so downloads only go to workers that have the executor. YouTube cookies saved in **Settings** are decrypted into a private temporary file for each run, staged for the fleet job, and removed afterwards; the executor never prints cookie contents. If yt-dlp rewrote the cookie file, the new copy is saved back, encrypted. Needs `YOUTUBE_TOKEN_ENCRYPTION_KEY`.
 
 ### How the pieces use the fffleet package

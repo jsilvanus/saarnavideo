@@ -10,6 +10,7 @@ import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { timelineDuration } from "@/domain/timeline";
 import { selectionFromValue } from "@/components/TemplatePicker";
 import { addSourceSection } from "@/domain/templates";
+import { readChapters, replaceWithChapters } from "@/domain/youtube-chapters";
 import { cutOutFeedOverlays, feedDeltaSeconds, moveToSource, withFeedOverlays, withoutFeedOverlays, type FeedSource } from "@/domain/feed-group";
 import { type ProjectVariable } from "@/domain/variables";
 import DurationNotice from "@/components/DurationNotice";
@@ -639,6 +640,15 @@ export function useWorkspaceState() {
     await saveDefinition(next as unknown as Definition);
     setMessage(t("ws.sectionSaved"));
   }
+  /** Replaces the source's sequences (sections with their clips) by the YouTube chapters found in the downloaded file. */
+  async function useYouTubeChapters(sourceId: string) {
+    const source = selected?.sources.find((x) => x.id === sourceId);
+    const chapters = readChapters(source?.chapters);
+    if (!selected || !source || !chapters.length) return;
+    const next = replaceWithChapters(currentDefinition() as unknown as ProjectDefinition, sourceId, chapters, () => crypto.randomUUID(), source.durationMs ? source.durationMs / 1000 : undefined);
+    await saveDefinition(next as unknown as Definition);
+    setMessage(t("ws.chaptersApplied", { count: chapters.length }));
+  }
   async function removeSegment(id: string) {
     const def = currentDefinition(),
       s = def.semanticSegments.find((x) => x.id === id);
@@ -1092,6 +1102,7 @@ export function useWorkspaceState() {
     currentDefinition,
     saveDefinition,
     addSegment,
+    useYouTubeChapters,
     removeSegment,
     saveSections,
     saveVariables,

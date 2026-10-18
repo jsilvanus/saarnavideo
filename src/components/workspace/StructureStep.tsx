@@ -60,6 +60,7 @@ export default function StructureStep() {
     currentDefinition,
     saveDefinition,
     addSegment,
+    useYouTubeChapters,
     removeSegment,
     saveSections,
     changeSectionSource,
@@ -91,6 +92,7 @@ export default function StructureStep() {
           pendingFiles={pendingFiles}
           onSave={saveSections}
           onAdd={addSegment}
+          onUseChapters={useYouTubeChapters}
         />
         <SectionManager
           scope="SOURCE"

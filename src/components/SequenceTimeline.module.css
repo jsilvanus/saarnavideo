@@ -170,3 +170,11 @@
   border: 2px dashed #cbd5e1;
   background: transparent;
 }
+
+.chapters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0;
+}

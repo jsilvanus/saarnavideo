@@ -17,7 +17,7 @@ import { sttQueueMessage } from "@/worker/stt-queue";
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
 import { applyRangeOffset, isPartialRange, resolveTranscriptionRange } from "@/worker/transcription-range";
-import { probeVideo } from "@/worker/lcyt-feed";
+import { probeChapters, probeVideo } from "@/worker/lcyt-feed";
 import { buildBurnedCaptionAss, buildCaptionCues, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
@@ -174,8 +174,11 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>, files:
   const s = await stat(localPath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(localPath, { force: true }); throw new Error(validation.reason); }
   // YouTube metadata has no length here; the file's own duration lets the transcription and the sections use it (a failed probe leaves it unknown).
   const durationMs = source.durationMs == null ? await probeVideo(localPath).then(probe => probe.durationMs, () => undefined) : undefined;
+  // yt-dlp wrote the video's chapters into the file (--embed-chapters); the structure step offers them as sequences.
+  const chapters = await probeChapters(localPath);
+  if (chapters.length) await logJobEvent(job.id, "INFO", `Found ${chapters.length} YouTube chapters`);
   const storagePath = await files.finalize(localPath, `sources/${job.projectId}/${source.youtubeVideoId}.mp4`, "video/mp4");
-  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), ...(durationMs !== undefined ? { durationMs } : {}) } });
+  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), ...(durationMs !== undefined ? { durationMs } : {}), ...(chapters.length ? { chapters } : {}) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
 
