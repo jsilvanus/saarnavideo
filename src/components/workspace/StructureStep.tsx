@@ -14,7 +14,6 @@ import ReframeEditor from "@/components/ReframeEditor";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
-import { SectionPicker } from "./SectionPicker";
 import { graphicVariables } from "./helpers";
 import type { Definition } from "./types";
 
@@ -61,6 +60,7 @@ export default function StructureStep() {
     currentDefinition,
     saveDefinition,
     addSegment,
+    useYouTubeChapters,
     removeSegment,
     saveSections,
     changeSectionSource,
@@ -91,6 +91,8 @@ export default function StructureStep() {
           sections={selected.definition?.sections ?? []}
           pendingFiles={pendingFiles}
           onSave={saveSections}
+          onAdd={addSegment}
+          onUseChapters={useYouTubeChapters}
         />
         <SectionManager
           scope="SOURCE"
@@ -128,12 +130,6 @@ export default function StructureStep() {
               )}
             </>
           )}
-        />
-        <SectionPicker
-          projectId={selected.id}
-          sources={selected.sources}
-          pendingFiles={pendingFiles}
-          onAdd={(id, l, s, e) => void addSegment(id, l, s, e)}
         />
         <div className="list">
           {(selected.definition?.semanticSegments ?? []).map((s) => (
@@ -235,6 +231,8 @@ export default function StructureStep() {
               assets={selected.assets ?? []}
               title={selectedGraphic.name}
               variables={selected.definition?.variables ?? []}
+              outputWidth={currentDefinition().template?.width ?? 1920}
+              outputHeight={currentDefinition().template?.height ?? 1080}
               onChange={(item) => void updateGraphic(selectedGraphic.id, item)}
               onAssetsChanged={refreshAssets}
             />
@@ -293,6 +291,13 @@ export default function StructureStep() {
           sections={selected.definition?.sections}
           sources={selected.sources}
           audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")}
+          onChange={(index, patch) => {
+            const def = currentDefinition();
+            void saveDefinition({
+              ...def,
+              composition: { ...def.composition, items: def.composition.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) },
+            });
+          }}
         />
         <h3 className="subhead">{t("str.editComposition")}</h3>
         <CompositionEditor

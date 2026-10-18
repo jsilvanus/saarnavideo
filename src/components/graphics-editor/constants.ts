@@ -1,4 +1,3 @@
-export const WIDTH = 1920;
 export const GRID = 20;
 export const HANDLE_LIST = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 

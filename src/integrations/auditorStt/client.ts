@@ -34,9 +34,30 @@ export type SubmitJobOptions = {
   wordTimestamps?: boolean;
   prompt?: string;
   clientRef?: string;
+  /** Length of the audio being sent. Lets the service estimate when a queued job starts; it trusts the value only as an estimate. */
+  durationSeconds?: number;
 };
 
 export type JobSubmitResponse = { id: string; status: "queued" };
+
+/** Where a queued job stands (GET /v1/jobs/{id}, only while `status` is `queued`). Estimates are null when unknown. */
+export type JobQueueInfo = {
+  position: number;
+  seconds_ahead: number;
+  unknown_ahead: number;
+  estimated_start_seconds: number | null;
+  estimated_finish_seconds: number | null;
+  /** True while live captions run: the real wait is longer. */
+  estimate_is_minimum: boolean;
+};
+
+/** GET /status (API key): the whole queue of the service. Absent blocks are null on a service without the job runner or live sessions. */
+export type ServiceStatusResponse = {
+  jobs: { queued: number; running: number; queued_seconds: number; unknown_duration: number } | null;
+  rate: number | null;
+  rate_samples?: number;
+  live: { active: boolean; sessions: number; max_sessions: number } | null;
+};
 
 export type JobStatusResponse = {
   id: string;
@@ -55,6 +76,10 @@ export type JobStatusResponse = {
   chunks_total: number;
   params: { language: string; chunk_seconds: number; word_timestamps: boolean };
   cancel_requested: boolean;
+  /** Audio length when known (service versions with queue estimates). */
+  duration_seconds?: number | null;
+  /** Position and estimate while queued; null once the job runs. Absent on older services. */
+  queue?: JobQueueInfo | null;
 };
 
 export type JobResultWord = { start: number; end: number; text: string; probability: number };
@@ -204,6 +229,7 @@ export class AuditorSttClient {
     if (options.wordTimestamps !== undefined) fields.word_timestamps = String(options.wordTimestamps);
     if (options.prompt !== undefined) fields.prompt = options.prompt;
     if (options.clientRef !== undefined) fields.client_ref = options.clientRef;
+    if (options.durationSeconds !== undefined) fields.duration_seconds = String(options.durationSeconds);
 
     const fileName = path.basename(filePath);
     const { body, boundary, contentLength } = await buildMultipartBody(filePath, fields, "file", fileName, guessContentType(fileName));
@@ -234,9 +260,17 @@ export class AuditorSttClient {
     if (options.wordTimestamps !== undefined) fields.set("word_timestamps", String(options.wordTimestamps));
     if (options.prompt !== undefined) fields.set("prompt", options.prompt);
     if (options.clientRef !== undefined) fields.set("client_ref", options.clientRef);
+    if (options.durationSeconds !== undefined) fields.set("duration_seconds", String(options.durationSeconds));
     const response = await this.request("/v1/jobs", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: fields.toString() }, this.uploadTimeoutMs);
     if (response.status !== 202) throw new Error(`Auditor STT job submission failed (${response.status}): ${await safeText(response)}`);
     return (await response.json()) as JobSubmitResponse;
+  }
+
+  /** GET /status — queue counts, rate and live state (needs the API key). */
+  async getServiceStatus(): Promise<ServiceStatusResponse> {
+    const response = await this.request("/status", { method: "GET" }, this.requestTimeoutMs);
+    if (!response.ok) throw new Error(`Auditor STT status failed (${response.status}): ${await safeText(response)}`);
+    return (await response.json()) as ServiceStatusResponse;
   }
 
   /** GET /v1/jobs/{id} */

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ffmpegKeyColor, formatSeconds } from "@/renderer/ffmpeg";
 import type { FeedPart } from "@/domain/lcyt-manifest";
+import { chaptersFromFfprobe, type Chapter } from "@/domain/youtube-chapters";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,6 +23,14 @@ export async function probeVideo(file: string): Promise<VideoProbe> {
   const duration = Number(data.format?.duration);
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("The file has no readable duration");
   return { width: video.width, height: video.height, fps: parseRate(video.r_frame_rate), durationMs: Math.round(duration * 1000), hasAudio: !!data.streams?.some((stream) => stream.codec_type === "audio") };
+}
+
+/** The chapters written into a file (a downloaded YouTube video has them when yt-dlp embedded them); none when it has none or ffprobe cannot read them. */
+export async function probeChapters(file: string): Promise<Chapter[]> {
+  try {
+    const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_chapters", "-of", "json", file], { maxBuffer: 4 * 1024 * 1024 });
+    return chaptersFromFfprobe(JSON.parse(stdout));
+  } catch { return []; }
 }
 
 /** Quiet time between consecutive parts, in ms (parts that touch or overlap leave none). */

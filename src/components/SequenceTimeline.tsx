@@ -1,5 +1,6 @@
 "use client";
 
+import { readChapters } from "@/domain/youtube-chapters";
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useT } from "@/i18n/I18nProvider";
 import { SourcePlayer, useSourcePlayer } from "./SourcePlayer";
@@ -7,7 +8,7 @@ import { captionKeyAction } from "./CaptionEditorDialog";
 import { formatTime, sourceLabel } from "./format";
 import type { Source } from "./workspace/types";
 import { sectionColor, type Section } from "@/domain/sections";
-import { applySectionChange, neighbourRow, tenth, timelineRows, type RangePatch, type TimelineRow } from "@/domain/sequence-timeline";
+import { applySectionChange, checkNewSequence, defaultNewRange, neighbourRow, tenth, timelineRows, unplacedRows, type RangePatch, type TimelineRow } from "@/domain/sequence-timeline";
 import type { MessageKey } from "@/i18n/translate";
 import styles from "./SequenceTimeline.module.css";
 
@@ -16,13 +17,23 @@ import styles from "./SequenceTimeline.module.css";
  * left or right edge to change its start or end, click the track to seek. Nested sequences
  * are indented under their parent. Keys: the scheme documented in CaptionEditorDialog.tsx
  * (Ctrl/Shift+arrows seek, Ctrl+Up/Down set start/end to the playhead, Enter selects the next
- * sequence). Ctrl+Enter, which creates a caption, has no meaning here.
+ * sequence, also one without a range yet). Ctrl+Enter, which creates a caption, has no meaning here.
+ *
+ * This is the one place sequences are created: name, start, end with "to playhead" buttons (the range defaults
+ * to ten seconds from the playhead). A top-level sequence also becomes a clip of the composition (`onAdd`, the same
+ * as the old section picker); one made inside another sequence is only a marker inside its parent. A sequence
+ * without a range (typed by name on a source of unknown length, or from a template) is listed in a "no range yet"
+ * group instead of vanishing; setting its start or end from the playhead gives it a range.
  */
-export default function SequenceTimeline({ sources, sections, pendingFiles, onSave }: {
+export default function SequenceTimeline({ sources, sections, pendingFiles, onSave, onAdd, onUseChapters }: {
   sources: Source[];
   sections: Section[];
   pendingFiles: Record<string, File>;
   onSave: (sections: Section[]) => Promise<void>;
+  /** Adds a top-level sequence with its clip (the workspace's addSegment). */
+  onAdd: (sourceId: string, label: string, start: number, end: number) => Promise<void> | void;
+  /** Replaces the source's sequences with its YouTube chapters (the workspace's useYouTubeChapters). */
+  onUseChapters: (sourceId: string) => Promise<void> | void;
 }) {
   const t = useT();
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
@@ -35,17 +46,29 @@ export default function SequenceTimeline({ sources, sections, pendingFiles, onSa
       </select>
     </label>}
     {/* A new source mounts a fresh player and timeline state. */}
-    <SourceTimeline key={source.id} source={source} sections={sections} localFile={pendingFiles[source.id]} onSave={onSave} />
+    <SourceTimeline key={source.id} source={source} sections={sections} localFile={pendingFiles[source.id]} onSave={onSave} onAdd={onAdd} onUseChapters={onUseChapters} />
   </div>;
 }
 
-function SourceTimeline({ source, sections, localFile, onSave }: {
+function SourceTimeline({ source, sections, localFile, onSave, onAdd, onUseChapters }: {
   source: Source; sections: Section[]; localFile?: File; onSave: (sections: Section[]) => Promise<void>;
+  onAdd: (sourceId: string, label: string, start: number, end: number) => Promise<void> | void;
+  onUseChapters: (sourceId: string) => Promise<void> | void;
 }) {
   const t = useT();
+  const chapters = useMemo(() => readChapters(source.chapters), [source.chapters]);
+  const sourceSections = sections.filter(section => section.scope === "SOURCE" && section.sourceId === source.id).length;
+  function useChapters() {
+    // Existing sequences of this source are replaced, so ask first.
+    if (sourceSections > 0 && !window.confirm(t("seq.chapters.confirm", { count: sourceSections, chapters: chapters.length }))) return;
+    void onUseChapters(source.id);
+  }
   const player = useSourcePlayer(source, source.id, localFile, () => undefined);
   const { current, seek } = player;
   const rows = useMemo(() => timelineRows(sections, source.id), [sections, source.id]);
+  const pending = useMemo(() => unplacedRows(sections, source.id), [sections, source.id]);
+  // Keyboard order: sequences on the timeline, then the ones without a range yet.
+  const navRows = useMemo(() => [...rows, ...pending], [rows, pending]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ id: string; patch: RangePatch } | null>(null);
   const [note, setNote] = useState("");
@@ -55,7 +78,7 @@ function SourceTimeline({ source, sections, localFile, onSave }: {
   const latestEnd = Math.max(0, ...rows.map(row => row.section.endSeconds ?? 0));
   const span = knownDuration ?? Math.max(60, latestEnd * 1.2);
 
-  const selected = rows.find(row => row.section.id === selectedId)?.section;
+  const selected = navRows.find(row => row.section.id === selectedId)?.section;
   // Keep the selection on a sequence that still exists on this source.
   useEffect(() => { if (selectedId && !selected) setSelectedId(null); }, [selectedId, selected]);
 
@@ -111,12 +134,37 @@ function SourceTimeline({ source, sections, localFile, onSave }: {
     else if (action.type === "setStart" && selected) commit(selected.id, { startSeconds: tenth(current) });
     else if (action.type === "setEnd" && selected) commit(selected.id, { endSeconds: tenth(current) });
     else if (action.type === "next") {
-      const next = neighbourRow(rows, selectedId, 1);
+      const next = neighbourRow(navRows, selectedId, 1);
       if (next) setSelectedId(next.section.id);
     } else if (!selected) setNote(t("seq.selectHint"));
   }
 
-  const unplaced = sections.filter(section => section.scope === "SOURCE" && section.sourceId === source.id && (section.startSeconds === undefined || section.endSeconds === undefined)).length;
+  // New sequence: untouched start/end follow the playhead (ten seconds from it), set or typed ones stay.
+  const [newLabel, setNewLabel] = useState("");
+  const [newParentId, setNewParentId] = useState("");
+  const [newStart, setNewStart] = useState<number | null>(null);
+  const [newEnd, setNewEnd] = useState<number | null>(null);
+  const newParent = newParentId ? sections.find(section => section.id === newParentId) : undefined;
+  const suggestion = defaultNewRange(newStart ?? current, { durationSeconds: knownDuration, parent: newParent });
+  const startValue = newStart ?? suggestion.start;
+  const endValue = newEnd ?? suggestion.end;
+  const parentChoices = sections.filter(section => section.scope === "SOURCE" && section.sourceId === source.id && !section.parentId && section.startSeconds !== undefined && section.endSeconds !== undefined);
+
+  async function addSequence() {
+    const label = newLabel.trim() || t("seq.new.defaultName");
+    const check = checkNewSequence(sections, { label, start: startValue, end: endValue, parentId: newParentId || undefined }, knownDuration);
+    if ("error" in check) { setNote(t(`seq.err.${check.error}` as MessageKey)); return; }
+    setNote("");
+    if (newParentId) {
+      const nested: Section = { id: crypto.randomUUID(), label: check.label, scope: "SOURCE", sourceId: source.id, parentId: newParentId, startSeconds: check.start, endSeconds: check.end, origin: "MANUAL" };
+      await onSave([...sections, nested]);
+      setSelectedId(nested.id);
+    } else {
+      await onAdd(source.id, check.label, check.start, check.end);
+    }
+    setNewLabel(""); setNewStart(null); setNewEnd(null);
+  }
+
   const parent = selected?.parentId ? sections.find(section => section.id === selected.parentId) : undefined;
   const playheadPct = Math.min(100, (current / span) * 100);
 
@@ -125,8 +173,32 @@ function SourceTimeline({ source, sections, localFile, onSave }: {
     <p className={`muted ${styles.hint}`}>{t("seq.hint")}</p>
     <p className={`muted ${styles.hint}`}>{t("seq.keys")}</p>
     {!knownDuration && <p className="muted">{t("seq.noDuration")}</p>}
+    {source.type === "YOUTUBE" && <div className={styles.chapters}>
+      <span className="muted">{chapters.length ? t("seq.chapters.found", { count: chapters.length }) : t(source.storagePath ? "seq.chapters.none" : "seq.chapters.afterDownload")}</span>
+      <button type="button" disabled={chapters.length === 0} onClick={useChapters}>{t("seq.chapters.use")}</button>
+    </div>}
+    <form className={styles.creator} aria-label={t("seq.new.title")} onSubmit={event => { event.preventDefault(); void addSequence(); }}>
+      <label>{t("seq.name")}
+        <input type="text" value={newLabel} placeholder={t("seq.new.defaultName")} onChange={e => setNewLabel(e.target.value)} />
+      </label>
+      {parentChoices.length > 0 && <label>{t("seq.new.level")}
+        <select value={newParentId} onChange={e => { setNewParentId(e.target.value); setNewStart(null); setNewEnd(null); }}>
+          <option value="">{t("sec.topLevel")}</option>
+          {parentChoices.map(choice => <option key={choice.id} value={choice.id}>{t("sec.inside", { label: choice.label })}</option>)}
+        </select>
+      </label>}
+      <label>{t("seq.start")}
+        <input type="number" step="0.1" min="0" value={startValue} onChange={e => setNewStart(Number(e.target.value))} />
+      </label>
+      <button type="button" onClick={() => setNewStart(tenth(current))}>{t("seq.startToPlayhead")}</button>
+      <label>{t("seq.end")}
+        <input type="number" step="0.1" min="0" value={endValue} onChange={e => setNewEnd(Number(e.target.value))} />
+      </label>
+      <button type="button" onClick={() => setNewEnd(tenth(current))}>{t("seq.endToPlayhead")}</button>
+      <button type="submit" className="primary">{t("seq.new.add", { start: formatTime(startValue), end: formatTime(endValue) })}</button>
+    </form>
     <div className={styles.board} tabIndex={0} onKeyDown={onKeyDown} aria-label={t("seq.board")}>
-      {rows.length === 0 && <p className="muted">{t("seq.empty")}</p>}
+      {rows.length === 0 && pending.length === 0 && <p className="muted">{t("seq.empty")}</p>}
       {rows.map(row => {
         const shown = drag && drag.id === row.section.id ? { ...row.section, ...drag.patch } : row.section;
         const start = shown.startSeconds ?? 0;
@@ -152,8 +224,14 @@ function SourceTimeline({ source, sections, localFile, onSave }: {
           </div>
         </div>;
       })}
+      {pending.length > 0 && <p className={`muted ${styles.pendingHeading}`}>{t("seq.unplaced", { count: pending.length })}</p>}
+      {pending.map(row => <div key={row.section.id} className={`${styles.lane}${row.depth ? ` ${styles.nested}` : ""}`}>
+        <button type="button" className={`${styles.laneLabel}${row.section.id === selectedId ? ` ${styles.laneSelected}` : ""}`} style={{ paddingLeft: 8 + row.depth * 18 }} onClick={() => setSelectedId(row.section.id)}>
+          {row.depth ? "↳ " : ""}{row.section.label}
+        </button>
+        <div className={`${styles.track} ${styles.noRange}`} onClick={() => setSelectedId(row.section.id)}>{t("seq.noRange")}</div>
+      </div>)}
     </div>
-    {unplaced > 0 && <p className="muted">{t("seq.unplaced", { count: unplaced })}</p>}
     {note && <p className="error" role="status">{note}</p>}
     {selected && <SelectedSequence
       key={`${selected.id}:${selected.label}:${selected.startSeconds}:${selected.endSeconds}:${selected.color ?? ""}`}
@@ -171,8 +249,9 @@ function SelectedSequence({ section, parentLabel, colour, current, onCommit }: {
 }) {
   const t = useT();
   const [label, setLabel] = useState(section.label);
-  const [start, setStart] = useState(String(section.startSeconds ?? 0));
-  const [end, setEnd] = useState(String(section.endSeconds ?? 0));
+  // Empty for a sequence without a range: an empty box must not be saved as 0.
+  const [start, setStart] = useState(section.startSeconds === undefined ? "" : String(section.startSeconds));
+  const [end, setEnd] = useState(section.endSeconds === undefined ? "" : String(section.endSeconds));
   return <div className={styles.editor}>
     {parentLabel && <span className={`muted ${styles.inside}`}>{t("seq.inside", { label: parentLabel })}</span>}
     <label>{t("seq.name")}
@@ -185,12 +264,12 @@ function SelectedSequence({ section, parentLabel, colour, current, onCommit }: {
     </label>
     <label>{t("seq.start")}
       <input type="number" step="0.1" min="0" value={start} onChange={e => setStart(e.target.value)}
-        onBlur={() => { if (Number(start) !== section.startSeconds) onCommit({ startSeconds: Number(start) }); }} />
+        onBlur={() => { if (start !== "" && Number(start) !== section.startSeconds) onCommit({ startSeconds: Number(start) }); }} />
     </label>
     <button type="button" onClick={() => onCommit({ startSeconds: tenth(current) })}>{t("seq.startToPlayhead")}</button>
     <label>{t("seq.end")}
       <input type="number" step="0.1" min="0" value={end} onChange={e => setEnd(e.target.value)}
-        onBlur={() => { if (Number(end) !== section.endSeconds) onCommit({ endSeconds: Number(end) }); }} />
+        onBlur={() => { if (end !== "" && Number(end) !== section.endSeconds) onCommit({ endSeconds: Number(end) }); }} />
     </label>
     <button type="button" onClick={() => onCommit({ endSeconds: tenth(current) })}>{t("seq.endToPlayhead")}</button>
   </div>;

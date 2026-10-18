@@ -13,10 +13,11 @@ import { withDownloadCookies } from "@/integrations/ytdlp-cookies";
 import { downloadYouTubeSource, uploadCaptionToYouTube, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
+import { sttQueueMessage } from "@/worker/stt-queue";
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
 import { applyRangeOffset, isPartialRange, resolveTranscriptionRange } from "@/worker/transcription-range";
-import { probeVideo } from "@/worker/lcyt-feed";
+import { probeChapters, probeVideo } from "@/worker/lcyt-feed";
 import { buildBurnedCaptionAss, buildCaptionCues, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
@@ -173,8 +174,11 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>, files:
   const s = await stat(localPath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(localPath, { force: true }); throw new Error(validation.reason); }
   // YouTube metadata has no length here; the file's own duration lets the transcription and the sections use it (a failed probe leaves it unknown).
   const durationMs = source.durationMs == null ? await probeVideo(localPath).then(probe => probe.durationMs, () => undefined) : undefined;
+  // yt-dlp wrote the video's chapters into the file (--embed-chapters); the structure step offers them as sequences.
+  const chapters = await probeChapters(localPath);
+  if (chapters.length) await logJobEvent(job.id, "INFO", `Found ${chapters.length} YouTube chapters`);
   const storagePath = await files.finalize(localPath, `sources/${job.projectId}/${source.youtubeVideoId}.mp4`, "video/mp4");
-  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), ...(durationMs !== undefined ? { durationMs } : {}) } });
+  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), ...(durationMs !== undefined ? { durationMs } : {}), ...(chapters.length ? { chapters } : {}) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
 
@@ -466,10 +470,13 @@ async function processTranscriptionInner(job: MediaJobRow) {
     }
     await updateProgress(job.id, { phase: "SUBMITTING", message: "Submitting to transcription service", progress: 0 }, true);
     let submission;
+    // The length of the audio that goes out, so the service can say when a queued job starts.
+    const sentSeconds = isPartial ? range.rangeEndSeconds - range.rangeStartSeconds : durationSeconds ?? range.rangeEndSeconds - range.rangeStartSeconds;
+    const durationOption = Number.isFinite(sentSeconds) && sentSeconds > 0 ? { durationSeconds: sentSeconds } : {};
     if (transcriptionStaging) {
       const staged = await transcriptionStaging.stage(filePath, job.id);
       try {
-        submission = await client.submitUrl(staged.url, { language: params.language });
+        submission = await client.submitUrl(staged.url, { language: params.language, ...durationOption });
       } catch (error) {
         await staged.release();
         throw error;
@@ -478,7 +485,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
       if (stageSource) params = { ...params, stagedKey: staged.key };
       else await staged.release();
     } else {
-      submission = await client.submitJob(filePath, { language: params.language });
+      submission = await client.submitJob(filePath, { language: params.language, ...durationOption });
     }
     params = { ...params, auditorJobId: submission.id };
     // Persisted before the first poll so a worker restart can resume watching this job (see "Resumability").
@@ -500,7 +507,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
     const status = await client.getJobStatus(auditorJobId);
     await updateProgress(job.id, {
       phase: status.phase,
-      message: status.phase,
+      message: (status.status === "queued" ? sttQueueMessage(status.queue) : null) ?? status.phase,
       progress: Math.round(status.progress),
       currentMs: BigInt(Math.round(status.current_seconds * 1000)),
       totalMs: BigInt(Math.round(status.total_seconds * 1000)),

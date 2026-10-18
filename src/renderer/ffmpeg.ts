@@ -1,4 +1,5 @@
 import { DESIGN_CANVAS } from "@/domain/output-presets";
+import { mapAxis } from "@/domain/frame-layout";
 import { resolveReframe, type Reframe } from "@/domain/reframe";
 import { layoutTimeline } from "@/domain/timeline";
 import { baseItemDuration, isBaseItem, type AudioClipItem, type BaseItem, type FeedOverlayItem, type GraphicCarrierItem, type ProjectDefinition, type TimelineItem } from "@/domain/project";
@@ -149,7 +150,7 @@ function layerStyle(layer: RichLayer, sizeFactor = 1) {
   };
 }
 
-type RichContext = { width: number; height: number; /** Output size relative to the 1920x1080 canvas graphics are authored on: positions scale per axis, sizes by the smaller factor. */ sx: number; sy: number; sf: number; textColor: string; imageIndexByAsset: Map<string, number>; counter: { value: number }; fontFile?: string };
+type RichContext = { width: number; height: number; /** Output size relative to the 1920x1080 canvas graphics are authored on (src/domain/frame-layout.ts): a layer's centre keeps its relative place on each axis (sx, sy), its size scales uniformly by sf = min(sx, sy). */ sx: number; sy: number; sf: number; textColor: string; imageIndexByAsset: Map<string, number>; counter: { value: number }; fontFile?: string };
 
 function richLayerFilters(input: string, output: string, layers: RichLayer[], ctx: RichContext, enable?: TimeRange): string[] {
   const filters: string[] = [];
@@ -157,10 +158,10 @@ function richLayerFilters(input: string, output: string, layers: RichLayer[], ct
   let current = input;
   for (const layer of layers) {
     const next = `${output}_${ctx.counter.value++}`;
-    const x = Number(layer.x ?? 0) * ctx.sx;
-    const y = Number(layer.y ?? 0) * ctx.sy;
-    const w = layer.width === undefined ? ctx.width : Number(layer.width) * ctx.sx;
-    const h = layer.height === undefined ? ctx.height : Number(layer.height) * ctx.sy;
+    const horizontal = layer.width === undefined ? { position: Number(layer.x ?? 0) * ctx.sx, length: ctx.width } : mapAxis(Number(layer.x ?? 0), Number(layer.width), ctx.sx, ctx.sf, DESIGN_CANVAS.width);
+    const vertical = layer.height === undefined ? { position: Number(layer.y ?? 0) * ctx.sy, length: ctx.height } : mapAxis(Number(layer.y ?? 0), Number(layer.height), ctx.sy, ctx.sf, DESIGN_CANVAS.height);
+    const { position: x, length: w } = horizontal;
+    const { position: y, length: h } = vertical;
     const s = layerStyle(layer, ctx.sf);
     if (layer.type === "rect" || layer.type === "ellipse") {
       filters.push(`[${current}]${fillBox(x, y, w, h, `${s.boxColor ?? "black"}@${s.opacity}`)}${enableExpr}[${next}]`);
@@ -339,7 +340,9 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
       filters.push(...richLayerFilters(outputVideo, next, layers, ctx, range));
     } else if (item.kind === "rectangle") {
       const color = item.color ?? item.data.color ?? "black";
-      filters.push(`[${outputVideo}]${fillBox((item.x ?? 0) * sx, (item.y ?? 0) * sy, item.width === undefined ? width : item.width * sx, item.height === undefined ? height : item.height * sy, `${color}@${item.opacity}`)}${enableBetween(range)}[${next}]`);
+      const boxX = item.width === undefined ? { position: (item.x ?? 0) * sx, length: width } : mapAxis(item.x ?? 0, item.width, sx, ctx.sf, DESIGN_CANVAS.width);
+      const boxY = item.height === undefined ? { position: (item.y ?? 0) * sy, length: height } : mapAxis(item.y ?? 0, item.height, sy, ctx.sf, DESIGN_CANVAS.height);
+      filters.push(`[${outputVideo}]${fillBox(boxX.position, boxY.position, boxX.length, boxY.length, `${color}@${item.opacity}`)}${enableBetween(range)}[${next}]`);
     } else if (item.kind === "image" && item.imageAsset && imageIndexByAsset.has(item.imageAsset)) {
       const input = imageIndexByAsset.get(item.imageAsset)!;
       const img = `img${overlayCounter}`;

@@ -127,6 +127,7 @@ model Source {
   syncOffsetMs Int? // where this file's t=0 lies on the clean feed's timeline
   origin Json? // { system, instance, broadcastId, videoId, groupId, manifestVersion }
   keyParams Json? // DSK feed: { color, similarity, blend } or { hasAlpha: true }
+  chapters Json? // YouTube chapters read from the downloaded file: [{ startSeconds, endSeconds, title }]
   createdAt DateTime @default(now())
   expiresAt DateTime? // legacy: unused, media is persistent
   projects Project[]

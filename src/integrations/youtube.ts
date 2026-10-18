@@ -9,7 +9,7 @@ export type DownloadProgress = { percent: number; bytesProcessed?: bigint; total
 export async function downloadYouTubeSource(source: YouTubeSource, outputPath: string, onProgress?: (progress: DownloadProgress) => Promise<void> | void, options: { cookiesFile?: string } = {}): Promise<void> {
   await mkdir(dirname(outputPath), { recursive: true });
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("yt-dlp", [...(options.cookiesFile ? ["--cookies", options.cookiesFile] : []), "--no-playlist", "--format", "bv*+ba/b", "--merge-output-format", "mp4", "--newline", "--progress", "--output", outputPath, source.url], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("yt-dlp", [...(options.cookiesFile ? ["--cookies", options.cookiesFile] : []), "--no-playlist", "--format", "bv*+ba/b", "--merge-output-format", "mp4", "--embed-chapters", "--newline", "--progress", "--output", outputPath, source.url], { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();

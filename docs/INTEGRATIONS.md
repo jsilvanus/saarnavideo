@@ -115,6 +115,8 @@ It is the published worker plus python3, yt-dlp and `fleet/download-executor.mjs
 DOWNLOAD_EXECUTOR=fffleet      # plus the same FFFLEET_* and AWS_* settings as above
 ```
 
+Downloads pass `--embed-chapters` (also in the fleet job's `extraArgs`), so a video with YouTube chapters carries them in the mp4; the worker reads them with ffprobe afterwards and offers them as sequences in the Rakenne step (the fleet worker needs ffmpeg, which every fffleet worker has).
+
 The job type is `download`; the worker advertises `type:download`, so downloads only go to workers that have the executor. YouTube cookies saved in **Settings** are decrypted into a private temporary file for each run, staged for the fleet job, and removed afterwards; the executor never prints cookie contents. If yt-dlp rewrote the cookie file, the new copy is saved back, encrypted. Needs `YOUTUBE_TOKEN_ENCRYPTION_KEY`.
 
 ### How the pieces use the fffleet package
@@ -210,7 +212,7 @@ How the audio reaches the service (`AUDITOR_STT_FETCH`):
 - `s3`: the worker stages 16 kHz mono audio in the staging bucket, sends a presigned URL (one hour), and deletes the object as soon as the service has downloaded it. The service must list the bucket host in its `AUDITOR_STT_SOURCE_URL_HOSTS`.
 - `s3-source`: the worker stages the *original* file and the service strips the audio on an fffleet worker (`AUDITOR_STT_STRIP=fleet` there), so no ffmpeg runs in SaarnaVideo's worker. The staged object is kept until the job ends. Partial ranges still use `s3`.
 
-The service keeps its own durable queue; the worker polls it and resumes after a restart. End-to-end transcription tests (`npm run test:e2e:transcription`) skip themselves unless `AUDITOR_STT_URL` points at a running service.
+The service keeps its own durable queue; the worker polls it and resumes after a restart. The worker sends `duration_seconds` (length of the audio it submits) and, while the auditor job is `queued`, copies the job's `queue` block into the MediaJob message (`STT: position 2, starts about 14:35`); the job panel's fleet strip adds `stt N queued` from the auditor's `/status`. End-to-end transcription tests (`npm run test:e2e:transcription`) skip themselves unless `AUDITOR_STT_URL` points at a running service.
 
 ## YouTube
 

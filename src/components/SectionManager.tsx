@@ -85,9 +85,10 @@ export default function SectionManager({ scope, sections, sources = [], duration
       {scope === "SOURCE" && <label>{t("sec.source")}<select value={sourceId} onChange={e => setSourceId(e.target.value)}>{sources.map(source => <option key={source.id} value={source.id}>{sourceLabel(source)}</option>)}</select></label>}
       <label>{t("sec.level")}<select value={parentId} onChange={e => setParentId(e.target.value)}><option value="">{t("sec.topLevel")}</option>{roots.map(section => <option key={section.id} value={section.id}>{t("sec.inside", { label: section.label })}</option>)}</select></label>
     </div>
-    <label>{t("sec.linesLabel")}<textarea rows={6} value={lines} onChange={e => setLines(e.target.value)} placeholder={t("sec.linesPlaceholder")} /></label>
+    {/* Source sequences are created in the sequence timeline (name, start, end); only composition sections are typed here. */}
+    {scope === "COMPOSITION" && <label>{t("sec.linesLabel")}<textarea rows={6} value={lines} onChange={e => setLines(e.target.value)} placeholder={t("sec.linesPlaceholder")} /></label>}
     <div className="button-row">
-      <button onClick={() => void addLines()} disabled={!lines.trim() || (scope === "SOURCE" && !sourceId)}>{t("sec.placeEvenly")}</button>
+      {scope === "COMPOSITION" && <button onClick={() => void addLines()} disabled={!lines.trim()}>{t("sec.placeEvenly")}</button>}
       {templates.map(template => <button key={template.key} onClick={() => void applyTemplate(template.key)} disabled={!canPlace && scope === "SOURCE"}>{template.label}</button>)}
       <button disabled title={t("sec.aiHint")}>{t("sec.aiButton")}</button>
     </div>

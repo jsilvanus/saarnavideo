@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Graphic } from "@/domain/graphics";
 import type { Section } from "@/domain/sections";
 import type { TimelineItem } from "@/domain/project";
 import { useT } from "@/i18n/I18nProvider";
 import { makeT, type TFunction, type MessageKey } from "@/i18n/translate";
 import { layoutTimeline } from "@/domain/timeline";
-import { overlayOutputRange } from "@/renderer/overlay-timing";
+import { overlayOutputBounds, overlayOutputRange, overlayStoredRange } from "@/renderer/overlay-timing";
+import { editRange, snapTime, type RangeEdit, type TimeRange } from "@/domain/range-edit";
 import { formatTime, sourceLabel } from "./format";
 import styles from "./TimelineView.module.css";
 
@@ -19,10 +20,19 @@ type Props = {
   sections?: Section[];
   sources: Source[];
   audioAssets?: AudioAsset[];
+  /** Writes new start/end seconds onto the timeline item at `index` (source seconds for a section overlay, output seconds otherwise). Without it the view is read-only. */
+  onChange?: (index: number, patch: { startSeconds: number; endSeconds: number }) => void;
 };
 type Orientation = "horizontal" | "vertical";
 type Lane = "video" | "graphics" | "audio";
-type Block = { key: string; lane: Lane; start: number; end: number; label: string; detail: string; tone: "clip" | "slate" | "graphic" | "audio" | "voice-picture" };
+type Block = {
+  key: string; lane: Lane; start: number; end: number; label: string; detail: string; tone: "clip" | "slate" | "graphic" | "audio" | "voice-picture";
+  /** An overlay or overlay slate: its start and end can be edited. `itemIndex` is its place in the composition items. */
+  itemIndex?: number;
+  editable?: boolean;
+  /** Output seconds the block must stay inside (its clip, or the whole picture timeline). */
+  bounds?: TimeRange;
+};
 
 const LANES: Array<{ id: Lane; labelKey: MessageKey }> = [{ id: "video", labelKey: "tl.lane.video" }, { id: "graphics", labelKey: "tl.lane.graphics" }, { id: "audio", labelKey: "tl.lane.audio" }];
 const STORAGE_KEY = "saarnavideo.timelineOrientation";
@@ -30,12 +40,16 @@ const STORAGE_KEY = "saarnavideo.timelineOrientation";
 const DESKTOP_QUERY = "(min-width: 760px)";
 
 /**
- * Read-only overview of the finished video: picture, graphics and audio on one output timeline, laid out exactly like the
+ * Overview of the finished video: picture, graphics and audio on one output timeline, laid out exactly like the
  * renderer (layoutTimeline). Horizontal lanes on desktop, vertical columns on phones; the viewer can switch, and the choice
- * is remembered in this browser. Editing stays in CompositionEditor.
+ * is remembered in this browser. Graphics blocks (overlays and overlay slates) can be edited when `onChange` is given: drag
+ * an edge or the block (0.1 s steps, at least 0.5 s, inside the clip), or click it for exact start and end; arrow keys nudge
+ * the focused block (Shift = 1 s, Alt = the end edge). Everything else is edited in CompositionEditor.
  */
-export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [] }: Props) {
+export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange }: Props) {
   const t = useT();
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{ key: string; range: TimeRange } | null>(null);
   const [orientation, setOrientation] = useState<Orientation>("horizontal");
   useEffect(() => {
     let saved: string | null = null;
@@ -50,6 +64,66 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
 
   const { blocks, total } = useMemo(() => buildBlocks(items as TimelineItem[], graphics, sections, sources, audioAssets, t), [items, graphics, sections, sources, audioAssets, t]);
 
+  const editing = onChange ? blocks.find(b => b.key === selectedKey && b.editable) : undefined;
+
+  /** Writes a block's new output range back as the item stores it. */
+  function commitRange(block: Block, range: TimeRange) {
+    if (!onChange || block.itemIndex === undefined) return;
+    const item = (items as TimelineItem[])[block.itemIndex];
+    if (!item || (range.start === block.start && range.end === block.end)) return;
+    const output = { startSeconds: range.start, endSeconds: range.end };
+    const stored = item.type === "overlay" ? overlayStoredRange(item, output, items as TimelineItem[], { sections }) : output;
+    if (stored) onChange(block.itemIndex, stored);
+  }
+
+  const horizontal = orientation === "horizontal";
+  function startDrag(event: ReactPointerEvent<HTMLElement>, block: Block, mode: "start" | "end" | "move") {
+    if (!block.editable || !onChange) return;
+    const track = event.currentTarget.closest<HTMLElement>("[data-track]");
+    if (!track) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedKey(block.key);
+    const rect = track.getBoundingClientRect();
+    const size = horizontal ? rect.width : rect.height;
+    const origin = horizontal ? event.clientX : event.clientY;
+    const from = { start: block.start, end: block.end };
+    const bounds = block.bounds ?? { start: 0, end: total };
+    let latest = from;
+    const onMove = (move: PointerEvent) => {
+      const delta = (((horizontal ? move.clientX : move.clientY) - origin) / size) * total;
+      const edit: RangeEdit = mode === "move" ? { edge: "move", by: delta } : { edge: mode, to: (mode === "start" ? from.start : from.end) + delta };
+      latest = editRange(from, edit, bounds);
+      setDrag({ key: block.key, range: latest });
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      setDrag(null);
+      if (commit) commitRange(block, latest);
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  }
+
+  function onBlockKey(event: KeyboardEvent<HTMLElement>, block: Block) {
+    if (!block.editable || !onChange) return;
+    const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
+    const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+    if (!back && !forward) return;
+    event.preventDefault();
+    const step = (event.shiftKey ? 1 : 0.1) * (back ? -1 : 1);
+    const from = { start: block.start, end: block.end };
+    const edit: RangeEdit = event.altKey ? { edge: "end", to: block.end + step } : { edge: "move", by: step };
+    commitRange(block, editRange(from, edit, block.bounds ?? { start: 0, end: total }));
+  }
+
+  const view = { total, drag, selectedKey, canEdit: Boolean(onChange), startDrag, onBlockKey, select: setSelectedKey };
+
   return <div className={styles["timeline-view"]} data-testid="timeline-view" data-orientation={orientation}>
     <div className={styles["timeline-view-head"]}>
       <span className="muted">{t("tl.duration", { time: formatTime(total) })}</span>
@@ -59,35 +133,87 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
       </div>
     </div>
     {!blocks.length ? <p className="muted">{t("tl.empty")}</p>
-      : orientation === "horizontal" ? <Horizontal blocks={blocks} total={total} /> : <Vertical blocks={blocks} total={total} />}
+      : orientation === "horizontal" ? <Horizontal blocks={blocks} view={view} /> : <Vertical blocks={blocks} view={view} />}
+    {onChange && blocks.some(b => b.editable) && !editing && <p className="muted">{t("tl.edit.hint")}</p>}
+    {editing && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)} />}
   </div>;
 }
 
-function Horizontal({ blocks, total }: { blocks: Block[]; total: number }) {
+type View = {
+  total: number;
+  drag: { key: string; range: TimeRange } | null;
+  selectedKey: string | null;
+  canEdit: boolean;
+  startDrag: (event: ReactPointerEvent<HTMLElement>, block: Block, mode: "start" | "end" | "move") => void;
+  onBlockKey: (event: KeyboardEvent<HTMLElement>, block: Block) => void;
+  select: (key: string | null) => void;
+};
+
+/** Where a block sits on its track: the range being dragged while it is dragged. */
+function placement(block: Block, view: View, axis: "h" | "v"): React.CSSProperties {
+  const range = view.drag?.key === block.key ? view.drag.range : { start: block.start, end: block.end };
+  const from = `${(range.start / view.total) * 100}%`;
+  const size = `${Math.max(0.4, ((range.end - range.start) / view.total) * 100)}%`;
+  return axis === "h" ? { left: from, width: size } : { top: from, height: size };
+}
+
+function Horizontal({ blocks, view }: { blocks: Block[]; view: View }) {
   const t = useT();
+  const { total } = view;
   return <div className={styles["timeline-h"]}>
     <div className={styles["timeline-h-ruler"]} aria-hidden="true">{ticks(total).map(tick => <span key={tick} style={{ left: `${(tick / total) * 100}%` }}>{formatTime(tick)}</span>)}</div>
     {LANES.map(lane => <div className={styles["timeline-h-lane"]} key={lane.id}>
       <span className={styles["timeline-lane-label"]}>{t(lane.labelKey)}</span>
-      <div className={styles["timeline-h-track"]}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} style={{ left: `${(b.start / total) * 100}%`, width: `${Math.max(0.4, ((b.end - b.start) / total) * 100)}%` }} />)}</div>
+      <div className={styles["timeline-h-track"]} data-track onClick={() => view.select(null)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "h")} />)}</div>
     </div>)}
   </div>;
 }
 
-function Vertical({ blocks, total }: { blocks: Block[]; total: number }) {
+function Vertical({ blocks, view }: { blocks: Block[]; view: View }) {
   const t = useT();
+  const { total } = view;
   // Tall enough to read, short enough not to scroll forever on an hour-long service.
   const height = Math.round(Math.min(1400, Math.max(480, total * 1.2)));
   return <div className={styles["timeline-v"]} style={{ gridTemplateRows: `auto ${height}px` }}>
     <span />{LANES.map(lane => <span className={styles["timeline-lane-label"]} key={lane.id}>{t(lane.labelKey)}</span>)}
     <div className={styles["timeline-v-ruler"]} aria-hidden="true">{ticks(total).map(tick => <span key={tick} style={{ top: `${(tick / total) * 100}%` }}>{formatTime(tick)}</span>)}</div>
-    {LANES.map(lane => <div className={styles["timeline-v-track"]} key={lane.id}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} style={{ top: `${(b.start / total) * 100}%`, height: `${Math.max(0.4, ((b.end - b.start) / total) * 100)}%` }} />)}</div>)}
+    {LANES.map(lane => <div className={styles["timeline-v-track"]} data-track key={lane.id} onClick={() => view.select(null)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "v")} />)}</div>)}
   </div>;
 }
 
-function BlockView({ block, style }: { block: Block; style: React.CSSProperties }) {
-  return <div className={`${styles["timeline-block"]} ${styles[`tone-${block.tone}`]}`} style={style} title={`${block.label} · ${formatTime(block.start)}–${formatTime(block.end)}${block.detail ? ` · ${block.detail}` : ""}`}>
+function BlockView({ block, view, style }: { block: Block; view: View; style: React.CSSProperties }) {
+  const t = useT();
+  const editable = Boolean(block.editable && view.canEdit);
+  const shown = view.drag?.key === block.key ? view.drag.range : { start: block.start, end: block.end };
+  const classes = [styles["timeline-block"], styles[`tone-${block.tone}`], editable ? styles["editable"] : "", editable && view.selectedKey === block.key ? styles["selected"] : ""].filter(Boolean).join(" ");
+  const title = `${block.label} · ${formatTime(shown.start)}–${formatTime(shown.end)}${block.detail ? ` · ${block.detail}` : ""}`;
+  if (!editable) return <div className={classes} style={style} title={title}><strong>{block.label}</strong>{block.detail && <small>{block.detail}</small>}</div>;
+  return <div className={classes} style={style} title={title} role="button" tabIndex={0} aria-pressed={view.selectedKey === block.key}
+    onPointerDown={event => view.startDrag(event, block, "move")} onClick={event => event.stopPropagation()} onKeyDown={event => view.onBlockKey(event, block)}>
+    <span className={`${styles["handle"]} ${styles["handle-start"]}`} role="separator" aria-label={t("tl.edit.handleStart")} onPointerDown={event => view.startDrag(event, block, "start")} />
     <strong>{block.label}</strong>{block.detail && <small>{block.detail}</small>}
+    <span className={`${styles["handle"]} ${styles["handle-end"]}`} role="separator" aria-label={t("tl.edit.handleEnd")} onPointerDown={event => view.startDrag(event, block, "end")} />
+  </div>;
+}
+
+/** Exact start and end (output seconds) of the selected graphics block. */
+function GraphicTimes({ block, total, onCommit, onClose }: { block: Block; total: number; onCommit: (range: TimeRange) => void; onClose: () => void }) {
+  const t = useT();
+  const bounds = block.bounds ?? { start: 0, end: total };
+  const [start, setStart] = useState(String(Number(block.start.toFixed(2))));
+  const [end, setEnd] = useState(String(Number(block.end.toFixed(2))));
+  const from = { start: block.start, end: block.end };
+  const apply = (edge: "start" | "end", value: string) => {
+    const n = Number(value);
+    if (value.trim() === "" || !Number.isFinite(n)) return;
+    onCommit(editRange(from, { edge, to: snapTime(n) }, bounds));
+  };
+  return <div className={styles["time-editor"]}>
+    <strong>{block.label}</strong>
+    <label>{t("tl.edit.start")}<input type="number" step="0.1" min={bounds.start} max={bounds.end} value={start} onChange={e => setStart(e.target.value)} onBlur={() => apply("start", start)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
+    <label>{t("tl.edit.end")}<input type="number" step="0.1" min={bounds.start} max={bounds.end} value={end} onChange={e => setEnd(e.target.value)} onBlur={() => apply("end", end)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
+    <span className="muted">{t("tl.edit.within", { start: formatTime(bounds.start), end: formatTime(bounds.end) })}</span>
+    <button type="button" onClick={onClose}>{t("tl.edit.close")}</button>
   </div>;
 }
 
@@ -118,12 +244,16 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
       blocks.push({ key: `${key}-audio`, lane: "audio", start, end, label: audioName(item.assetId), detail: t("tl.ownSection"), tone: "audio" });
     }
   });
+  const pictureEnd = Math.max(0, ...slots.map(slot => slot.outputStart + slot.duration));
   items.forEach((item, index) => {
     if (item.type === "overlay" || (item.type === "slate" && item.mode === "overlay")) {
       if (item.startSeconds === undefined || item.endSeconds === undefined) return;
       const range = item.type === "overlay" ? overlayOutputRange(item, items, { sections }) : { startSeconds: item.startSeconds, endSeconds: item.endSeconds };
       if (!range) return;
-      blocks.push({ key: `graphic-${index}`, lane: "graphics", start: range.startSeconds, end: range.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || t("tl.graphic"), detail: item.type === "slate" ? t("tl.overlayBackground") : t("tl.overlay"), tone: "graphic" });
+      // A section overlay stays in its clip; any other graphic stays on the picture timeline (and where it already is).
+      const clip = item.type === "overlay" ? overlayOutputBounds(item, items, { sections }) : undefined;
+      const bounds = clip ? { start: clip.startSeconds, end: clip.endSeconds } : { start: 0, end: Math.max(pictureEnd, range.endSeconds) };
+      blocks.push({ key: `graphic-${index}`, lane: "graphics", start: range.startSeconds, end: range.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || t("tl.graphic"), detail: item.type === "slate" ? t("tl.overlayBackground") : t("tl.overlay"), tone: "graphic", itemIndex: index, editable: true, bounds });
     } else if (item.type === "feed-overlay") {
       blocks.push({ key: `feed-${index}`, lane: "graphics", start: item.startSeconds, end: item.endSeconds, label: t("tl.feedGraphics"), detail: t("tl.feedGraphicsDetail"), tone: "graphic" });
     } else if (item.type === "audio-clip" && item.mode === "mix") {
