@@ -41,7 +41,7 @@ describe("GET /api/jobs", () => {
     await prisma.mediaJob.create({ data: { projectId, type: "VIDEO", status: "QUEUED" } });
     await prisma.mediaJob.create({ data: { projectId, type: "VIDEO", status: "FAILED", error: "boom" } });
     const old = await prisma.mediaJob.create({ data: { projectId, type: "VIDEO", status: "COMPLETED" } });
-    await prisma.$executeRaw`UPDATE "MediaJob" SET "updatedAt" = ${Date.now() - 3 * 3600_000} WHERE "id" = ${old.id}`;
+    await prisma.mediaJob.update({ where: { id: old.id }, data: { updatedAt: new Date(Date.now() - 3 * 3600_000) } });
 
     expect(mine((await call("?active=1")).body.jobs).map(job => job.status)).toEqual(["QUEUED"]);
     expect(mine((await call()).body.jobs).map(job => job.status).sort()).toEqual(["FAILED", "QUEUED"]);
