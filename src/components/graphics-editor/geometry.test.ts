@@ -11,12 +11,12 @@ describe("dragging in the output frame", () => {
     expect(resizeInFrame("e", boxToFrame(layer, layout), 100, 0, layout, false)).toMatchObject({ width: 1700, height: 200, x: 160 });
   });
 
-  it("moves the layer by what the user sees: a drag of d frame pixels shifts the design centre by d / s", () => {
+  it("moves the layer by what the user sees: a drag of d frame pixels shifts the layer by d on screen (near an edge that is more design pixels)", () => {
     const layout = frameLayout({ width: 1080, height: 1920 });
     const display = boxToFrame(layer, layout);
     const moved = moveInFrame(display, 0, 192, layout, false);
-    // 192 frame px down = 108 design px (sy = 16/9).
-    expect(moved.y - layer.y).toBe(108);
+    // The layer ends up exactly 192 frame px lower, whatever that is in design pixels.
+    expect(boxToFrame({ ...layer, ...moved }, layout).y - display.y).toBeCloseTo(192, 0);
     expect(moved.x).toBe(layer.x);
   });
 

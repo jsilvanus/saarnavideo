@@ -105,18 +105,18 @@ describe("output size and reframing", () => {
     expect(whiteShare(await frameRgb(filePath, 2, { x: 0, y: 0, w: 960, h: 190 }))).toBe(0);
   });
 
-  it("keeps a graphic's shape in a vertical frame: box scaled uniformly, centre at its relative place", async () => {
-    // A lower-third bar authored on the 1920x1080 canvas (160,820, 1600x200) becomes 900x112.5 at 1080x1920, centred 920/1080 down the frame
-    // (y 1579..1692). Stretched per axis (the old rule) it would have been 356 px tall (y 1456..1812) and covered the band sampled above it.
+  it("keeps a graphic's shape in a vertical frame: box scaled uniformly, bottom bar stays at the bottom", async () => {
+    // A lower-third bar authored on the 1920x1080 canvas (160,820, 1600x200) becomes 900x112.5 at 1080x1920 and, because it hugs the bottom edge of the design, stays near the bottom of the frame
+    // (y 1764..1877). Stretched per axis (the old rule) it would have been 356 px tall (y 1456..1812) and covered the band sampled above it.
     const project = await createProject("Vertical lower third");
     const green = await uploadSource(project.id, "green.mp4");
     const layers = JSON.stringify([{ id: "bar", type: "rect", x: 160, y: 820, width: 1600, height: 200, style: { background: "#ff0000" } }]);
     await setComposition(project.id, [clip(green.id), { type: "overlay", template: "rich", kind: "text", startSeconds: 0, endSeconds: 5, data: { layers } }], 5, { template: VERTICAL });
     const { filePath } = await render(project.id);
-    expect(isRed(await regionColor(filePath, 2, { x: 120, y: 1600, w: 800, h: 60 }))).toBe(true);
-    expect(isGreen(await regionColor(filePath, 2, { x: 120, y: 1480, w: 800, h: 60 }))).toBe(true);
-    expect(isGreen(await regionColor(filePath, 2, { x: 120, y: 1720, w: 800, h: 60 }))).toBe(true);
-    expect(isGreen(await regionColor(filePath, 2, { x: 0, y: 1600, w: 70, h: 60 }))).toBe(true);
+    expect(isRed(await regionColor(filePath, 2, { x: 120, y: 1785, w: 800, h: 60 }))).toBe(true);
+    expect(isGreen(await regionColor(filePath, 2, { x: 120, y: 1650, w: 800, h: 60 }))).toBe(true);
+    expect(isGreen(await regionColor(filePath, 2, { x: 120, y: 1890, w: 800, h: 20 }))).toBe(true);
+    expect(isGreen(await regionColor(filePath, 2, { x: 0, y: 1785, w: 70, h: 60 }))).toBe(true);
   });
 
   it("keeps the aspect ratio in the fast preview", async () => {

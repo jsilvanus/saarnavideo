@@ -27,10 +27,10 @@ describe("graphics editor stage", () => {
     expect(html).toContain("width:1280px;height:2120px");
   });
 
-  it("draws a layer where the renderer puts it: uniform size, centre at its relative place", () => {
+  it("draws a layer where the renderer puts it: uniform size, a bottom bar stays near the bottom edge", () => {
     const html = render(1080, 1920);
-    // 1600x200 -> 900x112.5, top at 1579.3 (see frame-layout.test.ts); content keeps design size and is scaled by 0.5625.
-    expect(html).toMatch(/left:90px;top:1579\.3\d*px;width:900px;height:112\.5px/);
+    // 1600x200 -> 900x112.5, top at 1764.1 (edge anchoring, see frame-layout.test.ts); content keeps design size and is scaled by 0.5625.
+    expect(html).toMatch(/left:90px;top:1764\.1\d*px;width:900px;height:112\.5px/);
     expect(html).toContain("transform-origin:0 0;transform:scale(0.5625)");
   });
 

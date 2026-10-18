@@ -21,7 +21,7 @@ describe("frameLayout", () => {
     }
   });
 
-  it("keeps shapes undistorted in a vertical frame and the centre where it was", () => {
+  it("keeps shapes undistorted in a vertical frame and a bottom bar near the bottom", () => {
     const layout = frameLayout({ width: 1080, height: 1920 });
     expect(layout.k).toBeCloseTo(0.5625, 10);
     const box = boxToFrame(lowerThird, layout);
@@ -29,16 +29,38 @@ describe("frameLayout", () => {
     expect(box.width / box.height).toBeCloseTo(lowerThird.width / lowerThird.height, 10);
     expect(box.width).toBeCloseTo(900, 8);
     expect(box.x).toBeCloseTo(90, 8);
-    // The centre keeps its relative place: (820 + 100) / 1080 down the frame.
-    expect(box.y + box.height / 2).toBeCloseTo((920 / 1080) * 1920, 8);
+    // The bar is 60 px above the bottom edge of the design: it stays within about 45 px of the bottom of the frame
+    // (60 * k = 33.75, plus the fading pull of the proportional place), not 1920 * 60/1080 = 107 px as before.
+    const gap = 1920 - (box.y + box.height);
+    expect(gap).toBeGreaterThan(33.75);
+    expect(gap).toBeLessThan(45);
   });
 
-  it("handles a frame wider than the design the same way along x", () => {
+  it("keeps a layer that sits in the middle in the middle, and a top bar at the top", () => {
+    const layout = frameLayout({ width: 1080, height: 1920 });
+    const centred = boxToFrame({ x: 460, y: 440, width: 1000, height: 200 }, layout);
+    expect(centred.y + centred.height / 2).toBeCloseTo(960, 6);
+    const top = boxToFrame({ x: 160, y: 40, width: 1600, height: 100 }, layout);
+    expect(top.y).toBeGreaterThan(40 * layout.k);
+    expect(top.y).toBeLessThan(40 * layout.k + 12);
+  });
+
+  it("moves continuously: a small change of position never jumps", () => {
+    let previous = mapAxis(0, 200, 16 / 9, 0.5625, 1080).position;
+    for (let p = 5; p <= 880; p += 5) {
+      const next = mapAxis(p, 200, 16 / 9, 0.5625, 1080).position;
+      expect(Math.abs(next - previous)).toBeLessThan(30);
+      previous = next;
+    }
+  });
+
+  it("handles a frame wider than the design the same way along x (a layer near the left edge stays there)", () => {
     const layout = frameLayout({ width: 2560, height: 1080 });
     const box = boxToFrame({ x: 100, y: 100, width: 400, height: 200 }, layout);
     expect(box.height).toBe(200);
     expect(box.width).toBe(400);
-    expect(box.x + box.width / 2).toBeCloseTo(((100 + 200) / 1920) * 2560, 8);
+    expect(box.x).toBeGreaterThanOrEqual(100);
+    expect(box.x).toBeLessThan(110);
     expect(box.y).toBe(100);
   });
 

@@ -1,3 +1,4 @@
+import { DESIGN_CANVAS } from "@/domain/output-presets";
 import { mapAxis } from "@/domain/frame-layout";
 import type { Graphic, GraphicLayer } from "@/domain/graphics";
 
@@ -130,8 +131,8 @@ export function captionStyleFromGraphic(graphic: Pick<Graphic, "layers" | "width
   // Same rule as every other graphic (src/domain/frame-layout.ts): sizes scale uniformly by the smaller factor,
   // the box keeps the relative place of its centre on each axis.
   const s = Math.min(sx, sy);
-  const across = mapAxis(layer.x, layer.width, sx, s);
-  const down = mapAxis(layer.y, layer.height, sy, s);
+  const across = mapAxis(layer.x, layer.width, sx, s, DESIGN_CANVAS.width);
+  const down = mapAxis(layer.y, layer.height, sy, s, DESIGN_CANVAS.height);
   const style = layer.style ?? {};
   const opacity = Math.min(1, Math.max(0, px(style.opacity, 1)));
   const withOpacity = (color: RGBA): RGBA => ({ ...color, a: color.a * opacity });

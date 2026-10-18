@@ -537,7 +537,7 @@ describe("output size and reframing", () => {
     expect(filters).toContain("fontsize=50:x=0:y=270");
   });
 
-  it("keeps layer shapes undistorted in a vertical frame (uniform size, centre keeps its relative place)", () => {
+  it("keeps layer shapes undistorted in a vertical frame (uniform size, a bar at the bottom edge stays near the bottom)", () => {
     const layers = JSON.stringify([{ type: "rect", x: 160, y: 820, width: 1600, height: 200, style: { background: "red" } }, { type: "text", text: "Hi", x: 160, y: 820, width: 1600, height: 200, style: { "font-size": 100, "text-align": "center" } }]);
     const filters = graph({
       ...clipDef({ width: 1080, height: 1920 }),
@@ -546,9 +546,10 @@ describe("output size and reframing", () => {
         { type: "overlay", template: "rich", kind: "text", startSeconds: 0, endSeconds: 5, data: { layers } },
       ] },
     });
-    // 1600x200 -> 900x112.5 (not 900x355.6); centre y 920 * 1920/1080 = 1635.56, so the top is 1579.31.
-    expect(filters).toContain("drawbox=x=90:y=1579.306:w=900:h=112.5");
-    expect(filters).toContain("fontsize=56.25:x=90+(900-text_w)/2:y=1579.306");
+    // 1600x200 -> 900x112.5 (not 900x355.6). The bar is 60 px from the bottom edge of the design; edge anchoring keeps it
+    // about 43 px (60 * 0.5625 plus a small share of the proportional place) from the bottom of the frame: top 1764.148.
+    expect(filters).toContain("drawbox=x=90:y=1764.148:w=900:h=112.5");
+    expect(filters).toContain("fontsize=56.25:x=90+(900-text_w)/2:y=1764.148");
   });
 
   it("does not scale anything at 1920x1080", () => {

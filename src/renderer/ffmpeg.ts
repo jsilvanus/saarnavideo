@@ -158,8 +158,8 @@ function richLayerFilters(input: string, output: string, layers: RichLayer[], ct
   let current = input;
   for (const layer of layers) {
     const next = `${output}_${ctx.counter.value++}`;
-    const horizontal = layer.width === undefined ? { position: Number(layer.x ?? 0) * ctx.sx, length: ctx.width } : mapAxis(Number(layer.x ?? 0), Number(layer.width), ctx.sx, ctx.sf);
-    const vertical = layer.height === undefined ? { position: Number(layer.y ?? 0) * ctx.sy, length: ctx.height } : mapAxis(Number(layer.y ?? 0), Number(layer.height), ctx.sy, ctx.sf);
+    const horizontal = layer.width === undefined ? { position: Number(layer.x ?? 0) * ctx.sx, length: ctx.width } : mapAxis(Number(layer.x ?? 0), Number(layer.width), ctx.sx, ctx.sf, DESIGN_CANVAS.width);
+    const vertical = layer.height === undefined ? { position: Number(layer.y ?? 0) * ctx.sy, length: ctx.height } : mapAxis(Number(layer.y ?? 0), Number(layer.height), ctx.sy, ctx.sf, DESIGN_CANVAS.height);
     const { position: x, length: w } = horizontal;
     const { position: y, length: h } = vertical;
     const s = layerStyle(layer, ctx.sf);
@@ -340,8 +340,8 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
       filters.push(...richLayerFilters(outputVideo, next, layers, ctx, range));
     } else if (item.kind === "rectangle") {
       const color = item.color ?? item.data.color ?? "black";
-      const boxX = item.width === undefined ? { position: (item.x ?? 0) * sx, length: width } : mapAxis(item.x ?? 0, item.width, sx, ctx.sf);
-      const boxY = item.height === undefined ? { position: (item.y ?? 0) * sy, length: height } : mapAxis(item.y ?? 0, item.height, sy, ctx.sf);
+      const boxX = item.width === undefined ? { position: (item.x ?? 0) * sx, length: width } : mapAxis(item.x ?? 0, item.width, sx, ctx.sf, DESIGN_CANVAS.width);
+      const boxY = item.height === undefined ? { position: (item.y ?? 0) * sy, length: height } : mapAxis(item.y ?? 0, item.height, sy, ctx.sf, DESIGN_CANVAS.height);
       filters.push(`[${outputVideo}]${fillBox(boxX.position, boxY.position, boxX.length, boxY.length, `${color}@${item.opacity}`)}${enableBetween(range)}[${next}]`);
     } else if (item.kind === "image" && item.imageAsset && imageIndexByAsset.has(item.imageAsset)) {
       const input = imageIndexByAsset.get(item.imageAsset)!;
