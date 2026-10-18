@@ -24,7 +24,24 @@ export function isPartialRange(rangeStartSeconds: number, rangeEndSeconds: numbe
   return rangeStartSeconds > 0 || (durationSeconds !== undefined && rangeEndSeconds < durationSeconds);
 }
 
-export type CorrectedSegment = { startSeconds: number; endSeconds: number; text: string; confidence?: number };
+/**
+ * The range a TRANSCRIBE job works on. Explicit parameters win; a job queued for a YouTube source before its download
+ * carries no range, and then the whole source ([0, duration]) is used, with the duration read from the downloaded file.
+ */
+export function resolveTranscriptionRange(
+  params: { rangeStartSeconds?: number; rangeEndSeconds?: number },
+  durationSeconds: number | undefined,
+): { rangeStartSeconds: number; rangeEndSeconds: number } {
+  if (params.rangeStartSeconds !== undefined && params.rangeEndSeconds !== undefined) {
+    return { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds };
+  }
+  if (durationSeconds === undefined || !(durationSeconds > 0)) {
+    throw new Error("Source duration is unknown; provide rangeStartSeconds and rangeEndSeconds explicitly");
+  }
+  return { rangeStartSeconds: 0, rangeEndSeconds: durationSeconds };
+}
+
+export type CorrectedSegment ={ startSeconds: number; endSeconds: number; text: string; confidence?: number };
 
 /**
  * The result's segments come back time-zeroed to the submitted clip, not the

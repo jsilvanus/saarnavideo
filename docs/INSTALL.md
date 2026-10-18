@@ -13,7 +13,7 @@ Every setting is an environment variable; the full list is in [Environment refer
 | Part | What it is | Needs |
 |---|---|---|
 | **App** | Next.js web UI and HTTP API (`npm run dev` / `npm start`) | Node.js 22+, the database |
-| **Worker** | Takes queued jobs from the database: downloads, renders, thumbnails, podcasts, transcriptions, publishing (`npm run worker`) | The database, the media store, FFmpeg + ffprobe (+ yt-dlp for YouTube sources) unless rendering and downloading are sent to an fffleet fleet |
+| **Worker** | Takes queued jobs from the database: downloads, renders, thumbnails, podcasts, transcriptions, publishing (`npm run worker`) | The database, the media store, FFmpeg + ffprobe (+ yt-dlp for YouTube sources) unless rendering, downloading and audio probing are sent to an fffleet fleet |
 | **Database** | SQLite (development) or PostgreSQL 17+ (production). It is also the job queue | |
 | **Media store** | Where sources, outputs and the asset library live: a folder (`MEDIA_ROOT`) or an S3 bucket | |
 | **Speech-to-text** (optional) | The [liturgos-auditor](https://github.com/jsilvanus/liturgos-auditor) service, for transcriptions and captions | |
@@ -23,7 +23,7 @@ App and worker never talk to each other over HTTP: they share the database and t
 
 ## 1. Development on one machine
 
-Requirements: Node.js 22 or newer, FFmpeg and ffprobe (with `libass` and a default font), and yt-dlp if you want YouTube links.
+Requirements: Node.js 22 or newer, FFmpeg and ffprobe (with `libass` and a default font) on the worker, and yt-dlp if you want YouTube links. The app server needs ffprobe only for audio uploads without a fleet; with `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` set it probes on the fleet (see INTEGRATIONS.md).
 
 ```bash
 git clone https://github.com/jsilvanus/saarnavideo.git
@@ -88,7 +88,7 @@ Set one long random string on the **app**:
 ACCESS_SECRET="$(openssl rand -base64 32)"
 ```
 
-Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication.
+Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication. The upload screen then shows "Uploads are off on this server: the operator must set ACCESS_SECRET" instead of the raw error.
 
 ## Environment reference
 

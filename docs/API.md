@@ -144,6 +144,27 @@ For direct-to-S3 uploads, use `POST /projects/{projectId}/source/presigned-url`,
 - Supported formats: MP4, MOV, MKV, WebM
 - Kept permanently in the shared library
 
+#### YouTube Source
+
+```
+POST /projects/{projectId}/source
+Content-Type: application/json
+
+{ "youtubeUrl": "https://www.youtube.com/watch?v=..." }
+
+Response: 201 Created
+{ "id": "source-id", "type": "YOUTUBE", "status": "AVAILABLE", "youtubeVideoId": "...", "youtubeUrl": "...", "originalName": "Video title" }
+```
+
+`originalName` is the video title from YouTube's public oEmbed document (5 s timeout). When the lookup fails it is `null` and the URL stands in for the name. The video itself is not downloaded yet.
+
+```
+POST /projects/{projectId}/source/{sourceId}/download
+Response: 202 Accepted { "id": "job-id", "type": "DOWNLOAD", "status": "QUEUED", "progress": 0 }
+```
+
+Queues the DOWNLOAD job of a YouTube source (the same job a render or transcription queues when it needs the file). `400` for an uploaded source, `404` for a source of another project, `409` when the file is already on the server or a download of it is queued or running.
+
 **Identical bytes already in the library** are reused (200 instead of 201): the existing asset and its `assetKey` stay, and the response adds `"reused": true` and, when the name asked for differs, `"requestedKey": "logo"` so the caller knows overlays must use the returned `assetKey`.
 
 ### Assets (Images for Slates/Overlays)
@@ -368,13 +389,33 @@ Add a `Range` header (or `?inline=1`, which also advertises `Accept-Ranges: byte
 Caption outputs carry a `language` (BCP 47 tag) and are named `saarnavideo-captions-<language>.<ext>`.
 They exist only for renders queued with `captions.mode = "soft"`, and share the video's `jobId`.
 
+When the output has a `label` (see below) the file is named after it instead: the label is sanitised for file names (path and shell characters become spaces), the extension comes from the output type, and `Content-Disposition` also carries the UTF-8 name as `filename*=UTF-8''...`, so `Pääsiäinen.mp4` arrives intact.
+
+#### Rename an output
+
+```
+PATCH /outputs/{outputId}
+Content-Type: application/json
+
+{ "label": "Sunnuntai 14.6. klo 10" }
+
+Response: 200 OK
+{ "id": "...", "projectId": "...", "jobId": "...", "type": "VIDEO", "preview": false,
+  "mimeType": "video/mp4", "language": null, "label": "Sunnuntai 14.6. klo 10",
+  "sizeBytes": "1234567890", "createdAt": "2026-10-18T14:32:01.000Z" }
+```
+
+- `label` is trimmed and kept to 120 characters (longer: `400`). An empty string (or `null`) clears it, and the download goes back to the default name.
+- Unknown output: `404`. Body without `label` or not JSON: `400`.
+- `GET /projects/{projectId}` lists every output with its `label`, `jobId` and `createdAt` (newest first). The outputs of one render share a `jobId`; the Julkaisu step groups them by it, newest render first, and shows each render's time (Intl, locale aware).
+
 #### Audio assets (voiceovers, podcast intro/outro)
 
 `POST /assets` and `POST /projects/{projectId}/assets` also accept audio: MP3, M4A, WAV, OGG or WebM
 (the type is taken from the MIME type, codec parameters such as `audio/webm;codecs=opus` are ignored, a
 missing/generic type falls back to the file extension). The asset is stored with `type: "AUDIO"` whatever
 `type` the form sends, the duration is probed with ffprobe (`durationMs` in every asset response) and files
-that ffprobe cannot read as audio return `400`. The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
+that ffprobe cannot read as audio return `400`. The probe runs on the fffleet fleet when `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` is set (see INTEGRATIONS.md, "Audio probing through the fleet"), otherwise with the local ffprobe. A missing ffprobe (local or on the fleet), a fleet that cannot be reached or a probe that does not finish within 60 s answers `503` with a readable message (e.g. `"ffprobe is not available on the app server"`). The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
 200 MB, `413` above it). Identical bytes are deduplicated like images. `GET /assets/{id}` and
 `GET /projects/{projectId}/assets/{assetId}` serve audio with `Range` support.
 

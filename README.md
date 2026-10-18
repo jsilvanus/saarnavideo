@@ -9,7 +9,7 @@ It is built for the Evangelical-Lutheran Church of Finland: the built-in templat
 - **Sources:** upload a file, or give a YouTube link (downloaded with yt-dlp). A project can have several sources.
 - **Sections and timeline:** cut the recording into sections, reorder them, add opening and closing cards, overlays, voiceovers and background audio. Cut, fade and crossfade transitions.
 - **Templates:** start from a built-in template, or save any project as your own.
-- **Graphics:** a scene-graph graphics editor, a shared graphics library (images, audio, folders), and project variables (`{{preacher}}`, `{{evankeliumi}}`) that fill the text of your graphics.
+- **Graphics:** a scene-graph graphics editor, a shared asset library (images, audio, folders; record or upload audio straight into it), and project variables (`{{preacher}}`, `{{evankeliumi}}`) that fill the text of your graphics.
 - **Output size:** 16:9, Shorts, Reels, TikTok, Stories, square and portrait presets, with fill, fit or custom crop.
 - **Captions:** from a transcription of the recording, as a soft track, burned into the picture, or both. Plain-text transcript export.
 - **Podcast:** an audio episode with intro and outro, loudness normalised, with tags and cover art.

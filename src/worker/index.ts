@@ -15,7 +15,8 @@ import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
-import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
+import { applyRangeOffset, isPartialRange, resolveTranscriptionRange } from "@/worker/transcription-range";
+import { probeVideo } from "@/worker/lcyt-feed";
 import { buildBurnedCaptionAss, buildCaptionCues, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
@@ -170,8 +171,10 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>, files:
   });
   if (cookies) await logJobEvent(job.id, "INFO", cookies.source === "db" ? `Used the YouTube cookies from Settings${cookies.updated ? "; yt-dlp refreshed them and the stored copy was updated" : ""}` : "Used the cookie file from YTDLP_COOKIES_FILE");
   const s = await stat(localPath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(localPath, { force: true }); throw new Error(validation.reason); }
+  // YouTube metadata has no length here; the file's own duration lets the transcription and the sections use it (a failed probe leaves it unknown).
+  const durationMs = source.durationMs == null ? await probeVideo(localPath).then(probe => probe.durationMs, () => undefined) : undefined;
   const storagePath = await files.finalize(localPath, `sources/${job.projectId}/${source.youtubeVideoId}.mp4`, "video/mp4");
-  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size) } });
+  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), ...(durationMs !== undefined ? { durationMs } : {}) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
 
@@ -348,8 +351,9 @@ async function failJob(jobId: string, error: unknown, logMessage: string, data?:
 }
 
 type TranscribeParameters = {
-  rangeStartSeconds: number;
-  rangeEndSeconds: number;
+  /** Absent for a YouTube source queued before its download; the whole source is then transcribed (see resolveTranscriptionRange). */
+  rangeStartSeconds?: number;
+  rangeEndSeconds?: number;
   language: string;
   auditorJobId?: string;
   tempClipPath?: string;
@@ -360,14 +364,17 @@ type TranscribeParameters = {
 // See docs/transcription-editor-contract.md, "MediaJob.parameters shape for a TRANSCRIBE job".
 function readTranscribeParameters(parameters: unknown): TranscribeParameters {
   const params = (parameters && typeof parameters === "object" ? parameters : {}) as Partial<TranscribeParameters>;
-  if (typeof params.rangeStartSeconds !== "number" || typeof params.rangeEndSeconds !== "number" || typeof params.language !== "string") {
-    throw new Error("TRANSCRIBE job is missing rangeStartSeconds/rangeEndSeconds/language parameters");
-  }
-  return { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath, stagedKey: params.stagedKey };
+  if (typeof params.language !== "string") throw new Error("TRANSCRIBE job is missing the language parameter");
+  const hasRange = typeof params.rangeStartSeconds === "number" && typeof params.rangeEndSeconds === "number";
+  return { rangeStartSeconds: hasRange ? params.rangeStartSeconds : undefined, rangeEndSeconds: hasRange ? params.rangeEndSeconds : undefined, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath, stagedKey: params.stagedKey };
 }
 
 function serializeTranscribeParameters(params: TranscribeParameters): Record<string, string | number> {
-  const result: Record<string, string | number> = { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language };
+  const result: Record<string, string | number> = { language: params.language };
+  if (params.rangeStartSeconds !== undefined && params.rangeEndSeconds !== undefined) {
+    result.rangeStartSeconds = params.rangeStartSeconds;
+    result.rangeEndSeconds = params.rangeEndSeconds;
+  }
   if (params.auditorJobId) result.auditorJobId = params.auditorJobId;
   if (params.tempClipPath) result.tempClipPath = params.tempClipPath;
   if (params.stagedKey) result.stagedKey = params.stagedKey;
@@ -382,6 +389,11 @@ async function releaseStagedSource(jobId: string) {
   const row = await prisma.mediaJob.findUnique({ where: { id: jobId }, select: { parameters: true } });
   const key = row?.parameters && typeof row.parameters === "object" ? (row.parameters as Record<string, unknown>).stagedKey : undefined;
   if (typeof key === "string") await transcriptionStaging.delete(key);
+}
+
+/** Length of a downloaded or uploaded source in seconds, read with ffprobe; undefined when the file cannot be read. */
+async function probeDurationSeconds(file: string): Promise<number | undefined> {
+  return probeVideo(file).then(probe => probe.durationMs / 1000, () => undefined);
 }
 
 async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds?: number, rangeEndSeconds?: number): Promise<string> {
@@ -414,10 +426,14 @@ async function processTranscriptionInner(job: MediaJobRow) {
   if (!job.sourceId) throw new Error("TRANSCRIBE job has no source");
   const source = await prisma.source.findUnique({ where: { id: job.sourceId } });
   if (!source) throw new Error("Source not found");
-  if (!source.storagePath) throw new Error("Source has no media available to transcribe");
+  const storagePath = source.storagePath;
+  if (!storagePath) throw new Error("Source has no media available to transcribe");
 
   let params = readTranscribeParameters(job.parameters);
   const client = new AuditorSttClient();
+  // S3-stored sources are downloaded into the worker cache first (ffmpeg needs a real file); memoized, it is needed at most once.
+  let localSource: string | undefined;
+  const sourcePath = async () => (localSource ??= await resolveLocalFile(await getMediaStore(), MEDIA_ROOT, storagePath));
 
   // Honor a cancellation that arrived while this job was still QUEUED (claimJob just flipped it to RUNNING and we haven't submitted anything yet).
   const preStart = await prisma.mediaJob.findUnique({ where: { id: job.id }, select: { cancelRequested: true } });
@@ -428,18 +444,22 @@ async function processTranscriptionInner(job: MediaJobRow) {
     return;
   }
 
+  // A job queued without a range (YouTube source, duration unknown) transcribes the whole file: its duration comes from the download.
+  let durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
+  // The DOWNLOAD dependency has run by now, so the file can be probed.
+  if (params.rangeStartSeconds === undefined || params.rangeEndSeconds === undefined) durationSeconds ??= await probeDurationSeconds(await sourcePath());
+  const range = resolveTranscriptionRange(params, durationSeconds);
+  params = { ...params, ...range };
+
   if (!params.auditorJobId) {
-    const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
-    const isPartial = isPartialRange(params.rangeStartSeconds, params.rangeEndSeconds, durationSeconds);
-    // S3-stored sources are downloaded into the worker cache first (ffmpeg needs a real file).
-    const sourcePath = await resolveLocalFile(await getMediaStore(), MEDIA_ROOT, source.storagePath);
-    let filePath = sourcePath;
+    const isPartial = isPartialRange(range.rangeStartSeconds, range.rangeEndSeconds, durationSeconds);
+    let filePath = await sourcePath();
     // With S3 staging the whole source is reduced to 16 kHz mono audio first, so far less than the video goes to the bucket.
     // In s3-source mode a whole source is staged as it is and the service strips the audio on a fleet worker.
     const stageSource = transcriptionStaging?.mode === "source" && !isPartial;
     if (isPartial || (transcriptionStaging && !stageSource)) {
       await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: isPartial ? "Extracting requested range" : "Extracting audio", progress: 0 }, true);
-      const tempClipPath = await extractTranscriptionClip(job.id, sourcePath, isPartial ? params.rangeStartSeconds : undefined, isPartial ? params.rangeEndSeconds : undefined);
+      const tempClipPath = await extractTranscriptionClip(job.id, filePath, isPartial ? range.rangeStartSeconds : undefined, isPartial ? range.rangeEndSeconds : undefined);
       params = { ...params, tempClipPath };
       await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
       filePath = tempClipPath;
@@ -504,9 +524,9 @@ async function processTranscriptionInner(job: MediaJobRow) {
   }
 
   const result = await client.getJobResult(auditorJobId);
-  const segments = applyRangeOffset(result.segments, params.rangeStartSeconds);
+  const segments = applyRangeOffset(result.segments, range.rangeStartSeconds);
 
-  await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, segments });
+  await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: range.rangeStartSeconds, rangeEndSeconds: range.rangeEndSeconds, segments });
 
   await cleanupTempClip(params.tempClipPath);
   await releaseStagedSource(job.id);

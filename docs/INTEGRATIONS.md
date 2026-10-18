@@ -17,7 +17,8 @@ Contents: [fffleet](#fffleet-render-and-download-on-workers) · [Media in S3](#m
 | Render, preview, thumbnail, podcast (ffmpeg) | A fleet worker, as a batch job | `RENDER_EXECUTOR=fffleet` |
 | YouTube download (yt-dlp) | A fleet worker with the `download` executor, as a batch job | `DOWNLOAD_EXECUTOR=fffleet` |
 | Transcription audio strip (`AUDITOR_STT_FETCH=s3-source`) | A fleet worker, started by the auditor service, not by this app | see [Speech-to-text](#speech-to-text-liturgos-auditor) |
-| Queue, job state, outputs, publishing, audio ffprobe, transcription polling | The app's own worker (`npm run worker`) | always local |
+| Audio probe of an uploaded or recorded audio file (ffprobe, and a stream copy for WebM without a duration) | A fleet worker, as a batch job of type `ffprobe` (and `ffmpeg`); from the app server itself, so the app image needs no ffmpeg | `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` (see [Audio probing](#audio-probing-through-the-fleet)) |
+| Queue, job state, outputs, publishing, transcription polling | The app's own worker (`npm run worker`) | always local |
 
 SaarnaVideo keeps its own job queue in the database. The fleet only does the heavy command. The app's worker stays the one that claims jobs, writes progress and creates `Output` rows, so downloads, thumbnails and publishing do not change, and a worker restart recovers jobs the same way with or without a fleet.
 
@@ -88,6 +89,17 @@ MAX_CONCURRENT_JOBS=4                       # default is already 4 with the flee
 (`FFFLEET_TOKEN` replaces the client id/secret pair if you prefer a static token.) The worker refuses to start rendering with `RENDER_EXECUTOR=fffleet` unless the bucket and the S3 credentials are set.
 
 **5. Check.** Queue a preview. The job log shows the phase going through SUBMITTING and ENCODING; `GET /v1/workers` on the orchestrator lists your worker, and `GET /metrics` shows the queue. If no reachable fleet answers, the same job runs on the worker's own machine through an in-process fffleet runner with the same S3 staging (so the staging bucket and a local ffmpeg are still needed). Unset `FFFLEET_URL` on purpose to use that.
+
+### Audio probing through the fleet
+
+Uploading or recording audio into the library (`POST /api/assets`, the Ääni panel) needs its duration. With `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` set, the app server does not run ffprobe itself (`src/integrations/fleet-probe.ts`):
+
+1. The temporary upload is copied to `FFFLEET_S3_PREFIX/tmp/probe-<uuid>/in.<ext>` in `FFFLEET_S3_BUCKET` (only when a bucket and S3 credentials are set; otherwise the job reads the local file in-process).
+2. A batch job of type `ffprobe` (fffleet's built-in executor, contract v1, `ffprobe: { show: ['format', 'streams'] }`) reads it through an `s3:` input; the JSON comes back inline in the job result (`outputs[].data`). No audio stream is a `400`.
+3. A WebM recording without a duration in its header (Chrome's MediaRecorder) gets a stream-copy job first (`ffmpeg -map 0:a:0 -c copy -f matroska`, no decoding) into `tmp/probe-<uuid>/copy.mka`, and that copy is probed.
+4. Every staged object is deleted when the probe ends, also on failure and timeout.
+
+The whole probe must finish within 60 s. A fleet that cannot be reached falls back to the in-process runner (fffleet's `fallback: 'local'`), which needs `ffprobe` (and `ffmpeg` for WebM) on the app server. A missing binary, a worker without the probe capability, a failed S3 read or a timeout answers `503` with a readable message; only a file that ffprobe or ffmpeg refuses is `400`. Developer machines without either variable keep the local ffprobe path. Requires fffleet 2.3.1 or newer (`node_modules/fffleet`, `type: 'ffprobe'`).
 
 ### Downloads on a fleet worker (optional)
 

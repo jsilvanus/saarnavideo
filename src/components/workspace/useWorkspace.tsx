@@ -4,7 +4,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { parseLayers } from "@/components/GraphicsEditor";
 import { findAssetUsage } from "@/domain/asset-usage";
-import { errorMessage, jsonInit, requestJson, requestJsonWithProgress, uploadWithProgress } from "@/components/api";
+import { HttpStatusError, errorMessage, jsonInit, requestJson, requestJsonWithProgress, uploadWithProgress } from "@/components/api";
 import { sourceLabel } from "@/components/format";
 import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { timelineDuration } from "@/domain/timeline";
@@ -304,6 +304,15 @@ export function useWorkspaceState() {
     });
   }
   async function requestUploadSession(projectId: string, file: File, sourceId?: string) {
+    try {
+      return await requestUploadSessionRaw(projectId, file, sourceId);
+    } catch (error) {
+      // 503 from the presigned-url route: ACCESS_SECRET is not set on a production server, so direct uploads are off.
+      if (error instanceof HttpStatusError && error.status === 503) throw new Error(t("ws.uploadAccessSecret"));
+      throw error;
+    }
+  }
+  async function requestUploadSessionRaw(projectId: string, file: File, sourceId?: string) {
     return requestJson<{
       uploadUrl: string;
       sourceId: string;
@@ -576,6 +585,15 @@ export function useWorkspaceState() {
       await openProject(selected.id);
       setMessage(t("ws.youtubeAdded"));
     }, setBusy, "youtube");
+  }
+  /** Queues the download of a YouTube source's video now, instead of waiting for a render or transcription to need it. */
+  async function downloadSource(source: Source) {
+    if (!selected) return;
+    await withBusy(t("ws.downloadFailed"), async () => {
+      await requestJson(`/api/projects/${selected.id}/source/${source.id}/download`, { method: "POST" }, t("ws.downloadFailed"));
+      await openProject(selected.id);
+      setMessage(t("ws.downloadQueued"));
+    }, setBusy, `source:${source.id}`);
   }
   function currentDefinition(): Definition {
     return (
@@ -1070,6 +1088,7 @@ export function useWorkspaceState() {
     uploadPendingSource,
     deleteSource,
     addYoutube,
+    downloadSource,
     currentDefinition,
     saveDefinition,
     addSegment,

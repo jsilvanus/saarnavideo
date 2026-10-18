@@ -17,22 +17,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
     const hasExplicitRange = body.rangeStartSeconds !== undefined || body.rangeEndSeconds !== undefined;
-    let rangeStartSeconds: number;
-    let rangeEndSeconds: number;
+    let rangeStartSeconds: number | undefined;
+    let rangeEndSeconds: number | undefined;
     if (hasExplicitRange) {
       if (typeof body.rangeStartSeconds !== "number" || typeof body.rangeEndSeconds !== "number") {
         return jsonError("rangeStartSeconds and rangeEndSeconds must both be provided together", 400);
       }
       rangeStartSeconds = body.rangeStartSeconds;
       rangeEndSeconds = body.rangeEndSeconds;
-    } else {
-      if (durationSeconds === undefined) {
-        return jsonError("Source duration is unknown; provide rangeStartSeconds and rangeEndSeconds explicitly", 400);
-      }
+    } else if (durationSeconds !== undefined) {
       rangeStartSeconds = 0;
       rangeEndSeconds = durationSeconds;
+    } else if (source.type !== "YOUTUBE") {
+      // A YouTube source that is not downloaded yet has no length: the worker takes the whole file once the DOWNLOAD job has run.
+      return jsonError("Source duration is unknown; provide rangeStartSeconds and rangeEndSeconds explicitly", 400);
     }
-    if (rangeStartSeconds < 0 || rangeEndSeconds <= rangeStartSeconds) {
+    if (rangeStartSeconds !== undefined && rangeEndSeconds !== undefined && (rangeStartSeconds < 0 || rangeEndSeconds <= rangeStartSeconds)) {
       return jsonError("rangeEndSeconds must be greater than rangeStartSeconds, and rangeStartSeconds must be non-negative", 400);
     }
 
@@ -50,7 +50,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         type: "TRANSCRIBE",
         priority: 70,
         dependsOnJobId: dependencyId,
-        parameters: { rangeStartSeconds, rangeEndSeconds, language: body.language.trim() },
+        parameters: { language: body.language.trim(), ...(rangeStartSeconds !== undefined && rangeEndSeconds !== undefined ? { rangeStartSeconds, rangeEndSeconds } : {}) },
       },
       select: { id: true, type: true, status: true, progress: true },
     });

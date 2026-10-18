@@ -11,3 +11,20 @@ export function extractYouTubeId(urlString: string): string | null {
   }
   return null;
 }
+
+/**
+ * Title of a YouTube video from its public oEmbed document. Undefined when the lookup fails, times out (5 s by default)
+ * or the video has no title: the caller then stores no name and the URL stands in for it.
+ */
+export async function fetchYouTubeTitle(videoUrl: string, options: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<string | undefined> {
+  const doFetch = options.fetch ?? fetch;
+  try {
+    const endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(videoUrl)}`;
+    const response = await doFetch(endpoint, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(options.timeoutMs ?? 5000) });
+    if (!response.ok) return undefined;
+    const data = await response.json() as { title?: unknown };
+    return typeof data.title === "string" && data.title.trim() ? data.title.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
