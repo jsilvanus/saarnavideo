@@ -13,6 +13,7 @@ import { withDownloadCookies } from "@/integrations/ytdlp-cookies";
 import { downloadYouTubeSource, uploadCaptionToYouTube, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
+import { sttQueueMessage } from "@/worker/stt-queue";
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
 import { applyRangeOffset, isPartialRange, resolveTranscriptionRange } from "@/worker/transcription-range";
@@ -466,10 +467,13 @@ async function processTranscriptionInner(job: MediaJobRow) {
     }
     await updateProgress(job.id, { phase: "SUBMITTING", message: "Submitting to transcription service", progress: 0 }, true);
     let submission;
+    // The length of the audio that goes out, so the service can say when a queued job starts.
+    const sentSeconds = isPartial ? range.rangeEndSeconds - range.rangeStartSeconds : durationSeconds ?? range.rangeEndSeconds - range.rangeStartSeconds;
+    const durationOption = Number.isFinite(sentSeconds) && sentSeconds > 0 ? { durationSeconds: sentSeconds } : {};
     if (transcriptionStaging) {
       const staged = await transcriptionStaging.stage(filePath, job.id);
       try {
-        submission = await client.submitUrl(staged.url, { language: params.language });
+        submission = await client.submitUrl(staged.url, { language: params.language, ...durationOption });
       } catch (error) {
         await staged.release();
         throw error;
@@ -478,7 +482,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
       if (stageSource) params = { ...params, stagedKey: staged.key };
       else await staged.release();
     } else {
-      submission = await client.submitJob(filePath, { language: params.language });
+      submission = await client.submitJob(filePath, { language: params.language, ...durationOption });
     }
     params = { ...params, auditorJobId: submission.id };
     // Persisted before the first poll so a worker restart can resume watching this job (see "Resumability").
@@ -500,7 +504,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
     const status = await client.getJobStatus(auditorJobId);
     await updateProgress(job.id, {
       phase: status.phase,
-      message: status.phase,
+      message: (status.status === "queued" ? sttQueueMessage(status.queue) : null) ?? status.phase,
       progress: Math.round(status.progress),
       currentMs: BigInt(Math.round(status.current_seconds * 1000)),
       totalMs: BigInt(Math.round(status.total_seconds * 1000)),

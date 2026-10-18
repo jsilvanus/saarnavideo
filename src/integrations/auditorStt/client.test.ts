@@ -83,6 +83,31 @@ describe("AuditorSttClient", () => {
     expect(result).toEqual({ id: "abc123", status: "queued" });
   });
 
+  it("sends duration_seconds with a url submit and reads /status", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(String(input));
+      if (String(input).endsWith("/status")) return jsonResponse(200, { jobs: { queued: 2, running: 1, queued_seconds: 600, unknown_duration: 0 }, rate: 3.5, live: null });
+      expect(new URLSearchParams(String(init?.body)).get("duration_seconds")).toBe("125.5");
+      return jsonResponse(202, { id: "abc123", status: "queued" });
+    }));
+    const client = new AuditorSttClient({ baseUrl: "http://localhost:8090", apiKey: "k" });
+    await client.submitUrl("https://s3.example/k.wav", { durationSeconds: 125.5 });
+    const status = await client.getServiceStatus();
+    expect(status.jobs?.queued).toBe(2);
+    expect(calls[1]).toBe("http://localhost:8090/status");
+  });
+
+  it("sends duration_seconds as a multipart field on a file submit", async () => {
+    let raw = "";
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      for await (const chunk of init?.body as unknown as AsyncIterable<Buffer>) raw += chunk.toString("latin1");
+      return jsonResponse(202, { id: "abc123", status: "queued" });
+    }));
+    await new AuditorSttClient({ baseUrl: "http://localhost:8090" }).submitJob(filePath, { durationSeconds: 60 });
+    expect(raw).toMatch(/name="duration_seconds"\r\n\r\n60\r\n/);
+  });
+
   it("surfaces the service's refusal of a source_url", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(422, { detail: "source_url is not enabled (set AUDITOR_STT_SOURCE_URL_HOSTS)" })));
     const client = new AuditorSttClient({ baseUrl: "http://localhost:8090" });
