@@ -40,7 +40,7 @@ describe("outputDownloadName", () => {
 
 describe("attachmentDisposition", () => {
   it("keeps the UTF-8 name and gives an ASCII fallback", () => {
-    expect(attachmentDisposition("Sunnuntai.mp4")).toBe(`attachment; filename="Sunnuntai.mp4"; filename*=UTF-8''Sunnuntai.mp4`);
+    expect(attachmentDisposition("Sunnuntai.mp4")).toBe(`attachment; filename="Sunnuntai.mp4"`);
     const header = attachmentDisposition("Pääsiäinen ä ö.mp4");
     expect(header).toContain('filename="P__si_inen _ _.mp4"');
     expect(header).toContain("filename*=UTF-8''P%C3%A4%C3%A4si%C3%A4inen%20%C3%A4%20%C3%B6.mp4");

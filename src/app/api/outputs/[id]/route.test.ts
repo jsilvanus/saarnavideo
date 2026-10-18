@@ -30,7 +30,7 @@ describe("/api/outputs/[id] label and download name", () => {
 
   it("uses the default download name until a label is set", async () => {
     const response = await download(outputId);
-    expect(response.headers.get("Content-Disposition")).toBe(`attachment; filename="saarnavideo-video.mp4"; filename*=UTF-8''saarnavideo-video.mp4`);
+    expect(response.headers.get("Content-Disposition")).toBe(`attachment; filename="saarnavideo-video.mp4"`);
   });
 
   it("renames the output (trimmed) and the download uses the label with the video extension", async () => {
@@ -41,7 +41,7 @@ describe("/api/outputs/[id] label and download name", () => {
     expect(stored.label).toBe("Sunnuntai 14.6. klo 10");
     const download_ = await download(outputId);
     expect(download_.headers.get("Content-Disposition")).toContain(`filename="Sunnuntai 14.6. klo 10.mp4"`);
-    expect(download_.headers.get("Content-Disposition")).toContain("filename*=UTF-8''Sunnuntai%2014.6.%20klo%2010.mp4");
+    expect(download_.headers.get("Content-Disposition")).not.toContain("filename*");
   });
 
   it("keeps Finnish letters in the UTF-8 download name", async () => {

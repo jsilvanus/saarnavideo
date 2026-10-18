@@ -56,10 +56,11 @@ export function outputDownloadName(output: OutputForName): string {
 }
 
 /**
- * A Content-Disposition attachment header for `filename`: an ASCII fallback for old clients plus the UTF-8 name
- * (RFC 5987), so Finnish or Swedish labels arrive intact.
+ * A Content-Disposition attachment header for `filename`. A plain ASCII name is sent as is; a name with other characters
+ * (Finnish or Swedish letters) gets an ASCII fallback for old clients plus the UTF-8 name (RFC 5987).
  */
 export function attachmentDisposition(filename: string): string {
   const fallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  if (fallback === filename) return `attachment; filename="${filename}"`;
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
 }
