@@ -3,7 +3,7 @@ import type { fi } from "./fi";
 
 export const sv: Record<keyof typeof fi, string> = {
   "lang.label": "Språk",
-  "nav.assets": "Grafikbibliotek",
+  "nav.assets": "Materialbibliotek",
   "nav.settings": "Inställningar",
   "login.secret": "Åtkomsthemlighet",
   "login.submit": "Logga in",
@@ -46,7 +46,7 @@ export const sv: Record<keyof typeof fi, string> = {
   "modal.removeAsset.aria": "Ta bort tillgång från projektet",
   "modal.removeAsset.title": "Ta bort ”{name}” från det här projektet?",
   "modal.removeAsset.used": "Den används fortfarande av {usage}. De renderas utan den.",
-  "modal.removeAsset.note": "Tillgången finns kvar i grafikbiblioteket och i andra projekt.",
+  "modal.removeAsset.note": "Tillgången finns kvar i materialbiblioteket och i andra projekt.",
   "modal.removeAsset.confirm": "Ta bort från projektet",
   "modal.deleteProject.title": "Ta bort ”{title}”?",
   "modal.deleteProject.note": "Projektet tas bort. Delade källor och tillgångar behålls om de används på andra håll.",
@@ -538,7 +538,8 @@ export const sv: Record<keyof typeof fi, string> = {
   "ge.assets": "Bilder",
   "ge.noAssets": "Inga bilder är länkade till projektet än.",
   "ge.fromLibrary": "Välj från biblioteket…",
-  "assets.pageTitle": "Grafikbibliotek",
+  "assets.pageTitle": "Materialbibliotek",
+  "assets.addAudio": "Spela in eller ladda upp ljud",
   "assets.back": "← Projekt",
   "assets.newFolder": "Ny mapp",
   "assets.add": "Lägg till grafik",

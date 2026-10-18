@@ -3,7 +3,7 @@ import type { fi } from "./fi";
 
 export const en: Record<keyof typeof fi, string> = {
   "lang.label": "Language",
-  "nav.assets": "Graphics library",
+  "nav.assets": "Asset library",
   "nav.settings": "Settings",
   "login.secret": "Access secret",
   "login.submit": "Sign in",
@@ -46,7 +46,7 @@ export const en: Record<keyof typeof fi, string> = {
   "modal.removeAsset.aria": "Remove asset from project",
   "modal.removeAsset.title": "Remove “{name}” from this project?",
   "modal.removeAsset.used": "It is still used by {usage}. Those will render without it.",
-  "modal.removeAsset.note": "The asset stays in the graphics library and in other projects.",
+  "modal.removeAsset.note": "The asset stays in the asset library and in other projects.",
   "modal.removeAsset.confirm": "Remove from project",
   "modal.deleteProject.title": "Delete “{title}”?",
   "modal.deleteProject.note": "The project is deleted. Shared sources/assets are retained when referenced elsewhere.",
@@ -538,7 +538,8 @@ export const en: Record<keyof typeof fi, string> = {
   "ge.assets": "Assets",
   "ge.noAssets": "No image assets linked to this project yet.",
   "ge.fromLibrary": "Choose from library…",
-  "assets.pageTitle": "Graphics library",
+  "assets.pageTitle": "Asset library",
+  "assets.addAudio": "Record or upload audio",
   "assets.back": "← Projects",
   "assets.newFolder": "New folder",
   "assets.add": "Add graphic",

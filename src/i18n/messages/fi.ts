@@ -1,7 +1,7 @@
 // Generated-style file: keep keys in sync across fi.ts, en.ts and sv.ts (the type of en and sv enforces it).
 export const fi = {
   "lang.label": "Kieli",
-  "nav.assets": "Grafiikkakirjasto",
+  "nav.assets": "Aineistokirjasto",
   "nav.settings": "Asetukset",
   "login.secret": "Käyttösalasana",
   "login.submit": "Kirjaudu sisään",
@@ -44,7 +44,7 @@ export const fi = {
   "modal.removeAsset.aria": "Poista aineisto projektista",
   "modal.removeAsset.title": "Poistetaanko “{name}” tästä projektista?",
   "modal.removeAsset.used": "Se on yhä käytössä: {usage}. Ne piirretään ilman sitä.",
-  "modal.removeAsset.note": "Aineisto säilyy grafiikkakirjastossa ja muissa projekteissa.",
+  "modal.removeAsset.note": "Aineisto säilyy aineistokirjastossa ja muissa projekteissa.",
   "modal.removeAsset.confirm": "Poista projektista",
   "modal.deleteProject.title": "Poistetaanko “{title}”?",
   "modal.deleteProject.note": "Projekti poistetaan. Jaetut lähteet ja aineistot säilyvät, jos ne ovat käytössä muualla.",
@@ -536,7 +536,8 @@ export const fi = {
   "ge.assets": "Kuvat",
   "ge.noAssets": "Projektiin ei ole vielä linkitetty kuvia.",
   "ge.fromLibrary": "Valitse kirjastosta…",
-  "assets.pageTitle": "Grafiikkakirjasto",
+  "assets.pageTitle": "Aineistokirjasto",
+  "assets.addAudio": "Äänitä tai lataa ääni",
   "assets.back": "← Projektit",
   "assets.newFolder": "Uusi kansio",
   "assets.add": "Lisää grafiikka",
