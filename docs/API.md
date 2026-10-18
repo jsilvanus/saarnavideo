@@ -395,7 +395,7 @@ They exist only for renders queued with `captions.mode = "soft"`, and share the 
 (the type is taken from the MIME type, codec parameters such as `audio/webm;codecs=opus` are ignored, a
 missing/generic type falls back to the file extension). The asset is stored with `type: "AUDIO"` whatever
 `type` the form sends, the duration is probed with ffprobe (`durationMs` in every asset response) and files
-that ffprobe cannot read as audio return `400`; when the ffprobe binary is not installed on the app server the answer is `503` with `"ffprobe is not available on the app server"`. The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
+that ffprobe cannot read as audio return `400`. The probe runs on the fffleet fleet when `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` is set (see INTEGRATIONS.md, "Audio probing through the fleet"), otherwise with the local ffprobe. A missing ffprobe (local or on the fleet), a fleet that cannot be reached or a probe that does not finish within 60 s answers `503` with a readable message (e.g. `"ffprobe is not available on the app server"`). The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
 200 MB, `413` above it). Identical bytes are deduplicated like images. `GET /assets/{id}` and
 `GET /projects/{projectId}/assets/{assetId}` serve audio with `Range` support.
 
