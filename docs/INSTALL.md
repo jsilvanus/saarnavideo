@@ -149,6 +149,7 @@ See [INTEGRATIONS.md](INTEGRATIONS.md#fffleet-render-and-download-on-workers).
 | `FFFLEET_S3_BUCKET`, `FFFLEET_S3_PREFIX` | `saarnavideo` (prefix) | Staging bucket for files the fleet reads and writes |
 | `FFFLEET_S3_ENDPOINT` | | Endpoint for S3-compatible stores |
 | `FFFLEET_CACHE_DIR`, `FFFLEET_CACHE_MAX_SIZE` | | In-process fallback only: keep staged inputs between jobs |
+| `FLEET_STRIP` | on | `0` hides the fleet strip in the job panel (the panel itself stays). The strip asks the orchestrator (`FFFLEET_URL`, same login as above; an admin-scoped login also shows workers and pools) and, with `AUDITOR_STT_URL` and `AUDITOR_STT_API_KEY`, the speech-to-text queue. Set `TZ` on the worker to show estimated start times of queued transcriptions in local time |
 | `YTDLP_COOKIES_FILE` | | Fallback Netscape cookie file, used when no cookies are stored in Settings |
 
 ### Transcription

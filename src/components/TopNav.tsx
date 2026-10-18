@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import JobsIndicator from "@/components/JobsIndicator";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useT } from "@/i18n/I18nProvider";
 
@@ -15,6 +16,7 @@ export default function TopNav({ canLogout = false }: { canLogout?: boolean }) {
       {([["/assets", "nav.assets"], ["/settings", "nav.settings"]] as const).map(([href, key]) => (
         <Link key={href} href={href} style={{ background: "white", border: "1px solid #ccc", borderRadius: 8, padding: "8px 12px", textDecoration: "none", color: "inherit", boxShadow: "0 1px 4px #0002" }}>{t(key)}</Link>
       ))}
+      <JobsIndicator />
       <LanguageSwitcher />
       {canLogout ? (
         <button type="button" onClick={logout} style={{ background: "white", border: "1px solid #ccc", borderRadius: 8, padding: "8px 12px", cursor: "pointer", boxShadow: "0 1px 4px #0002" }}>{t("nav.logout")}</button>

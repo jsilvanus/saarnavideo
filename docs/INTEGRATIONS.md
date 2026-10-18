@@ -210,7 +210,7 @@ How the audio reaches the service (`AUDITOR_STT_FETCH`):
 - `s3`: the worker stages 16 kHz mono audio in the staging bucket, sends a presigned URL (one hour), and deletes the object as soon as the service has downloaded it. The service must list the bucket host in its `AUDITOR_STT_SOURCE_URL_HOSTS`.
 - `s3-source`: the worker stages the *original* file and the service strips the audio on an fffleet worker (`AUDITOR_STT_STRIP=fleet` there), so no ffmpeg runs in SaarnaVideo's worker. The staged object is kept until the job ends. Partial ranges still use `s3`.
 
-The service keeps its own durable queue; the worker polls it and resumes after a restart. End-to-end transcription tests (`npm run test:e2e:transcription`) skip themselves unless `AUDITOR_STT_URL` points at a running service.
+The service keeps its own durable queue; the worker polls it and resumes after a restart. The worker sends `duration_seconds` (length of the audio it submits) and, while the auditor job is `queued`, copies the job's `queue` block into the MediaJob message (`STT: position 2, starts about 14:35`); the job panel's fleet strip adds `stt N queued` from the auditor's `/status`. End-to-end transcription tests (`npm run test:e2e:transcription`) skip themselves unless `AUDITOR_STT_URL` points at a running service.
 
 ## YouTube
 

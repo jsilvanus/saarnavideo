@@ -304,6 +304,39 @@ Response: 202 Accepted
 }
 ```
 
+#### List jobs of all projects (job panel)
+
+```
+GET /jobs[?active=1][&recentMinutes=60][&recentLimit=15]
+
+Response: 200
+{
+  "jobs": [{ "id": "...", "projectId": "...", "projectTitle": "Sunday", "type": "TRANSCRIBE", "status": "RUNNING",
+             "phase": "transcribing", "progress": 42, "message": "STT: position 2, starts about 14:35",
+             "error": null, "etaSeconds": null, "workerId": "host-1234", "cancelRequested": false, "sourceId": "...",
+             "createdAt": "...", "startedAt": "...", "completedAt": null }],
+  "counts": { "running": 1, "queued": 3 }
+}
+```
+
+Every QUEUED and RUNNING job of every type (VIDEO, PREVIEW, THUMBNAIL, PODCAST, DOWNLOAD, TRANSCRIBE, IMPORT), oldest first, then the latest finished ones (`recentMinutes`, default 60, max 1440; `recentLimit`, default 15, max 100); `active=1` leaves the finished ones out. A queued TRANSCRIBE job waiting at the speech-to-text service carries `STT: position N, starts about HH:MM` in `message`. Cancel with `POST /projects/{projectId}/jobs/{jobId}/cancel`.
+
+#### Fleet status (fleet strip)
+
+```
+GET /fleet/status
+
+Response: 200
+{ "enabled": true,
+  "fleet": { "state": "ok", "workers": 3, "slotsUsed": 5, "slotsTotal": 8, "queued": 2, "draining": 1,
+             "pools": [{ "name": "hetzner", "instances": 1, "max": 5 }] },   // null without FFFLEET_URL; { "state": "offline" } when it does not answer
+  "local": null,                                                             // without a fleet: { "workers": 1, "lanes": 4 } (live worker leases, MAX_CONCURRENT_JOBS each)
+  "app": { "running": 1, "queued": 4 },
+  "stt": { "queued": 1, "running": 0 } }                                    // null unless AUDITOR_STT_URL and AUDITOR_STT_API_KEY are set and answer
+```
+
+`{ "enabled": false }` when `FLEET_STRIP=0`. The orchestrator's `GET /v1/capabilities` gives workers, slots and queue; `GET /v1/workers` and `GET /v1/pools` need an admin-scoped login and are used only when the credentials allow them (401/403: capabilities only). The answer is cached for 2 s, each upstream call has a 1.5 s timeout, and neither the address nor any credential is returned.
+
 #### Get Job Status
 
 ```
