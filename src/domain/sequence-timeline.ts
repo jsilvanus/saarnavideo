@@ -28,6 +28,52 @@ export function timelineRows(sections: Section[], sourceId: string): TimelineRow
   ]);
 }
 
+/** Length given to a new sequence when only one edge is known (seconds). */
+export const DEFAULT_SEQUENCE_SECONDS = 10;
+
+/**
+ * Sections of one source that have no start/end yet (a section typed by name on a source of unknown length, or
+ * from a template). `timelineRows` leaves them out because there is nothing to draw; the timeline lists them in a
+ * "no range yet" row instead so they never vanish.
+ */
+export function unplacedRows(sections: Section[], sourceId: string): TimelineRow[] {
+  const missing = (section: Section) => section.startSeconds === undefined || section.endSeconds === undefined;
+  const mine = sections.filter(section => section.scope === "SOURCE" && section.sourceId === sourceId && missing(section));
+  return mine.map(section => ({ section, depth: section.parentId ? 1 as const : 0 as const }));
+}
+
+/**
+ * The range offered for a new sequence: from the playhead for ten seconds, kept inside the source (when its
+ * length is known) and inside the parent sequence, shifted back when the end would pass the limit.
+ */
+export function defaultNewRange(playhead: number, limits: { durationSeconds?: number; parent?: Pick<Section, "startSeconds" | "endSeconds"> } = {}): { start: number; end: number } {
+  const floor = limits.parent?.startSeconds ?? 0;
+  const ceiling = Math.min(limits.parent?.endSeconds ?? Infinity, limits.durationSeconds ?? Infinity);
+  let start = tenth(Math.max(floor, playhead));
+  let end = tenth(start + DEFAULT_SEQUENCE_SECONDS);
+  if (end > ceiling) {
+    end = tenth(ceiling);
+    start = tenth(Math.max(floor, Math.min(start, end - DEFAULT_SEQUENCE_SECONDS)));
+  }
+  return { start, end };
+}
+
+export type NewSequenceInput = { label: string; start: number; end: number; parentId?: string };
+export type NewSequenceCheck = { ok: true; label: string; start: number; end: number } | { error: "emptyLabel" | "endAfterStart" | "outsideSource" };
+
+/** Validates a sequence about to be created, with the same rules as editing one (length, source, parent). */
+export function checkNewSequence(sections: Section[], input: NewSequenceInput, durationSeconds?: number): NewSequenceCheck {
+  const label = input.label.trim();
+  if (!label) return { error: "emptyLabel" };
+  const start = tenth(input.start);
+  const end = tenth(input.end);
+  if (!(start >= 0) || (durationSeconds !== undefined && end > durationSeconds)) return { error: "outsideSource" };
+  if (!(end - start >= MIN_SEQUENCE_SECONDS)) return { error: "endAfterStart" };
+  const parent = input.parentId ? sections.find(section => section.id === input.parentId) : undefined;
+  if (parent?.startSeconds !== undefined && parent.endSeconds !== undefined && (start < parent.startSeconds || end > parent.endSeconds)) return { error: "outsideSource" };
+  return { ok: true, label, start, end };
+}
+
 export type RangePatch = { label?: string; startSeconds?: number; endSeconds?: number; color?: string };
 
 export type RangeChange = { sections: Section[] } | { error: "endAfterStart" | "outsideSource" | "nestedTooShort" | "emptyLabel" };
@@ -42,8 +88,11 @@ export function applySectionChange(sections: Section[], id: string, patch: Range
   if (!target) return { sections };
   if (patch.label !== undefined && !patch.label.trim()) return { error: "emptyLabel" };
 
-  const start = patch.startSeconds !== undefined ? tenth(patch.startSeconds) : target.startSeconds ?? 0;
-  const end = patch.endSeconds !== undefined ? tenth(patch.endSeconds) : target.endSeconds ?? start;
+  // A sequence without a range gets one from the first edge that is set: ten seconds from the start, or ending at the end.
+  const placed = target.startSeconds !== undefined && target.endSeconds !== undefined;
+  const fromEnd = !placed && patch.startSeconds === undefined && patch.endSeconds !== undefined;
+  const start = patch.startSeconds !== undefined ? tenth(patch.startSeconds) : fromEnd ? tenth(Math.max(0, (patch.endSeconds ?? 0) - DEFAULT_SEQUENCE_SECONDS)) : target.startSeconds ?? 0;
+  const end = patch.endSeconds !== undefined ? tenth(patch.endSeconds) : target.endSeconds ?? tenth(Math.min(start + DEFAULT_SEQUENCE_SECONDS, durationSeconds));
   const ranged = patch.startSeconds !== undefined || patch.endSeconds !== undefined;
   if (ranged) {
     if (start < 0 || end > durationSeconds) return { error: "outsideSource" };

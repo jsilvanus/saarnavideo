@@ -19,8 +19,11 @@ import styles from "./CaptionEditorDialog.module.css";
  *   Ctrl+Enter               new item right after the current one
  * Plain arrows keep their normal meaning, so typing and text selection still work.
  * The sequence timeline (SequenceTimeline.tsx) uses the same keys: there Enter selects the
- * next sequence and Ctrl+Enter does nothing. Keep this table and captionKeyAction in step
- * when the scheme changes.
+ * next sequence (also one that has no range yet; setting its start or end gives it a range)
+ * and Ctrl+Enter does nothing. Ctrl+Up/Down also work on a sequence without a range. In the
+ * timeline's "new sequence" form the text and number boxes keep their own keys and Enter in
+ * the name box adds the sequence. Keep this table and captionKeyAction in step when the
+ * scheme changes.
  */
 export type CaptionKeyAction =
   | { type: "seek"; seconds: number }

@@ -14,7 +14,6 @@ import ReframeEditor from "@/components/ReframeEditor";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
-import { SectionPicker } from "./SectionPicker";
 import { graphicVariables } from "./helpers";
 import type { Definition } from "./types";
 
@@ -91,6 +90,7 @@ export default function StructureStep() {
           sections={selected.definition?.sections ?? []}
           pendingFiles={pendingFiles}
           onSave={saveSections}
+          onAdd={addSegment}
         />
         <SectionManager
           scope="SOURCE"
@@ -128,12 +128,6 @@ export default function StructureStep() {
               )}
             </>
           )}
-        />
-        <SectionPicker
-          projectId={selected.id}
-          sources={selected.sources}
-          pendingFiles={pendingFiles}
-          onAdd={(id, l, s, e) => void addSegment(id, l, s, e)}
         />
         <div className="list">
           {(selected.definition?.semanticSegments ?? []).map((s) => (
