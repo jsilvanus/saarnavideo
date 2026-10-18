@@ -229,6 +229,8 @@ export default function StructureStep() {
               assets={selected.assets ?? []}
               title={selectedGraphic.name}
               variables={selected.definition?.variables ?? []}
+              outputWidth={currentDefinition().template?.width ?? 1920}
+              outputHeight={currentDefinition().template?.height ?? 1080}
               onChange={(item) => void updateGraphic(selectedGraphic.id, item)}
               onAssetsChanged={refreshAssets}
             />
