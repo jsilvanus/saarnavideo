@@ -287,6 +287,13 @@ export default function StructureStep() {
           sections={selected.definition?.sections}
           sources={selected.sources}
           audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")}
+          onChange={(index, patch) => {
+            const def = currentDefinition();
+            void saveDefinition({
+              ...def,
+              composition: { ...def.composition, items: def.composition.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) },
+            });
+          }}
         />
         <h3 className="subhead">{t("str.editComposition")}</h3>
         <CompositionEditor

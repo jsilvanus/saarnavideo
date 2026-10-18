@@ -926,4 +926,11 @@ export const en: Record<keyof typeof fi, string> = {
   "seq.new.level": "Level",
   "seq.new.add": "+ Add sequence {start} → {end}",
   "seq.noRange": "no range yet",
+  "tl.edit.hint": "Drag the edges or the body of a graphic, or click it and type the times. Steps of 0.1 s, at least 0.5 s, stays inside the clip.",
+  "tl.edit.start": "Start",
+  "tl.edit.end": "End",
+  "tl.edit.within": "Allowed range {start}–{end}.",
+  "tl.edit.close": "Done",
+  "tl.edit.handleStart": "Start edge",
+  "tl.edit.handleEnd": "End edge",
 };

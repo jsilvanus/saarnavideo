@@ -924,4 +924,11 @@ export const fi = {
   "seq.new.level": "Taso",
   "seq.new.add": "＋ Lisää jakso {start} → {end}",
   "seq.noRange": "ei vielä paikkaa",
+  "tl.edit.hint": "Vedä grafiikan reunoja tai lohkoa, tai klikkaa lohkoa ja kirjoita ajat. Askel 0,1 s, vähintään 0,5 s, pysyy leikkeen sisällä.",
+  "tl.edit.start": "Alku",
+  "tl.edit.end": "Loppu",
+  "tl.edit.within": "Sallittu väli {start}–{end}.",
+  "tl.edit.close": "Valmis",
+  "tl.edit.handleStart": "Alkureuna",
+  "tl.edit.handleEnd": "Loppureuna",
 } as const;

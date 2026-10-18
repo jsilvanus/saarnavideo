@@ -926,4 +926,11 @@ export const sv: Record<keyof typeof fi, string> = {
   "seq.new.level": "Nivå",
   "seq.new.add": "＋ Lägg till sekvens {start} → {end}",
   "seq.noRange": "ingen plats än",
+  "tl.edit.hint": "Dra i grafikens kanter eller block, eller klicka på den och skriv tiderna. Steg om 0,1 s, minst 0,5 s, stannar inom klippet.",
+  "tl.edit.start": "Start",
+  "tl.edit.end": "Slut",
+  "tl.edit.within": "Tillåtet intervall {start}–{end}.",
+  "tl.edit.close": "Klar",
+  "tl.edit.handleStart": "Startkant",
+  "tl.edit.handleEnd": "Slutkant",
 };

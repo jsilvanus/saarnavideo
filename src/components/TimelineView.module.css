@@ -142,3 +142,57 @@
   background: #ffedd5;
   color: #7c2d12;
 }
+
+.editable {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.editable:active { cursor: grabbing; }
+.editable:focus-visible,
+.selected {
+  outline: 2px solid #7c3aed;
+  outline-offset: 1px;
+}
+.handle {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+  background: rgba(76, 29, 149, 0.28);
+}
+.handle:hover { background: rgba(76, 29, 149, 0.5); }
+.timeline-h .handle {
+  top: 0;
+  bottom: 0;
+  width: min(14px, 30%);
+  cursor: ew-resize;
+}
+.timeline-h .handle-start { left: 0; }
+.timeline-h .handle-end { right: 0; }
+.timeline-v .handle {
+  left: 0;
+  right: 0;
+  height: min(14px, 30%);
+  cursor: ns-resize;
+}
+.timeline-v .handle-start { top: 0; }
+.timeline-v .handle-end { bottom: 0; }
+.timeline-block strong, .timeline-block small { pointer-events: none; }
+@media (pointer: coarse) {
+  .timeline-h .handle { width: min(24px, 33%); }
+  .timeline-v .handle { height: min(24px, 33%); }
+  .timeline-h-track { height: 56px; }
+}
+.time-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+  padding: 8px;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  background: #faf5ff;
+}
+.time-editor label { display: grid; gap: 2px; font-size: 13px; }
+.time-editor input { width: 90px; }
+.time-editor button { min-height: 36px; }
