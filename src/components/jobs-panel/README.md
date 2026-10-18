@@ -17,7 +17,7 @@ change can be carried over by diff.
 ## Files
 
 - `JobsPanel.tsx`: the badge, the drop-down and the polling. Everything app-specific comes in through props.
-- `job-panel.ts`: pure helpers (`PanelJob`, `isActiveJob`, `jobPercent`, `jobDetail`, `formatJobAge`, `pollInterval`, `Translate`).
+- `job-panel.ts`: pure helpers (`PanelJob`, `isActiveJob`, `jobPercent`, `jobDetail`, `formatJobAge`, `pollInterval`, `canCancelJob`, `nextConfirm`, `modeSymbol`, `Translate`).
 - `fleet-strip.ts`: `FleetStripData`, `fleetStripParts`, `summariseFleet` (the strip from an fffleet orchestrator's answers).
 - `JobsPanel.module.css`: styles (CSS variables with fallbacks, no app theme needed).
 - `*.test.ts`: tests of the pure parts.
@@ -29,15 +29,17 @@ change can be carried over by diff.
 | `t(key, params?)` | Translate function. Keys below. Plurals: `jobs.badge_one` / `jobs.badge_other` with `{count}`; an app without plural support can define `jobs.badge` and map it. |
 | `loadJobs()` | Resolves `{ jobs: PanelJob[], counts: { running, queued } }`; throw to show "could not load". |
 | `loadStrip?()` | Resolves `{ enabled: true, ...FleetStripData }`, `{ enabled: false }` or null; leave out for no strip. |
-| `cancelJob?(job)` | Cancels a job; leave out for no cancel button; throw on failure. |
+| `cancelJob?(job)` | Cancels a job; leave out for no cancel button; throw on failure. The panel asks "Cancel this job? Yes / No" inline first, so the handler runs only after Yes. |
 | `typeLabel?(type)` | Display name of a job type; default is the raw type. |
 
 `PanelJob` = `{ id, projectId, projectTitle, type, status, phase, progress, message, error, workerId, cancelRequested, createdAt, startedAt, completedAt }`
-(ISO strings; `projectTitle` is whatever names the owner of the job in that app).
+(ISO strings; `projectTitle` is whatever names the owner of the job in that app), plus two optional fields:
+`cancellable?: boolean` (when defined, the cancel button shows only if true, e.g. false for live feeds; when undefined, QUEUED/RUNNING jobs can be cancelled as before) and
+`mode?: 'pull' | 'push'` (a very small symbol, down arrow for pull and up arrow for push, with `aria-label` and `title` from `jobs.mode.*`; nothing when unset).
 
 ## Message keys
 
-`jobs.title`, `jobs.open`, `jobs.close`, `jobs.empty`, `jobs.badge`, `jobs.cancel`, `jobs.cancelling`, `jobs.cancelFailed`,
+`jobs.title`, `jobs.open`, `jobs.close`, `jobs.empty`, `jobs.badge`, `jobs.cancel`, `jobs.cancelConfirm`, `jobs.cancelYes`, `jobs.cancelNo`, `jobs.cancelling`, `jobs.mode.pull`, `jobs.mode.push`, `jobs.cancelFailed`,
 `jobs.loadFailed`, `jobs.cancelRequested`, `jobs.section.active`, `jobs.section.recent`, `jobs.ago.s|m|h|d` (`{n}`),
 `jobStatus.QUEUED|RUNNING|COMPLETED|FAILED|CANCELLED` (more statuses are fine: unknown ones should fall back to the raw
 status in the app's `t`), and `fleetStrip.offline|workers|slots|queue|draining|local|localWorkers|lanes|app|stt|sttBusy`.

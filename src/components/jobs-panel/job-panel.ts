@@ -23,9 +23,31 @@ export type PanelJob = {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  /** Optional. When defined, the cancel button shows only if true; when undefined, only QUEUED/RUNNING jobs can be cancelled. */
+  cancellable?: boolean;
+  /** Optional. Shown as a small symbol: pull = the app fetches, push = the source sends. */
+  mode?: "pull" | "push";
 };
 
 export const isActiveJob = (job: Pick<PanelJob, "status">) => job.status === "QUEUED" || job.status === "RUNNING";
+
+/** Whether the cancel button is offered (needs a cancel handler, an active job and no cancel already requested). */
+export function canCancelJob(job: Pick<PanelJob, "status" | "cancelRequested" | "cancellable">, hasHandler = true): boolean {
+  if (!hasHandler || !isActiveJob(job) || job.cancelRequested) return false;
+  return job.cancellable === undefined ? true : job.cancellable === true;
+}
+
+/** Two-step confirm: "ask" opens the question for a job, "no" or "yes" closes it (a new "ask" replaces another job's). */
+export function nextConfirm(current: string | null, action: "ask" | "yes" | "no", jobId: string): string | null {
+  return action === "ask" ? jobId : current === jobId ? null : current;
+}
+
+/** Symbol and message key of a job's mode; null when the row has none. */
+export function modeSymbol(mode: PanelJob["mode"]): { symbol: string; key: "jobs.mode.pull" | "jobs.mode.push" } | null {
+  if (mode === "pull") return { symbol: "\u2193", key: "jobs.mode.pull" };
+  if (mode === "push") return { symbol: "\u2191", key: "jobs.mode.push" };
+  return null;
+}
 
 export const POLL_ACTIVE_MS = 3000;
 export const POLL_IDLE_MS = 15000;

@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetStripParts, type FleetStripData } from "./fleet-strip";
-import { formatJobAge, isActiveJob, jobDetail, jobPercent, pollInterval, type PanelJob, type Translate } from "./job-panel";
+import { canCancelJob, formatJobAge, isActiveJob, jobDetail, jobPercent, modeSymbol, nextConfirm, pollInterval, type PanelJob, type Translate } from "./job-panel";
 import styles from "./JobsPanel.module.css";
 
 export type JobsResponse = { jobs: PanelJob[]; counts: { running: number; queued: number } };
@@ -31,6 +31,7 @@ export default function JobsPanel({ t, loadJobs, loadStrip, cancelJob, typeLabel
   const [strip, setStrip] = useState<StripResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const [cancelling, setCancelling] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const wrap = useRef<HTMLDivElement>(null);
@@ -72,6 +73,7 @@ export default function JobsPanel({ t, loadJobs, loadStrip, cancelJob, typeLabel
   async function cancel(job: PanelJob) {
     if (!cancelJob) return;
     setCancelError(false);
+    setConfirming(current => nextConfirm(current, "yes", job.id));
     setCancelling(prev => new Set(prev).add(job.id));
     try {
       await cancelJob(job);
@@ -90,11 +92,12 @@ export default function JobsPanel({ t, loadJobs, loadStrip, cancelJob, typeLabel
   const renderJob = (job: PanelJob) => {
     const percent = jobPercent(job);
     const detail = jobDetail(job);
+    const mode = modeSymbol(job.mode);
     const statusLabel = job.cancelRequested && isActiveJob(job) ? t("jobs.cancelRequested") : t(`jobStatus.${job.status}`);
     return (
       <li key={job.id} className={styles.row}>
         <div className={styles.top}>
-          <span className={styles.title}>{typeLabel(job.type)} · {job.projectTitle}</span>
+          <span className={styles.title}>{mode ? <span className={styles.mode} role="img" aria-label={t(mode.key)} title={t(mode.key)}>{mode.symbol}</span> : null}{typeLabel(job.type)} · {job.projectTitle}</span>
           <span className={styles.meta}>{formatJobAge(job.startedAt ?? job.createdAt, now, t)}</span>
         </div>
         <div className={styles.bar} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
@@ -103,10 +106,18 @@ export default function JobsPanel({ t, loadJobs, loadStrip, cancelJob, typeLabel
         {detail ? <div className={`${styles.detail} ${job.status === "FAILED" ? styles.error : ""}`}>{detail}</div> : null}
         <div className={styles.foot}>
           <span className={styles.status}>{statusLabel}{job.status === "RUNNING" ? ` · ${percent} %` : ""}{job.workerId ? ` · ${job.workerId.slice(0, 12)}` : ""}</span>
-          {cancelJob && isActiveJob(job) && !job.cancelRequested ? (
-            <button type="button" className={styles.cancel} disabled={cancelling.has(job.id)} onClick={() => void cancel(job)}>
-              {cancelling.has(job.id) ? t("jobs.cancelling") : t("jobs.cancel")}
-            </button>
+          {canCancelJob(job, Boolean(cancelJob)) ? (
+            confirming === job.id && !cancelling.has(job.id) ? (
+              <span className={styles.confirm} role="group" aria-label={t("jobs.cancelConfirm")}>
+                <span>{t("jobs.cancelConfirm")}</span>
+                <button type="button" className={styles.cancel} onClick={() => void cancel(job)}>{t("jobs.cancelYes")}</button>
+                <button type="button" className={styles.keep} onClick={() => setConfirming(current => nextConfirm(current, "no", job.id))}>{t("jobs.cancelNo")}</button>
+              </span>
+            ) : (
+              <button type="button" className={styles.cancel} disabled={cancelling.has(job.id)} onClick={() => setConfirming(current => nextConfirm(current, "ask", job.id))}>
+                {cancelling.has(job.id) ? t("jobs.cancelling") : t("jobs.cancel")}
+              </button>
+            )
           ) : null}
         </div>
       </li>
