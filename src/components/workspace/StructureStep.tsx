@@ -204,6 +204,7 @@ export default function StructureStep() {
               </div>
             </div>
             <GraphicsEditor
+              key={selectedGraphic.id}
               projectId={selected.id}
               graphicId={selectedGraphic.id}
               item={editorItem}
