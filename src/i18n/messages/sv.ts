@@ -548,6 +548,7 @@ export const sv: Record<keyof typeof fi, string> = {
   "ge.uploadImage": "Ladda upp ny bild…",
   "ge.uploading": "Laddar upp…",
   "ge.uploadFailed": "Bilduppladdningen misslyckades",
+  "ge.colorPicker": "Färgväljare",
   "assets.pageTitle": "Materialbibliotek",
   "assets.addAudio": "Spela in eller ladda upp ljud",
   "assets.back": "← Projekt",

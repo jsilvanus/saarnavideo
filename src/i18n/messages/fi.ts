@@ -546,6 +546,7 @@ export const fi = {
   "ge.uploadImage": "Lataa uusi kuva…",
   "ge.uploading": "Ladataan…",
   "ge.uploadFailed": "Kuvan lataus epäonnistui",
+  "ge.colorPicker": "Värinvalitsin",
   "assets.pageTitle": "Aineistokirjasto",
   "assets.addAudio": "Äänitä tai lataa ääni",
   "assets.back": "← Projektit",
