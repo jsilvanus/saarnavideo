@@ -548,6 +548,7 @@ export const en: Record<keyof typeof fi, string> = {
   "ge.uploadImage": "Upload a new image…",
   "ge.uploading": "Uploading…",
   "ge.uploadFailed": "Image upload failed",
+  "ge.colorPicker": "Colour picker",
   "assets.pageTitle": "Asset library",
   "assets.addAudio": "Record or upload audio",
   "assets.back": "← Projects",

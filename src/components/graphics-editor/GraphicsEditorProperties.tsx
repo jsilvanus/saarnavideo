@@ -6,6 +6,7 @@ import { parsePx, styleValue } from "./geometry";
 import type { ProjectVariable } from "@/domain/variables";
 import type { Asset, Item, Layer } from "./types";
 import { layerAssetId } from "./layer-label";
+import { ColorField } from "./ColorField";
 
 async function exportGraphic(projectId: string, graphicId: string, t: TFunction) {
   const response = await fetch(`/api/projects/${projectId}/graphics/${graphicId}/export`);
@@ -51,16 +52,16 @@ export const GraphicsEditorProperties: FC<{
         <label>{t("ge.fontFamily")}<input value={styleValue(primary, "font-family", "Arial, sans-serif")} onChange={e => onStyle(primary.id, "font-family", e.target.value)} /></label>
         <label>{t("ge.fontSize")}<input value={styleValue(primary, "font-size", "72px")} onChange={e => onStyle(primary.id, "font-size", e.target.value)} /></label>
         <div className="ge-two"><label>{t("ge.weight")}<select value={styleValue(primary, "font-weight", "700")} onChange={e => onStyle(primary.id, "font-weight", e.target.value)}><option>normal</option><option>bold</option><option>400</option><option>500</option><option>600</option><option>700</option><option>800</option><option>900</option></select></label><label>{t("ge.align")}<select value={styleValue(primary, "text-align", "center")} onChange={e => onStyle(primary.id, "text-align", e.target.value)}><option>left</option><option>center</option><option>right</option></select></label></div>
-        <label>{t("ge.color")}<input type="text" value={styleValue(primary, "color", "#fff")} onChange={e => onStyle(primary.id, "color", e.target.value)} /></label>
+        <ColorField label={t("ge.color")} value={styleValue(primary, "color", "#fff")} fallback="#ffffff" onChange={v => onStyle(primary.id, "color", v)} />
         <label>{t("ge.textShadow")}<input value={styleValue(primary, "text-shadow")} onChange={e => onStyle(primary.id, "text-shadow", e.target.value)} placeholder="0 3px 10px #000" /></label>
         <label>{t("ge.textStroke")}<input value={styleValue(primary, "-webkit-text-stroke")} onChange={e => onStyle(primary.id, "-webkit-text-stroke", e.target.value)} placeholder="1px #000" /></label>
       </>}
       {primary.type === "caption" && <>
         <div className="ge-two"><label>{t("ge.verticalAlign")}<select value={styleValue(primary, "vertical-align", "bottom")} onChange={e => onStyle(primary.id, "vertical-align", e.target.value)}><option value="top">{t("ge.top")}</option><option value="middle">{t("ge.middle")}</option><option value="bottom">{t("ge.bottom")}</option></select></label><label>{t("ge.maxLines")}<input type="number" min="1" max="6" value={styleValue(primary, "max-lines", "2")} onChange={e => onStyle(primary.id, "max-lines", Number(e.target.value))} /></label></div>
-        <label>{t("ge.backgroundBox")}<input type="text" value={styleValue(primary, "background")} onChange={e => onStyle(primary.id, "background", e.target.value)} placeholder={t("ge.backgroundBoxPlaceholder")} /></label>
+        <ColorField label={t("ge.backgroundBox")} value={styleValue(primary, "background")} placeholder={t("ge.backgroundBoxPlaceholder")} onChange={v => onStyle(primary.id, "background", v)} />
         <label>{t("ge.padding")}<input value={styleValue(primary, "padding", "12px")} onChange={e => onStyle(primary.id, "padding", e.target.value)} /></label>
       </>}
-      {(primary.type === "rect" || primary.type === "ellipse") && <label>{t("ge.background")}<input type="text" value={styleValue(primary, "background", primary.type === "ellipse" ? "#fff" : "#000")} onChange={e => onStyle(primary.id, "background", e.target.value)} /></label>}
+      {(primary.type === "rect" || primary.type === "ellipse") && <ColorField label={t("ge.background")} value={styleValue(primary, "background", primary.type === "ellipse" ? "#fff" : "#000")} fallback={primary.type === "ellipse" ? "#ffffff" : "#000000"} onChange={v => onStyle(primary.id, "background", v)} />}
       <label>{t("ge.animation")}<select value={(primary.animation ?? "").split(" ")[0]} onChange={e => onLayer(primary.id, { animation: e.target.value ? `${e.target.value} 1s ease 0s 1 normal forwards` : undefined })}>{ANIMATIONS.map(v => <option key={v} value={v}>{t(`ge.anim.${v || "none"}` as MessageKey)}</option>)}</select></label>
     </div></details></>}
   </aside>
