@@ -21,9 +21,10 @@ export default function ResourceBin({ graphics, audioAssets }: { graphics: Graph
   return <div className="resource-bin" data-testid="resource-bin">
     <div className="resource-bin-title"><strong>{t("comp.binTitle")}</strong><span>{t("tl.bin.help")}</span></div>
     <div className="resource-bin-grid">
+      <div className="resource-tile graphic" draggable title={t("tl.black")} onDragStart={event => startResourceDrag(event, { kind: "black", id: "black" })}><span className="resource-icon">■</span><span>{t("tl.black")}</span></div>
       {graphics.map(graphic => <div key={graphic.id} className="resource-tile graphic" draggable title={graphic.name} onDragStart={event => startResourceDrag(event, { kind: "graphic", id: graphic.id })}><span className="resource-icon">✦</span><span>{graphic.name}</span></div>)}
       {audioAssets.map(asset => <div key={asset.id} className="resource-tile audio" draggable title={asset.assetKey} onDragStart={event => startResourceDrag(event, { kind: "audio", id: asset.id })}><span className="resource-icon">🎙</span><span>{asset.assetKey}</span></div>)}
-      {!graphics.length && !audioAssets.length && <span className="muted">{t("comp.noResources")}</span>}
+      
     </div>
   </div>;
 }
