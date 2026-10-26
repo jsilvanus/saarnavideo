@@ -13,6 +13,7 @@ import TimelineView from "@/components/TimelineView";
 import ResourceBin from "@/components/ResourceBin";
 import ReframeEditor from "@/components/ReframeEditor";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
+import { podcastSettingsSchema } from "@/domain/project";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { graphicVariables } from "./helpers";
@@ -265,6 +266,12 @@ export default function StructureStep() {
         {durationNotice}
         <ResourceBin graphics={selected.definition?.graphics ?? []} audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")} />
         <TimelineView
+          podcast={selected.definition?.podcast}
+          onPodcastSlot={(slot, assetId) => {
+            const def = currentDefinition();
+            const key = slot === "intro" ? "introAssetId" : "outroAssetId";
+            void saveDefinition({ ...def, podcast: { ...podcastSettingsSchema.parse({}), ...(def.podcast ?? {}), [key]: assetId } } as Definition);
+          }}
           onItemsChange={(items) => {
             const def = currentDefinition();
             void saveDefinition({ ...def, composition: { ...def.composition, items } } as Definition);
