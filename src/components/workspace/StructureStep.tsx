@@ -272,6 +272,10 @@ export default function StructureStep() {
             const key = slot === "intro" ? "introAssetId" : "outroAssetId";
             void saveDefinition({ ...def, podcast: { ...podcastSettingsSchema.parse({}), ...(def.podcast ?? {}), [key]: assetId } } as Definition);
           }}
+          onSections={(sections) => {
+            const def = currentDefinition();
+            void saveDefinition({ ...def, sections } as Definition);
+          }}
           onItemsChange={(items) => {
             const def = currentDefinition();
             void saveDefinition({ ...def, composition: { ...def.composition, items } } as Definition);
