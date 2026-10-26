@@ -462,6 +462,7 @@ export const en: Record<keyof typeof fi, string> = {
   "tl.horizontal": "Horizontal",
   "tl.vertical": "Vertical",
   "tl.empty": "The timeline is empty. Add sections to the composition below.",
+  "tl.bin.help": "Drag a graphic onto the video lane for a slate or onto the graphics lane for an overlay. Drag a voiceover onto the audio lane to mix it over the video, or onto the video lane as a voice section.",
   "tl.graphic": "Graphic",
   "tl.audio": "Audio",
   "tl.source": "source",

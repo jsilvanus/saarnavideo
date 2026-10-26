@@ -462,6 +462,7 @@ export const sv: Record<keyof typeof fi, string> = {
   "tl.horizontal": "Vågrät",
   "tl.vertical": "Lodrät",
   "tl.empty": "Tidslinjen är tom. Lägg till avsnitt i kompositionen nedan.",
+  "tl.bin.help": "Dra en grafik till bildspåret för en mellanbild eller till grafikspåret för en överlagring. Dra ett tal till ljudspåret för att mixa det över videon, eller till bildspåret som en talsektion.",
   "tl.graphic": "Grafik",
   "tl.audio": "Ljud",
   "tl.source": "källa",

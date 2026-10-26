@@ -9,6 +9,8 @@ import { makeT, type TFunction, type MessageKey } from "@/i18n/translate";
 import { layoutTimeline } from "@/domain/timeline";
 import { overlayOutputBounds, overlayOutputRange, overlayStoredRange } from "@/renderer/overlay-timing";
 import { editRange, snapTime, type RangeEdit, type TimeRange } from "@/domain/range-edit";
+import { dropOnTimeline, laneAccepts, type DropLane, type DropPayload } from "@/domain/timeline-drop";
+import { RESOURCE_TYPE_PREFIX } from "./ResourceBin";
 import { formatTime, sourceLabel } from "./format";
 import styles from "./TimelineView.module.css";
 
@@ -22,6 +24,8 @@ type Props = {
   audioAssets?: AudioAsset[];
   /** Writes new start/end seconds onto the timeline item at `index` (source seconds for a section overlay, output seconds otherwise). Without it the view is read-only. */
   onChange?: (index: number, patch: { startSeconds: number; endSeconds: number }) => void;
+  /** Receives the composition items after a resource from the resource bin was dropped on a lane. Without it the lanes accept no drops. */
+  onItemsChange?: (items: TimelineItem[]) => void;
 };
 type Orientation = "horizontal" | "vertical";
 type Lane = "video" | "graphics" | "audio";
@@ -46,7 +50,7 @@ const DESKTOP_QUERY = "(min-width: 760px)";
  * an edge or the block (0.1 s steps, at least 0.5 s, inside the clip), or click it for exact start and end; arrow keys nudge
  * the focused block (Shift = 1 s, Alt = the end edge). Everything else is edited in CompositionEditor.
  */
-export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange }: Props) {
+export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange }: Props) {
   const t = useT();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ key: string; range: TimeRange } | null>(null);
@@ -63,6 +67,38 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
   };
 
   const { blocks, total } = useMemo(() => buildBlocks(items as TimelineItem[], graphics, sections, sources, audioAssets, t), [items, graphics, sections, sources, audioAssets, t]);
+
+  const [dropMark, setDropMark] = useState<{ lane: Lane; fraction: number } | null>(null);
+  /** Drop handling for one lane's track: a marker while a fitting resource is dragged over, the drop itself on release. */
+  function dropProps(lane: Lane, axis: "h" | "v", length: number): React.HTMLAttributes<HTMLElement> {
+    if (!onItemsChange) return {};
+    const kindOf = (event: React.DragEvent): DropPayload["kind"] | undefined => (["graphic", "audio"] as const).find(kind => event.dataTransfer.types.includes(`${RESOURCE_TYPE_PREFIX}${kind}`));
+    const fractionOf = (event: React.DragEvent<HTMLElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const size = axis === "h" ? rect.width : rect.height;
+      return Math.min(1, Math.max(0, size ? ((axis === "h" ? event.clientX - rect.left : event.clientY - rect.top) / size) : 0));
+    };
+    return {
+      onDragOver: event => {
+        const kind = kindOf(event);
+        if (!kind || !laneAccepts(kind, lane)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDropMark({ lane, fraction: fractionOf(event) });
+      },
+      onDragLeave: () => setDropMark(null),
+      onDrop: event => {
+        setDropMark(null);
+        const kind = kindOf(event);
+        if (!kind || !laneAccepts(kind, lane)) return;
+        event.preventDefault();
+        let id = "";
+        try { id = (JSON.parse(event.dataTransfer.getData("application/json")) as { id?: string }).id ?? ""; } catch { return; }
+        const next = dropOnTimeline(items as TimelineItem[], { payload: { kind, id }, lane: lane as DropLane, time: fractionOf(event) * length, graphics, sections, audioAssets });
+        if (next) onItemsChange(next);
+      },
+    };
+  }
 
   const editing = onChange ? blocks.find(b => b.key === selectedKey && b.editable) : undefined;
 
@@ -122,7 +158,10 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
     commitRange(block, editRange(from, edit, block.bounds ?? { start: 0, end: total }));
   }
 
-  const view = { total, drag, selectedKey, canEdit: Boolean(onChange), startDrag, onBlockKey, select: setSelectedKey };
+  const droppable = Boolean(onItemsChange);
+  // An empty composition still shows the lanes when resources can be dropped, so the first item can be placed.
+  const shownTotal = blocks.length ? total : 30;
+  const view = { total: shownTotal, drag, selectedKey, canEdit: Boolean(onChange), startDrag, onBlockKey, select: setSelectedKey, dropProps, dropMark };
 
   return <div className={styles["timeline-view"]} data-testid="timeline-view" data-orientation={orientation}>
     <div className={styles["timeline-view-head"]}>
@@ -132,7 +171,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
         <button type="button" aria-pressed={orientation === "vertical"} onClick={() => choose("vertical")}>{t("tl.vertical")}</button>
       </div>
     </div>
-    {!blocks.length ? <p className="muted">{t("tl.empty")}</p>
+    {!blocks.length && !droppable ? <p className="muted">{t("tl.empty")}</p>
       : orientation === "horizontal" ? <Horizontal blocks={blocks} view={view} /> : <Vertical blocks={blocks} view={view} />}
     {onChange && blocks.some(b => b.editable) && !editing && <p className="muted">{t("tl.edit.hint")}</p>}
     {editing && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)} />}
@@ -147,6 +186,8 @@ type View = {
   startDrag: (event: ReactPointerEvent<HTMLElement>, block: Block, mode: "start" | "end" | "move") => void;
   onBlockKey: (event: KeyboardEvent<HTMLElement>, block: Block) => void;
   select: (key: string | null) => void;
+  dropProps: (lane: Lane, axis: "h" | "v", length: number) => React.HTMLAttributes<HTMLElement>;
+  dropMark: { lane: Lane; fraction: number } | null;
 };
 
 /** Where a block sits on its track: the range being dragged while it is dragged. */
@@ -164,7 +205,7 @@ function Horizontal({ blocks, view }: { blocks: Block[]; view: View }) {
     <div className={styles["timeline-h-ruler"]} aria-hidden="true">{ticks(total).map(tick => <span key={tick} style={{ left: `${(tick / total) * 100}%` }}>{formatTime(tick)}</span>)}</div>
     {LANES.map(lane => <div className={styles["timeline-h-lane"]} key={lane.id}>
       <span className={styles["timeline-lane-label"]}>{t(lane.labelKey)}</span>
-      <div className={styles["timeline-h-track"]} data-track onClick={() => view.select(null)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "h")} />)}</div>
+      <div className={styles["timeline-h-track"]} data-track onClick={() => view.select(null)} {...view.dropProps(lane.id, "h", total)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "h")} />)}{view.dropMark?.lane === lane.id && <span className={styles["drop-mark"]} style={{ left: `${view.dropMark.fraction * 100}%` }} aria-hidden="true" />}</div>
     </div>)}
   </div>;
 }
@@ -177,7 +218,7 @@ function Vertical({ blocks, view }: { blocks: Block[]; view: View }) {
   return <div className={styles["timeline-v"]} style={{ gridTemplateRows: `auto ${height}px` }}>
     <span />{LANES.map(lane => <span className={styles["timeline-lane-label"]} key={lane.id}>{t(lane.labelKey)}</span>)}
     <div className={styles["timeline-v-ruler"]} aria-hidden="true">{ticks(total).map(tick => <span key={tick} style={{ top: `${(tick / total) * 100}%` }}>{formatTime(tick)}</span>)}</div>
-    {LANES.map(lane => <div className={styles["timeline-v-track"]} data-track key={lane.id} onClick={() => view.select(null)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "v")} />)}</div>)}
+    {LANES.map(lane => <div className={styles["timeline-v-track"]} data-track key={lane.id} onClick={() => view.select(null)} {...view.dropProps(lane.id, "v", total)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "v")} />)}{view.dropMark?.lane === lane.id && <span className={styles["drop-mark"]} style={{ top: `${view.dropMark.fraction * 100}%` }} aria-hidden="true" />}</div>)}
   </div>;
 }
 

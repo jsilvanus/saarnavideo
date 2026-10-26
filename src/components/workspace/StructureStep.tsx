@@ -10,6 +10,7 @@ import VoiceoverPanel from "@/components/VoiceoverPanel";
 import SectionManager from "@/components/SectionManager";
 import SequenceTimeline from "@/components/SequenceTimeline";
 import TimelineView from "@/components/TimelineView";
+import ResourceBin from "@/components/ResourceBin";
 import ReframeEditor from "@/components/ReframeEditor";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import { useOpenWorkspace } from "./useWorkspace";
@@ -262,7 +263,12 @@ export default function StructureStep() {
         text={t("str.timeline.text")}
       >
         {durationNotice}
+        <ResourceBin graphics={selected.definition?.graphics ?? []} audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")} />
         <TimelineView
+          onItemsChange={(items) => {
+            const def = currentDefinition();
+            void saveDefinition({ ...def, composition: { ...def.composition, items } } as Definition);
+          }}
           items={currentDefinition().composition.items}
           graphics={selected.definition?.graphics}
           sections={selected.definition?.sections}
@@ -276,7 +282,8 @@ export default function StructureStep() {
             });
           }}
         />
-        <h3 className="subhead">{t("str.editComposition")}</h3>
+        <details className="composition-details">
+          <summary>{t("str.editComposition")}</summary>
         <CompositionEditor
           definition={currentDefinition()}
           sources={selected.sources}
@@ -286,6 +293,7 @@ export default function StructureStep() {
             setMessage(t("str.compositionSaved"));
           }}
         />
+        </details>
         <details className="composition-sections">
           <summary>{t("str.ownSections")}</summary>
           <SectionManager

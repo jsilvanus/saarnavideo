@@ -169,7 +169,8 @@ export default async function setup(project: TestProject) {
     await fakeGraph.close();
     await fakeYouTube.close();
     await fakeS3?.close();
-    if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true });
+    // The worker and server were only signalled; one may still be writing a moment longer (ENOTEMPTY), so retry.
+    if (!process.env.E2E_KEEP) await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
     await rm(path.join(ROOT, distDir), { recursive: true, force: true });
     await Promise.all(NEXT_TRACKED_FILES.map((file, index) => (trackedBefore[index] === undefined ? undefined : writeFile(file, trackedBefore[index]))));
   };
