@@ -6,7 +6,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { validateAssetKey, validateAssetType, validateImageFile, type ImageMetadata } from "@/integrations/image-assets";
-import { MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFile } from "@/integrations/audio-assets";
+import { FfprobeUnavailableError, MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFile } from "@/integrations/audio-assets";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "./http";
 import { getMediaStore } from "@/lib/media-store";
@@ -111,7 +111,14 @@ export async function readAudioUpload(file: File): Promise<AudioUpload | Respons
  * no asset with this hash exists (the file could otherwise still be in use).
  */
 export async function storeAudioAsset(upload: AudioUpload): Promise<{ storagePath: string; durationMs: number } | Response> {
-  const probe = await probeAudioFile(upload.tempPath);
+  let probe;
+  try {
+    probe = await probeAudioFile(upload.tempPath);
+  } catch (error) {
+    if (!(error instanceof FfprobeUnavailableError)) throw error;
+    await rm(upload.tempPath, { force: true }).catch(() => undefined);
+    return jsonError(error.message, 503);
+  }
   if (!probe) {
     await rm(upload.tempPath, { force: true }).catch(() => undefined);
     return jsonError("The file could not be read as audio", 400);

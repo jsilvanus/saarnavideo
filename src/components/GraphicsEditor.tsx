@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { KEYFRAMES, WIDTH } from "./graphics-editor/constants";
+import { applyVariables, type ProjectVariable } from "@/domain/variables";
+import { KEYFRAMES } from "./graphics-editor/constants";
 import { GraphicsEditorToolbar } from "./graphics-editor/GraphicsEditorToolbar";
 import { GraphicsEditorCanvas } from "./graphics-editor/GraphicsEditorCanvas";
 import { GraphicsEditorProperties } from "./graphics-editor/GraphicsEditorProperties";
-import { resizeLayer, snap } from "./graphics-editor/geometry";
+import { moveInFrame, resizeInFrame } from "./graphics-editor/geometry";
+import { boxToFrame, frameLayout } from "@/domain/frame-layout";
 import type { Asset, Item, Layer } from "./graphics-editor/types";
 import { createCaptionLayer } from "@/domain/caption-style";
 import AssetPicker from "./AssetPicker";
@@ -24,7 +26,7 @@ function defaultLayers(item: Item, title: string): Layer[] {
   return [{ id: "title", type: "text", x: 160, y: 300, width: 1600, height: 180, text, style: { "font-size": "92px", "font-weight": "700", color: "#ffffff", "text-align": "center", "text-shadow": "0 3px 10px #000" } }];
 }
 
-export default function GraphicsEditor({ projectId, graphicId, item, assets, title, onChange, onAssetsChanged }: { projectId: string; graphicId: string; item: Item; assets: Asset[]; title: string; onChange: (item: Item) => void; onAssetsChanged?: () => void | Promise<void> }) {
+export default function GraphicsEditor({ projectId, graphicId, item, assets, title, variables = [], outputWidth = 1920, outputHeight = 1080, onChange, onAssetsChanged }: { projectId: string; /** Output size of the project: the frame the graphic is shown in. */ outputWidth?: number; outputHeight?: number; graphicId: string; item: Item; assets: Asset[]; title: string; variables?: ProjectVariable[]; onChange: (item: Item) => void; onAssetsChanged?: () => void | Promise<void> }) {
   const t = useT();
   const [layers, setLayers] = useState<Layer[]>(() => defaultLayers(item, title));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(layers[0] ? [layers[0].id] : []));
@@ -34,20 +36,38 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
   const [aspectLock, setAspectLock] = useState(true);
   const [assetPicker, setAssetPicker] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [showValues, setShowValues] = useState(true);
+  const [scale, setScale] = useState(0.5);
+  // The stage is the output frame plus a margin, so content outside the frame stays visible (dimmed) and editable.
+  const layout = useMemo(() => frameLayout({ width: outputWidth, height: outputHeight }), [outputWidth, outputHeight]);
+  const margin = Math.round(Math.max(outputWidth, outputHeight) * 0.08);
+  const stageWidth = outputWidth + 2 * margin;
+  const lastEmitted = useRef<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const artboardRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<any>(null);
   const layersRef = useRef(layers);
   layersRef.current = layers;
 
+  // The stage is laid out at its real size (output frame + margin, in output pixels) and scaled to fit. Layers are drawn where the renderer puts them (frame-layout.ts); stored coordinates stay design pixels.
   useEffect(() => {
+    const el = canvasRef.current; if (!el) return;
+    const update = () => { const w = el.clientWidth; if (w) setScale(w / stageWidth); };
+    update();
+    const observer = new ResizeObserver(update); observer.observe(el);
+    return () => observer.disconnect();
+  }, [stageWidth]);
+
+  useEffect(() => {
+    // Our own save echoes back as a new item; re-initialising then would reset the selection after every edit.
+    if (item.data?.layers !== undefined && item.data.layers === lastEmitted.current) return;
     const next = defaultLayers(item, title);
     setLayers(next);
     setSelectedIds(next[0] ? new Set([next[0].id]) : new Set());
     setPrimaryId(next[0]?.id ?? null);
   }, [item, title]);
 
-  const emit = (next: Layer[]) => onChange({ ...item, template: "rich", data: { ...(item.data ?? {}), layers: JSON.stringify(next) } });
+  const emit = (next: Layer[]) => { lastEmitted.current = JSON.stringify(next); onChange({ ...item, template: "rich", data: { ...(item.data ?? {}), layers: JSON.stringify(next) } }); };
   const commit = (next: Layer[]) => { setLayers(next); emit(next); };
   const selectOnly = (id: string | null | undefined) => { setSelectedIds(new Set(id ? [id] : [])); setPrimaryId(id ?? null); };
 
@@ -59,18 +79,20 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
 
   function beginPointer(e: React.PointerEvent, layerId: string, kind: string, handle?: string) {
     e.stopPropagation(); const layer = layersRef.current.find(l => l.id === layerId); if (!layer) return;
-    const rect = artboardRef.current?.getBoundingClientRect(); if (!rect || !rect.width) return; const scale = rect.width / WIDTH;
+    const rect = artboardRef.current?.getBoundingClientRect(); if (!rect || !rect.width) return; const scale = rect.width / stageWidth;
     if (kind === "select") { const next = e.shiftKey ? new Set(selectedIds) : new Set<string>(); if (e.shiftKey && next.has(layerId)) next.delete(layerId); else next.add(layerId); setSelectedIds(next); setPrimaryId(layerId); return; }
-    dragRef.current = { kind, layerId, handle, startX: e.clientX, startY: e.clientY, layer: { ...layer }, scale, artboardLeft: rect.left, artboardTop: rect.top };
+    dragRef.current = { kind, layerId, handle, startX: e.clientX, startY: e.clientY, layer: { ...layer }, display: boxToFrame(layer, layout), scale, artboardLeft: rect.left, artboardTop: rect.top };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
   function pointerMove(e: React.PointerEvent) {
     const d = dragRef.current; if (!d) return; const dx = (e.clientX - d.startX) / d.scale, dy = (e.clientY - d.startY) / d.scale; if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
     let next = layersRef.current.map(l => ({ ...l })); const idx = next.findIndex(l => l.id === d.layerId); if (idx < 0) return;
-    if (d.kind === "move") { let x = d.layer.x + dx, y = d.layer.y + dy; if (grid) { x = snap(x); y = snap(y); } next[idx] = { ...next[idx], x: Math.round(x), y: Math.round(y) }; }
-    else if (d.kind === "resize") { const r = resizeLayer(d.handle, d.layer, dx, dy); if (aspectLock && d.layer.width && d.layer.height) { const ratio = d.layer.width / d.layer.height; if (["e", "w"].includes(d.handle)) r.height = Math.max(20, Math.round(r.width / ratio)); else if (["n", "s"].includes(d.handle)) r.width = Math.max(20, Math.round(r.height * ratio)); } next[idx] = { ...next[idx], ...r }; }
-    else if (d.kind === "rotate") { const cx = d.layer.x + d.layer.width / 2, cy = d.layer.y + d.layer.height / 2; const px = (e.clientX - d.artboardLeft) / d.scale, py = (e.clientY - d.artboardTop) / d.scale; let angle = Math.atan2(py - cy, px - cx) * 180 / Math.PI + 90; if (grid) angle = Math.round(angle / 15) * 15; next[idx] = { ...next[idx], rotation: Math.round(angle) }; }
+    // Dragging happens in the frame (what the user sees); the result goes back to design pixels.
+    const disp = d.display as { x: number; y: number; width: number; height: number };
+    if (d.kind === "move") next[idx] = { ...next[idx], ...moveInFrame(disp, dx, dy, layout, grid) };
+    else if (d.kind === "resize") next[idx] = { ...next[idx], ...resizeInFrame(d.handle, disp, dx, dy, layout, aspectLock) };
+    else if (d.kind === "rotate") { const cx = disp.x + disp.width / 2, cy = disp.y + disp.height / 2; const px = (e.clientX - d.artboardLeft) / d.scale - margin, py = (e.clientY - d.artboardTop) / d.scale - margin; let angle = Math.atan2(py - cy, px - cx) * 180 / Math.PI + 90; if (grid) angle = Math.round(angle / 15) * 15; next[idx] = { ...next[idx], rotation: Math.round(angle) }; }
     setLayers(next);
   }
 
@@ -89,8 +111,8 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
   return <div className="graphics-editor">
     {libraryOpen && <AssetPicker projectId={projectId} kind="image" title={t("ge.pickFromLibrary")} linkedIds={assets.map(a => a.id)} onPick={chooseLibraryAsset} onClose={() => setLibraryOpen(false)} />}
     <style>{KEYFRAMES}</style>
-    <GraphicsEditorToolbar grid={grid} safe={safe} onAdd={addLayer} onDuplicate={duplicateSelected} onDelete={removeSelected} onToggleGrid={() => setGrid(v => !v)} onToggleSafe={() => setSafe(v => !v)} />
-    <div className="ge-layout"><GraphicsEditorCanvas canvasRef={canvasRef} artboardRef={artboardRef} layers={layers} selectedIds={selectedIds} grid={grid} safe={safe} background={item.data?.backgroundColor ?? "#111"} onPointerMove={pointerMove} onPointerUp={pointerUp} onCanvasPointerDown={() => selectOnly(null)} onLayerPointerDown={beginPointer} /><GraphicsEditorProperties projectId={projectId} graphicId={graphicId} item={item} assets={assets} primary={primary} assetPicker={assetPicker} aspectLock={aspectLock} onLayer={updateLayer} onStyle={updateStyle} onChooseAsset={chooseAsset} onToggleAssetPicker={() => setAssetPicker(v => !v)} onOpenLibrary={() => setLibraryOpen(true)} onAspectLock={setAspectLock} /></div>
-    <style jsx global>{`.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px 10px;cursor:pointer}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;inset:0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:12px;height:12px;background:#38bdf8;border:2px solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:12px;height:12px;background:#f472b6;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
+    <GraphicsEditorToolbar grid={grid} safe={safe} onAdd={addLayer} onDuplicate={duplicateSelected} onDelete={removeSelected} showValues={showValues} hasVariables={variables.length > 0} onToggleValues={() => setShowValues(v => !v)} onToggleGrid={() => setGrid(v => !v)} onToggleSafe={() => setSafe(v => !v)} />
+    <div className="ge-layout"><GraphicsEditorCanvas layout={layout} margin={margin} scale={scale} variables={showValues ? variables : []} canvasRef={canvasRef} artboardRef={artboardRef} layers={layers} selectedIds={selectedIds} grid={grid} safe={safe} background={item.data?.backgroundColor ?? "#111"} onPointerMove={pointerMove} onPointerUp={pointerUp} onCanvasPointerDown={() => selectOnly(null)} onLayerPointerDown={beginPointer} /><GraphicsEditorProperties variables={variables} onInsertVariable={name => { if (primary && (primary.type === "text" || primary.type === "caption")) updateLayer(primary.id, { text: `${primary.text ?? ""}{{${name}}}` }); }} projectId={projectId} graphicId={graphicId} item={item} assets={assets} primary={primary} assetPicker={assetPicker} aspectLock={aspectLock} onLayer={updateLayer} onStyle={updateStyle} onChooseAsset={chooseAsset} onToggleAssetPicker={() => setAssetPicker(v => !v)} onOpenLibrary={() => setLibraryOpen(true)} onAspectLock={setAspectLock} /></div>
+    <style jsx global>{`.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px 10px;cursor:pointer}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:calc(12px*var(--ge-inv,1));height:calc(12px*var(--ge-inv,1));background:#38bdf8;border:calc(2px*var(--ge-inv,1)) solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:calc(12px*var(--ge-inv,1));height:calc(12px*var(--ge-inv,1));background:#f472b6;border:calc(2px*var(--ge-inv,1)) solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:10px 14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}details.ge-fold{border-bottom:1px solid #263244}details.ge-fold>summary{cursor:pointer;padding:9px 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;list-style:none;display:flex;justify-content:space-between}details.ge-fold>summary::after{content:"▸"}details.ge-fold[open]>summary::after{content:"▾"}details.ge-fold>.ge-section{border-bottom:0;padding-top:0}.ge-chips{display:flex;flex-wrap:wrap;gap:5px}.ge-chips button{padding:3px 8px!important;font-size:12px}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
   </div>;
 }

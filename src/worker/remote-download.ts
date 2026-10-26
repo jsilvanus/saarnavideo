@@ -55,7 +55,7 @@ export function createRemoteDownloader({ fleet, s3, bucket, prefix, log = () => 
           labels: { app: "saarnavideo", jobType: "DOWNLOAD", ...job.labels },
           inputs: job.cookiesFile ? [{ name: "cookies", uri: uri(keys.cookies) }] : [],
           outputs: [{ name: "video", uri: uri(keys.video) }, ...(job.cookiesFile ? [{ name: "cookies-out", uri: uri(keys.cookiesOut) }] : [])],
-          download: { url: job.url },
+          download: { url: job.url, extraArgs: ["--embed-chapters"] },
         };
         staged.push(keys.video, keys.cookiesOut);
         const handle = await fleet.submit(spec);

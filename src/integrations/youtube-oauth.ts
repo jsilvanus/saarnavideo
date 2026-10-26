@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
+import { acquireLease, releaseLease } from "@/lib/lease";
 import { decryptYouTubeToken, encryptYouTubeToken } from "@/integrations/youtube-token-crypto";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -40,14 +42,36 @@ export async function exchangeYouTubeCode(code: string) {
   return prisma.youTubeConnection.upsert({ where: { provider: "youtube" }, update: data, create: { provider: "youtube", ...data } });
 }
 
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+const isFresh = (connection: { tokenExpiry: Date | null }) => Boolean(connection.tokenExpiry && connection.tokenExpiry.getTime() > Date.now() + 60_000);
+
+/**
+ * A valid access token, refreshed when it is about to expire. The refresh runs under a lease, so the app and several
+ * workers never refresh at once (a second refresh could invalidate the first one's refresh token); a caller that
+ * does not get the lease waits and reads the token the winner stored.
+ */
 export async function getYouTubeAccessToken(): Promise<string> {
-  const connection = await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" } });
-  if (!connection) throw new Error("YouTube account is not connected");
-  if (connection.tokenExpiry && connection.tokenExpiry.getTime() > Date.now() + 60_000) return decryptYouTubeToken(connection.accessToken);
-  const { clientId, clientSecret } = config();
-  const response = await requestToken({ client_id: clientId, client_secret: clientSecret, refresh_token: decryptYouTubeToken(connection.refreshToken), grant_type: "refresh_token" });
-  if (!response.ok) throw new Error(`YouTube token refresh failed (${response.status})`);
-  const token = await response.json() as { access_token: string; expires_in?: number };
-  await prisma.youTubeConnection.update({ where: { id: connection.id }, data: { accessToken: encryptYouTubeToken(token.access_token), tokenExpiry: tokenExpiry(token.expires_in) } });
-  return token.access_token;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const connection = await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" } });
+    if (!connection) throw new Error("YouTube account is not connected");
+    if (isFresh(connection)) return decryptYouTubeToken(connection.accessToken);
+    const owner = `youtube-refresh-${randomUUID()}`;
+    if (await acquireLease(prisma, "youtube-token-refresh", owner, 30_000)) {
+      try {
+        const latest = await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" } });
+        if (!latest) throw new Error("YouTube account is not connected");
+        if (isFresh(latest)) return decryptYouTubeToken(latest.accessToken); // refreshed by someone else meanwhile
+        const { clientId, clientSecret } = config();
+        const response = await requestToken({ client_id: clientId, client_secret: clientSecret, refresh_token: decryptYouTubeToken(latest.refreshToken), grant_type: "refresh_token" });
+        if (!response.ok) throw new Error(`YouTube token refresh failed (${response.status})`);
+        const token = await response.json() as { access_token: string; expires_in?: number };
+        await prisma.youTubeConnection.update({ where: { id: latest.id }, data: { accessToken: encryptYouTubeToken(token.access_token), tokenExpiry: tokenExpiry(token.expires_in) } });
+        return token.access_token;
+      } finally {
+        await releaseLease(prisma, "youtube-token-refresh", owner).catch(() => undefined);
+      }
+    }
+    await sleep(500);
+  }
+  throw new Error("YouTube token refresh is taking too long");
 }

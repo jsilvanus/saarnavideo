@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
-import { anchorSectionOverlays, overlayOutputRange } from "@/renderer/overlay-timing";
+import { anchorSectionOverlays, overlayOutputBounds, overlayOutputRange, overlayStoredRange } from "@/renderer/overlay-timing";
 
 const sections = [
   { id: "gospel", label: "Evankeliumi", scope: "SOURCE", sourceId: "a", startSeconds: 10, endSeconds: 40, origin: "MANUAL" },
@@ -45,5 +45,42 @@ describe("section overlays on the output timeline", () => {
     expect(anchored.composition.items.filter((item) => item.type === "overlay")).toMatchObject([{ startSeconds: 36, endSeconds: 42 }]);
     const plan = buildCompositionRenderPlan(definition(items(overlay("sermon", 102, 108))), new Map([["a", "/tmp/a.mp4"], ["b", "/tmp/b.mp4"]]), "/tmp/out.mp4");
     expect(plan.args[plan.args.indexOf("-filter_complex") + 1]).toContain("between(t,36,42)");
+  });
+});
+
+describe("storing an edited output range back on the overlay", () => {
+  const stored = (item: object, output: { startSeconds: number; endSeconds: number }, list: TimelineItem[] = items()) => overlayStoredRange(item as never, output, list, { sections: sections as never });
+
+  it("stores source seconds of the section for an anchored overlay (inverse of the output mapping)", () => {
+    // Saarna starts at output 34 (crossfade); output 36..42 is source 102..108.
+    expect(stored(overlay("sermon", 102, 108), { startSeconds: 36, endSeconds: 42 })).toEqual({ startSeconds: 102, endSeconds: 108 });
+    expect(stored(overlay("sermon", 102, 108), { startSeconds: 40, endSeconds: 50 })).toEqual({ startSeconds: 106, endSeconds: 116 });
+    expect(stored(overlay("gospel", 10, 15), { startSeconds: 12.5, endSeconds: 20 })).toEqual({ startSeconds: 17.5, endSeconds: 25 });
+  });
+
+  it("round-trips with overlayOutputRange, also after the sections were reordered", () => {
+    for (const list of [items(), [items()[0], items()[2], items()[1]] as TimelineItem[]]) {
+      const item = overlay("sermon", 102, 108);
+      const output = range(item, list)!;
+      const moved = { startSeconds: output.startSeconds + 3, endSeconds: output.endSeconds + 5 };
+      const back = stored(item, moved, list)!;
+      expect(range({ ...item, ...back }, list)).toEqual(moved);
+    }
+  });
+
+  it("cuts to the clip and refuses when the clip is gone", () => {
+    expect(stored(overlay("gospel", 10, 15), { startSeconds: 20, endSeconds: 99 })).toEqual({ startSeconds: 25, endSeconds: 40 });
+    expect(stored(overlay("gospel", 10, 15), { startSeconds: 60, endSeconds: 99 })).toBeUndefined();
+    expect(stored(overlay("sermon", 102, 108), { startSeconds: 36, endSeconds: 42 }, [items()[0], items()[1]] as TimelineItem[])).toBeUndefined();
+  });
+
+  it("stores output seconds as they are for an overlay without a section", () => {
+    expect(stored(overlay(undefined, 3, 4), { startSeconds: 7.5, endSeconds: 12 })).toEqual({ startSeconds: 7.5, endSeconds: 12 });
+    expect(stored(overlay(undefined, 3, 4), { startSeconds: 7, endSeconds: 7 })).toBeUndefined();
+  });
+
+  it("knows the clip an anchored overlay must stay in", () => {
+    expect(overlayOutputBounds(overlay("sermon", 102, 108) as never, items(), { sections: sections as never })).toEqual({ startSeconds: 34, endSeconds: 94 });
+    expect(overlayOutputBounds(overlay(undefined, 1, 2) as never, items(), { sections: sections as never })).toBeUndefined();
   });
 });

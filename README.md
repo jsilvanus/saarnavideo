@@ -9,7 +9,7 @@ It is built for the Evangelical-Lutheran Church of Finland: the built-in templat
 - **Sources:** upload a file, or give a YouTube link (downloaded with yt-dlp). A project can have several sources.
 - **Sections and timeline:** cut the recording into sections, reorder them, add opening and closing cards, overlays, voiceovers and background audio. Cut, fade and crossfade transitions.
 - **Templates:** start from a built-in template, or save any project as your own.
-- **Graphics:** a scene-graph graphics editor, a shared graphics library (images, audio, folders), and project variables (`{{preacher}}`, `{{evankeliumi}}`) that fill the text of your graphics.
+- **Graphics:** a scene-graph graphics editor, a shared asset library (images, audio, folders; record or upload audio straight into it), and project variables (`{{preacher}}`, `{{evankeliumi}}`) that fill the text of your graphics.
 - **Output size:** 16:9, Shorts, Reels, TikTok, Stories, square and portrait presets, with fill, fit or custom crop.
 - **Captions:** from a transcription of the recording, as a soft track, burned into the picture, or both. Plain-text transcript export.
 - **Podcast:** an audio episode with intro and outro, loudness normalised, with tags and cover art.
@@ -41,6 +41,7 @@ Before anyone else can reach the app, set `ACCESS_SECRET` (a shared-secret login
 | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Wiring up fffleet (rendering and downloads on workers), S3, varfetch connectors, speech-to-text, YouTube, Facebook |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production notes, checklist, scaling, backups, troubleshooting |
 | [docs/API.md](docs/API.md) | HTTP API reference |
+| [docs/LARGE_FILE_UPLOADS.md](docs/LARGE_FILE_UPLOADS.md) | Direct-to-S3 source uploads (presigned, multipart, resumable) |
 | [docs/TEMPLATE_CREATION.md](docs/TEMPLATE_CREATION.md), [docs/GRAPHIC_PACKAGE.md](docs/GRAPHIC_PACKAGE.md) | Templates and the `.svgraphic` graphic package format |
 | [docs/YOUTUBE_OAUTH_SETUP.md](docs/YOUTUBE_OAUTH_SETUP.md), [docs/FACEBOOK_SETUP.md](docs/FACEBOOK_SETUP.md) | Publishing setup |
 | [CLAUDE.md](CLAUDE.md) | Detailed behaviour of every feature, for contributors and coding assistants |

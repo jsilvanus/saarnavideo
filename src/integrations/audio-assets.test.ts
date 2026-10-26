@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { audioExtension, canonicalAudioType, parseFfmpegTime } from "@/integrations/audio-assets";
+import { describe, expect, it, vi } from "vitest";
+import { audioExtension, canonicalAudioType, FfprobeUnavailableError, parseFfmpegTime, probeAudioFile } from "@/integrations/audio-assets";
 
 describe("canonicalAudioType", () => {
   it("accepts the supported formats and folds browser spellings", () => {
@@ -29,5 +29,17 @@ describe("parseFfmpegTime", () => {
   it("takes the last progress stamp", () => {
     expect(parseFfmpegTime("size=N/A time=00:00:01.20 bitrate=N/A\rsize=N/A time=00:01:02.50 bitrate=N/A")).toBeCloseTo(62.5);
     expect(parseFfmpegTime("no progress")).toBeUndefined();
+  });
+});
+
+describe("probeAudioFile", () => {
+  it("reports a missing ffprobe binary as FfprobeUnavailableError, not as an unreadable file", async () => {
+    vi.stubEnv("PATH", "/nonexistent-bin-dir-for-test");
+    try {
+      await expect(probeAudioFile("package.json")).rejects.toBeInstanceOf(FfprobeUnavailableError);
+      await expect(probeAudioFile("package.json")).rejects.toThrow("ffprobe is not available on the app server");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

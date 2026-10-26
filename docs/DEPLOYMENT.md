@@ -70,7 +70,7 @@ MEDIA_CACHE_MAX_BYTES=21474836480           # worker download cache, default 20 
 ```
 Startup fails with a clear message when `MEDIA_STORAGE=s3` is set without the bucket or credentials; there is no silent fallback to local disk. This bucket is separate from the render staging bucket below (`FFFLEET_S3_BUCKET`), although they may be the same bucket with different prefixes.
 
-How it works with S3: uploads are streamed into the bucket (`sources/`, `assets/library/`, `outputs/` under the prefix). The app proxies downloads and range requests from the bucket, so the bucket can stay private. The worker downloads what a job reads into `MEDIA_ROOT/cache` (least recently used files are removed above `MEDIA_CACHE_MAX_BYTES`), writes results to `MEDIA_ROOT/work/<job>` and uploads them when the job ends; the scratch directory is removed afterwards. Give workers disk for one source plus its output. A stored `storagePath` is either an absolute local path or `s3://bucket/key`, so a system can read old local files while writing new ones to S3.
+How it works with S3: source videos are uploaded by the browser straight to the bucket with presigned (multipart for large files, resumable after a refresh) URLs, see [LARGE_FILE_UPLOADS.md](LARGE_FILE_UPLOADS.md); library assets are streamed through the app; results are written by the worker (`sources/`, `assets/library/`, `outputs/` under the prefix). The browser must reach the bucket: set `MEDIA_S3_ENDPOINT_PUBLIC` when the app uses an internal endpoint, and add a CORS rule for the app's origin (PUT, ETag exposed). The app proxies downloads and range requests from the bucket, so the bucket can stay private. The worker downloads what a job reads into `MEDIA_ROOT/cache` (least recently used files are removed above `MEDIA_CACHE_MAX_BYTES`), writes results to `MEDIA_ROOT/work/<job>` and uploads them when the job ends; the scratch directory is removed afterwards. Give workers disk for one source plus its output. A stored `storagePath` is either an absolute local path or `s3://bucket/key`, so a system can read old local files while writing new ones to S3.
 
 For direct browser uploads, configure an S3 lifecycle rule that **aborts incomplete multipart uploads** automatically. Example policy: abort incomplete multipart uploads under your media prefix after 1 day. SaarnaVideo also removes stale pending upload rows and uploaded objects on the server, but the bucket rule is still needed so orphaned multipart parts do not accumulate when the app never receives the abort request.
 
@@ -132,7 +132,19 @@ docker build -f Dockerfile.worker -t saarnavideo-worker:latest .
 docker build -f Dockerfile.fleet-worker -t saarnavideo-fleet-worker:latest .   # only for fleet downloads
 ```
 
-Run several workers by scaling the `worker` service (`docker compose up -d --scale worker=3`): they share the database and the media store (a shared volume or S3), and a stale job from a stopped worker is recovered automatically.
+Run several workers by scaling the `worker` service (`docker compose up -d --scale worker=3`): they share the database and the media store (a shared volume or S3), and a stale job from a stopped worker is recovered automatically. `MAX_CONCURRENT_JOBS` is per worker; to cap a job type across all workers set `JOB_LIMITS` (for example `JOB_LIMITS=TRANSCRIBE=2` so only two transcriptions run at once however many workers there are). Keep the workers' clocks synchronised (NTP): stale-job recovery compares heartbeat times written by one host with the clock of another.
+
+## Several instances
+
+One app and one worker is the default and needs nothing extra. To run more, everything below is optional and each point is independent.
+
+- **Several workers.** Scale the `worker` service (`docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d --scale worker=3`). Jobs are claimed with one conditional update, so no job runs twice; `MAX_CONCURRENT_JOBS` is per worker, `JOB_LIMITS` (for example `TRANSCRIBE=2,VIDEO=4`) caps a job type across all of them. A job whose worker stops is failed (an interrupted transcription is taken over by another worker) after about 90 seconds without a heartbeat.
+- **Storage must be shared.** Use S3 (`MEDIA_STORAGE=s3`, see above) as soon as workers or app instances run on different hosts. With `MEDIA_STORAGE=local` every host only sees its own `MEDIA_ROOT`; workers on one host share it, workers on several hosts do not. Each worker registers itself in the database, and a worker that sees live workers on more than one host with local storage logs a warning (`MEDIA_STORAGE=local but workers are running on N hosts`). It is a warning, not a refusal, because a shared network volume is a valid setup.
+- **Several app instances.** The app keeps no shared state in memory (checked: no module-level caches or queues in the routes): sessions are a signed cookie (the `ACCESS_SECRET` gate), uploads go straight to S3 with their state in the database, and shared chores (stale-upload cleanup, YouTube token refresh) take a short database lease so only one process does them at a time. Put a load balancer in front; no sticky sessions are needed. PostgreSQL is required for more than one process writing at a time (SQLite is for one machine).
+- **Same settings everywhere.** `DATABASE_URL`, `ACCESS_SECRET`, `YOUTUBE_TOKEN_ENCRYPTION_KEY`, `MEDIA_S3_*` and `AWS_*` must be identical on every app and worker.
+- **Clocks.** Keep all hosts on NTP: heartbeats and leases compare times written by one host with the clock of another.
+- **fffleet.** Renders and downloads can run on a fleet instead; one fffleet orchestrator schedules them, so this app does not need to coordinate fleet workers itself.
+- **Not covered.** Several fffleet orchestrators (high availability) and per-worker queues are not part of this app.
 
 ## Production Setup Checklist
 
@@ -201,7 +213,7 @@ Run several workers by scaling the `worker` service (`docker compose up -d --sca
 - PostgreSQL on dedicated database server (`schema.postgresql.prisma`)
 - Media storage: `MEDIA_STORAGE=s3` (no shared volume) or local disk on NFS/SMB shared by every app and worker instance
 - Several app instances behind a load balancer: the app keeps no state outside the database and the media store. Set `ACCESS_SECRET` (shared-secret login) or put your own authentication in front of it; the app has no per-user login
-- Several workers: jobs are claimed atomically, running jobs carry a heartbeat, and a worker that dies has its interrupted transcription taken over by another worker (other stale jobs are failed). Run `prisma db push` after upgrading (new `MediaJob.workerId` / `heartbeatAt` columns)
+- Several workers: jobs are claimed atomically, running jobs carry a heartbeat, and a worker that dies has its interrupted transcription taken over by another worker (other stale jobs are failed). Run `prisma db push` after upgrading (new `MediaJob.workerId` / `heartbeatAt` columns, and the `Lease` table)
 - Workers on dedicated machines; with S3 media each needs scratch disk for `MEDIA_ROOT` and the download cache
 
 ### Object Storage (S3)

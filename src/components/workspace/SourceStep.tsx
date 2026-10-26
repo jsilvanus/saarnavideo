@@ -1,5 +1,7 @@
 "use client";
 
+import FeedSourceActions from "@/components/FeedSourceActions";
+import ImportNotice from "@/components/ImportNotice";
 import { useT } from "@/i18n/I18nProvider";
 import { formatTime, sourceLabel } from "@/components/format";
 import TranscriptionEditor from "@/components/TranscriptionEditor";
@@ -11,12 +13,17 @@ import { UploadProgress } from "@/components/UploadProgress";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { ProjectTitle } from "./ProjectTitle";
+import { InlineError } from "./InlineError";
 
 export default function SourceStep() {
   const {
     selected,
     uploadFiles,
     setUploadFiles,
+    captionFile,
+    setCaptionFile,
+    captionLanguage,
+    setCaptionLanguage,
     uploadMode,
     setUploadMode,
     pendingFiles,
@@ -35,6 +42,7 @@ export default function SourceStep() {
     uploadPendingSource,
     deleteSource,
     addYoutube,
+    downloadSource,
     currentDefinition,
     saveVariables,
     saveTitle,
@@ -44,6 +52,7 @@ export default function SourceStep() {
   return (
     <div className="step-grid">
       <div className="step-main">
+        <ImportNotice projectId={selected.id} />
         <Panel
           title={t("src.panel.title")}
           text={t("src.panel.text")}
@@ -62,6 +71,18 @@ export default function SourceStep() {
               >
                 {uploadMode === "now" ? t("src.uploadSelected") : t("src.addPending")}
               </button>
+              <InlineError scope="upload" />
+            </label>
+            <label>
+              {t("src.captionsFile")}
+              <input type="file" accept=".vtt,text/vtt" onChange={(e) => setCaptionFile(e.target.files?.[0] ?? null)} />
+              <select value={captionLanguage} onChange={(e) => setCaptionLanguage(e.target.value)}>
+                <option value="fi">{t("tr.lang.fi")}</option>
+                <option value="en">{t("tr.lang.en")}</option>
+                <option value="sv">{t("tr.lang.sv")}</option>
+              </select>
+              <small className="muted">{t("src.captionsHint")}</small>
+              {captionFile && <small>{t("src.selectedFile", { name: captionFile.name })}</small>}
             </label>
             <label>
               {t("src.youtubeLink")}
@@ -69,6 +90,7 @@ export default function SourceStep() {
               <button onClick={() => void addYoutube()} disabled={busy || !youtubeUrl.trim()}>
                 {t("src.addYoutube")}
               </button>
+              <InlineError scope="youtube" />
             </label>
           </div>
           {uploadProgress !== null && (
@@ -119,11 +141,22 @@ export default function SourceStep() {
                     {pendingFiles[s.id] && <small>{t("src.selectedFile", { name: pendingFiles[s.id].name })}</small>}
                   </div>
                 )}
+                {s.type === "YOUTUBE" && !s.storagePath && (
+                  selected.jobs?.some(j => j.type === "DOWNLOAD" && j.sourceId === s.id && (j.status === "QUEUED" || j.status === "RUNNING")) ? (
+                    <small className="muted" style={{ display: "block", marginTop: 8 }}>{t("src.downloading")}</small>
+                  ) : (
+                    <button onClick={() => void downloadSource(s)} disabled={busy} style={{ marginTop: 8 }}>
+                      {t("src.download")}
+                    </button>
+                  )
+                )}
+                <FeedSourceActions source={s} />
                 {(s.type === "UPLOAD" || s.type === "YOUTUBE") && (
                   <button onClick={() => void deleteSource(s)} disabled={busy} style={{ marginTop: 8 }}>
                     {t("common.remove")}
                   </button>
                 )}
+                <InlineError scope={`source:${s.id}`} />
               </article>
             ))}
             {!selected.sources.length && <p className="muted">{t("src.none")}</p>}

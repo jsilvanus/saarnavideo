@@ -42,6 +42,13 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
           sizeBytes: item.sizeBytes,
           durationMs: item.durationMs,
           referenceDurationMs: item.referenceDurationMs,
+          feedRole: item.feedRole,
+          feedGroupId: item.feedGroupId,
+          feedLabel: item.feedLabel,
+          syncOffsetMs: item.syncOffsetMs,
+          origin: item.origin === null ? Prisma.JsonNull : item.origin,
+          keyParams: item.keyParams === null ? Prisma.JsonNull : item.keyParams,
+          chapters: item.chapters === null ? Prisma.JsonNull : item.chapters,
           projects: { connect: { id: project.id } },
         },
       });

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { sourceUploadFile, parseDurationMs, saveSourceFile } from "@/app/api/_lib/files";
 import { jsonError } from "@/app/api/_lib/http";
 import { uploadAuthRequired } from "@/app/api/_lib/upload-auth";
-import { extractYouTubeId } from "@/app/api/_lib/youtube";
+import { extractYouTubeId, fetchYouTubeTitle } from "@/app/api/_lib/youtube";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -25,8 +25,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (!youtubeUrl) return jsonError("YouTube URL is required", 400);
       const youtubeVideoId = extractYouTubeId(youtubeUrl);
       if (!youtubeVideoId) return jsonError("Unsupported YouTube URL", 400);
-      const source = await prisma.source.create({ data: { type: "YOUTUBE", status: "AVAILABLE", youtubeVideoId, youtubeUrl, projects: { connect: { id } } } });
-      return NextResponse.json({ id: source.id, type: source.type, status: source.status, youtubeVideoId, youtubeUrl }, { status: 201 });
+      // The video title names the source in every list; without it (offline, private video) the URL stays the label.
+      const originalName = (await fetchYouTubeTitle(youtubeUrl)) ?? null;
+      const source = await prisma.source.create({ data: { type: "YOUTUBE", status: "AVAILABLE", youtubeVideoId, youtubeUrl, originalName, projects: { connect: { id } } } });
+      return NextResponse.json({ id: source.id, type: source.type, status: source.status, youtubeVideoId, youtubeUrl, originalName }, { status: 201 });
     } catch {
       return jsonError("Invalid source", 400);
     }

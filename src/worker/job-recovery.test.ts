@@ -56,12 +56,21 @@ describe("job recovery", () => {
       data: { projectId, status: "QUEUED", type: "TRANSCRIBE", dependsOnJobId: dependency.id, priority: 1, parameters: { language: "fi", rangeStartSeconds: 0, rangeEndSeconds: 1 } },
     });
 
-    // Disable foreign key constraints, then set dependsOnJobId to a non-existent ID to simulate data corruption
-    await prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
-    try {
-      await prisma.$executeRawUnsafe(`UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}';`);
-    } finally {
-      await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+    // Set dependsOnJobId to a non-existent ID to simulate data corruption, with the foreign key check off.
+    // SQLite: PRAGMA. PostgreSQL (CI): SET LOCAL inside one transaction, so the pooled connection is the same for both statements.
+    const corrupt = `UPDATE "MediaJob" SET "dependsOnJobId" = 'missing-dependency-id' WHERE id = '${dependent.id}';`;
+    if ((process.env.DATABASE_URL ?? "").startsWith("postgres")) {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica;");
+        await tx.$executeRawUnsafe(corrupt);
+      });
+    } else {
+      await prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
+      try {
+        await prisma.$executeRawUnsafe(corrupt);
+      } finally {
+        await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+      }
     }
     
     // After a second query, this job should fail because the dependency doesn't exist
@@ -70,5 +79,47 @@ describe("job recovery", () => {
     const failed = await reload(dependent.id);
     expect(failed.status).toBe("FAILED");
     expect(failed.error).toBe("Dependency job not found");
+  });
+});
+
+// Claiming lives in this file because the tests share one database file with the other DB tests: a claim in another
+// file would take jobs queued here, so everything that claims runs sequentially.
+const queue = (type: string, count: number) => Promise.all(Array.from({ length: count }, (_, index) => prisma.mediaJob.create({ data: { projectId, type: type as never, createdAt: new Date(Date.now() + index) } })));
+const count = (type: string, status: string) => prisma.mediaJob.count({ where: { projectId, type: type as never, status: status as never } });
+
+describe("claimJob with several workers", () => {
+  it("never hands the same job to two workers", async () => {
+    await queue("VIDEO", 6);
+    const claims = await Promise.all(Array.from({ length: 6 }, (_, index) => claimJob({ workerId: `w${index}`, limits: {} })));
+    const ids = claims.filter(Boolean).map(job => job!.id);
+    expect(ids.length).toBe(6);
+    expect(new Set(ids).size).toBe(6);
+  });
+
+  it("keeps a limited type within its limit even when workers race", async () => {
+    await queue("TRANSCRIBE", 5);
+    const claims = await Promise.all(Array.from({ length: 5 }, (_, index) => claimJob({ workerId: `w${index}`, limits: { TRANSCRIBE: 2 } })));
+    expect(claims.filter(Boolean).length).toBeLessThanOrEqual(2);
+    expect(await count("TRANSCRIBE", "RUNNING")).toBeLessThanOrEqual(2);
+    expect(await count("TRANSCRIBE", "RUNNING") + await count("TRANSCRIBE", "QUEUED")).toBe(5);
+  });
+
+  it("claims other types while a limited type is full", async () => {
+    await queue("TRANSCRIBE", 3);
+    await queue("VIDEO", 1);
+    const limits = { TRANSCRIBE: 1 };
+    expect((await claimJob({ workerId: "w1", limits }))?.type).toBe("TRANSCRIBE");
+    expect((await claimJob({ workerId: "w2", limits }))?.type).toBe("VIDEO");
+    expect(await claimJob({ workerId: "w3", limits })).toBeNull();
+    expect(await count("TRANSCRIBE", "QUEUED")).toBe(2);
+  });
+
+  it("frees a place when a limited job finishes", async () => {
+    await queue("TRANSCRIBE", 2);
+    const limits = { TRANSCRIBE: 1 };
+    const first = await claimJob({ workerId: "w1", limits });
+    expect(await claimJob({ workerId: "w2", limits })).toBeNull();
+    await prisma.mediaJob.update({ where: { id: first!.id }, data: { status: "COMPLETED" } });
+    expect(await claimJob({ workerId: "w2", limits })).not.toBeNull();
   });
 });

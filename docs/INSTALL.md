@@ -13,7 +13,7 @@ Every setting is an environment variable; the full list is in [Environment refer
 | Part | What it is | Needs |
 |---|---|---|
 | **App** | Next.js web UI and HTTP API (`npm run dev` / `npm start`) | Node.js 22+, the database |
-| **Worker** | Takes queued jobs from the database: downloads, renders, thumbnails, podcasts, transcriptions, publishing (`npm run worker`) | The database, the media store, FFmpeg + ffprobe (+ yt-dlp for YouTube sources) unless rendering and downloading are sent to an fffleet fleet |
+| **Worker** | Takes queued jobs from the database: downloads, renders, thumbnails, podcasts, transcriptions, publishing (`npm run worker`) | The database, the media store, FFmpeg + ffprobe (+ yt-dlp for YouTube sources) unless rendering, downloading and audio probing are sent to an fffleet fleet |
 | **Database** | SQLite (development) or PostgreSQL 17+ (production). It is also the job queue | |
 | **Media store** | Where sources, outputs and the asset library live: a folder (`MEDIA_ROOT`) or an S3 bucket | |
 | **Speech-to-text** (optional) | The [liturgos-auditor](https://github.com/jsilvanus/liturgos-auditor) service, for transcriptions and captions | |
@@ -23,7 +23,7 @@ App and worker never talk to each other over HTTP: they share the database and t
 
 ## 1. Development on one machine
 
-Requirements: Node.js 22 or newer, FFmpeg and ffprobe (with `libass` and a default font), and yt-dlp if you want YouTube links.
+Requirements: Node.js 22 or newer, FFmpeg and ffprobe (with `libass` and a default font) on the worker, and yt-dlp if you want YouTube links. The app server needs ffprobe only for audio uploads without a fleet; with `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` set it probes on the fleet (see INTEGRATIONS.md).
 
 ```bash
 git clone https://github.com/jsilvanus/saarnavideo.git
@@ -88,7 +88,7 @@ Set one long random string on the **app**:
 ACCESS_SECRET="$(openssl rand -base64 32)"
 ```
 
-Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication.
+Every page and `/api/*` call then needs it. Browsers are sent to `/login` once and keep a 30-day cookie; scripts send `x-access-secret: <secret>` or `Authorization: Bearer <secret>`. Changing the secret signs everybody out. It is one shared password, not per-person accounts. Unset = no gate, which is fine on your own laptop and nowhere else. In production, direct source uploads answer 503 until `ACCESS_SECRET` is set because there is no other built-in authentication. The upload screen then shows "Uploads are off on this server: the operator must set ACCESS_SECRET" instead of the raw error.
 
 ## Environment reference
 
@@ -103,6 +103,8 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | `ACCESS_SECRET` | unset (no gate) | app | Shared-secret login, see above |
 | `YOUTUBE_TOKEN_ENCRYPTION_KEY` | | app, worker | 32-byte hex key; encrypts YouTube tokens and stored yt-dlp cookies |
 | `CONNECTOR_ALLOW` / `CONNECTOR_DENY` | | app | Hosts the API connectors (Settings) may or may not call. Private and loopback addresses are blocked unless allowed; deny wins |
+| `IMPORT_ALLOW` / `IMPORT_DENY` | | app, worker | Added to the connector lists for fetching an LCYT import (manifest and files). The `deploy-media` stack must allow LCYT's host name here or in `CONNECTOR_ALLOW` |
+| `LCYT_IMPORT_TEMPLATE` | `basic` | app | Template key for projects made by an LCYT import (`basic` = blank, sized like the recording) |
 
 ### Media and limits
 
@@ -111,11 +113,13 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | `MEDIA_ROOT` | `/data/media` (`.env.example` sets `./data/media`) | app, worker | Folder for media; with S3 only scratch space on the worker |
 | `MEDIA_STORAGE` | `local` | app, worker | `local` or `s3` |
 | `MEDIA_S3_BUCKET`, `MEDIA_S3_PREFIX`, `MEDIA_S3_ENDPOINT` | | app, worker | Bucket, key prefix, endpoint for S3-compatible stores |
+| `MEDIA_S3_ENDPOINT_PUBLIC` | `MEDIA_S3_ENDPOINT` | app | Endpoint the **browser** can reach; presigned upload URLs are signed for it. Set it when `MEDIA_S3_ENDPOINT` is an internal address |
+| `S3_MULTIPART_THRESHOLD_BYTES`, `S3_MULTIPART_CHUNK_BYTES` | 8 MB, 5 MB (minimum 5 MB) | app | Direct uploads above the threshold use S3 multipart in chunks of this size |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | | app, worker | S3 credentials (also used for fleet staging) |
 | `MEDIA_CACHE_MAX_BYTES` | 20 GB | worker | Size of the worker's cache of downloaded S3 files |
 | `MAX_SOURCE_SIZE_BYTES` | 50 GB | worker | Largest source |
 | `MAX_OUTPUT_SIZE_BYTES` | 100 GB | worker | Largest output |
-| `MAX_UPLOAD_BYTES` | 5 GB (`.env.example` sets 50 GB) | app | Largest upload |
+| `MAX_UPLOAD_BYTES` | 5 GB (`.env.example` sets 50 GB) | app | Largest upload (direct S3 uploads: the declared size) |
 | `UPLOAD_STALE_AFTER_MS` | 86400000 (24 h) | app | Abort/remove stale pending direct-upload sessions and their partial S3 objects |
 | `MAX_ASSET_SIZE_BYTES` | 10 MB | app | Largest library image |
 | `MAX_AUDIO_ASSET_SIZE_BYTES` | 200 MB | app | Largest library audio file |
@@ -126,7 +130,8 @@ Defaults are what the code uses when the variable is unset. "App" and "worker" s
 | Variable | Default | Meaning |
 |---|---|---|
 | `WORKER_POLL_MS` | 750 | How often the worker looks for queued jobs |
-| `MAX_CONCURRENT_JOBS` | 1 (4 when `RENDER_EXECUTOR=fffleet`) | Jobs run side by side. Publications always have their own lane |
+| `MAX_CONCURRENT_JOBS` | 1 (4 when `RENDER_EXECUTOR=fffleet`) | Jobs run side by side in one worker process. Publications always have their own lane |
+| `JOB_LIMITS` | unset (no limits) | worker | Caps per job type across **all** workers, for example `TRANSCRIBE=2,VIDEO=4`. Types: `DOWNLOAD`, `THUMBNAIL`, `PREVIEW`, `VIDEO`, `PODCAST`, `TRANSCRIBE`. A typo stops the worker at startup |
 | `REQUEST_TIMEOUT_SECONDS` | 3600 | Part of the worker's resource limits |
 | `FFMPEG_PATH`, `YTDLP_PATH` | `ffmpeg`, `yt-dlp` | Binaries |
 
@@ -144,6 +149,7 @@ See [INTEGRATIONS.md](INTEGRATIONS.md#fffleet-render-and-download-on-workers).
 | `FFFLEET_S3_BUCKET`, `FFFLEET_S3_PREFIX` | `saarnavideo` (prefix) | Staging bucket for files the fleet reads and writes |
 | `FFFLEET_S3_ENDPOINT` | | Endpoint for S3-compatible stores |
 | `FFFLEET_CACHE_DIR`, `FFFLEET_CACHE_MAX_SIZE` | | In-process fallback only: keep staged inputs between jobs |
+| `FLEET_STRIP` | on | `0` hides the fleet strip in the job panel (the panel itself stays). The strip asks the orchestrator (`FFFLEET_URL`, same login as above; an admin-scoped login also shows workers and pools) and, with `AUDITOR_STT_URL` and `AUDITOR_STT_API_KEY`, the speech-to-text queue. Set `TZ` on the worker to show estimated start times of queued transcriptions in local time |
 | `YTDLP_COOKIES_FILE` | | Fallback Netscape cookie file, used when no cookies are stored in Settings |
 
 ### Transcription

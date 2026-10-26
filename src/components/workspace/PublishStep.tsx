@@ -5,7 +5,8 @@ import PodcastPanel from "@/components/PodcastPanel";
 import PublishPanel from "@/components/PublishPanel";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
-import { jobStatusLabel, outputLabel } from "./helpers";
+import { jobStatusLabel } from "./helpers";
+import OutputList from "./OutputList";
 import type { CaptionMode, Definition } from "./types";
 
 export default function PublishStep() {
@@ -130,17 +131,7 @@ export default function PublishStep() {
           </div>
         </Panel>
         <Panel title={t("pub.files.title")}>
-          {selected.outputs?.length ? (
-            <div className="downloads">
-              {selected.outputs.map((o) => (
-                <a key={o.id} href={`/api/outputs/${o.id}`}>
-                  {outputLabel(o, t)} ↓
-                </a>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">{t("pub.files.none")}</p>
-          )}
+          <OutputList outputs={selected.outputs ?? []} onChanged={() => openProject(selected.id)} />
         </Panel>
       </div>
       <aside className="step-aside">

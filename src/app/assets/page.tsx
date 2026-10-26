@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { errorMessage, jsonInit, requestJson, requestJsonWithProgress } from "@/components/api";
 import { UploadProgress } from "@/components/UploadProgress";
+import { AudioCapture } from "@/components/AudioCapture";
 import { formatTime } from "@/components/format";
 import { useT } from "@/i18n/I18nProvider";
 import { DragEvent, useEffect, useMemo, useState } from "react";
@@ -12,7 +13,7 @@ type DragItem = { kind:"asset"|"folder"; id:string };
 function treePath(folders:Folder[], id:string|null):Folder[]{ const out:Folder[]=[]; let current=id; while(current){const f=folders.find(x=>x.id===current);if(!f)break;out.unshift(f);current=f.parentId} return out; }
 export default function AssetLibraryPage(){
  const t=useT();
- const [assets,setAssets]=useState<Asset[]>([]),[folders,setFolders]=useState<Folder[]>([]),[currentId,setCurrentId]=useState<string|null>(null),[dragOver,setDragOver]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState(""),[uploadOpen,setUploadOpen]=useState(false),[newFolderOpen,setNewFolderOpen]=useState(false),[newFolderName,setNewFolderName]=useState("");
+ const [assets,setAssets]=useState<Asset[]>([]),[folders,setFolders]=useState<Folder[]>([]),[currentId,setCurrentId]=useState<string|null>(null),[dragOver,setDragOver]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState(""),[uploadOpen,setUploadOpen]=useState(false),[audioOpen,setAudioOpen]=useState(false),[newFolderOpen,setNewFolderOpen]=useState(false),[newFolderName,setNewFolderName]=useState("");
  const [file,setFile]=useState<File|null>(null),[assetKey,setAssetKey]=useState("");
  const [uploadProgress,setUploadProgress]=useState<number|null>(null);
  const [renaming,setRenaming]=useState<{asset:Asset;value:string;error:string}|null>(null),[deleting,setDeleting]=useState<{asset:Asset;conflict:string}|null>(null);
@@ -33,8 +34,9 @@ export default function AssetLibraryPage(){
  async function upload(){if(!file||!assetKey.trim())return;setBusy(true);setUploadProgress(0);setError("");try{const form=new FormData();form.set("file",file);form.set("assetKey",assetKey.trim());if(currentId)form.set("folderId",currentId);const body=await requestJsonWithProgress<{assetKey:string;requestedKey?:string;reused?:boolean}>('/api/assets',{method:"POST",body:form},t("assets.uploadFailed"),(value)=>setUploadProgress(value));setFile(null);setAssetKey("");setUploadProgress(null);setUploadOpen(false);await load();setMessage(body.requestedKey?t("assets.sameImage",{name:body.assetKey,requested:body.requestedKey}):t("assets.added"))}catch(e){setUploadProgress(null);setError(e instanceof Error?e.message:t("assets.uploadFailed"))}finally{setBusy(false)}}
  const title=currentId?(folders.find(f=>f.id===currentId)?.name??t("assets.folder")):t("assets.pageTitle");
  return <main style={{maxWidth:1200,margin:"0 auto",padding:24,fontFamily:"system-ui, sans-serif"}}>
-  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,marginBottom:16}}><div><Link href="/" style={{textDecoration:"none"}}>{t("assets.back")}</Link><h1 style={{margin:"8px 0 0"}}>{t("assets.pageTitle")}</h1></div><div style={{display:"flex",gap:8}}><button onClick={()=>setNewFolderOpen(true)}>{t("assets.newFolder")}</button><button onClick={()=>setUploadOpen(true)}>{t("assets.add")}</button></div></div>
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,marginBottom:16}}><div><Link href="/" style={{textDecoration:"none"}}>{t("assets.back")}</Link><h1 style={{margin:"8px 0 0"}}>{t("assets.pageTitle")}</h1></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>setNewFolderOpen(true)}>{t("assets.newFolder")}</button><button aria-expanded={audioOpen} onClick={()=>setAudioOpen(o=>!o)}>{t("assets.addAudio")}</button><button onClick={()=>setUploadOpen(true)}>{t("assets.add")}</button></div></div>
   <div style={{fontSize:14,color:"#666",marginBottom:16}}>{t("assets.intro")}</div>
+  {audioOpen&&<section data-testid="asset-audio" style={{marginBottom:16}}><AudioCapture endpoint="/api/assets" folderId={currentId} onSaved={async()=>{await load();setMessage(t("assets.added"))}}/></section>}
   {error&&<div style={{padding:10,background:"#fee",marginBottom:10}}>{error}</div>}{message&&<div style={{padding:10,background:"#efe",marginBottom:10}}>{message}</div>}
   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:14}}><button onClick={()=>setCurrentId(null)} onDragOver={e=>allowDrop(e,"root")} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,null)}} style={{fontWeight:currentId?400:700,outline:dragOver==="root"?"2px solid #1976d2":undefined}}>{t("assets.root")}</button>{path.map(f=><span key={f.id}> / <button onClick={()=>setCurrentId(f.id)} onDragOver={e=>allowDrop(e,f.id)} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,f.id)}}>{f.name}</button></span>)}{currentId&&<button onClick={deleteFolder} style={{marginLeft:"auto"}}>{t("assets.deleteFolder")}</button>}</div>
   <section onDragOver={e=>allowDrop(e,currentId??"root")} onDrop={e=>{e.preventDefault();const i=parseDrag(e);if(i)void moveItem(i,currentId)}} style={{minHeight:420,padding:16,border:"2px dashed #bbb",borderRadius:10,background:dragOver===(currentId??"root")?"#f5f9ff":"transparent"}}>

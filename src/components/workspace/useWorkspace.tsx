@@ -4,12 +4,14 @@ import { useT } from "@/i18n/I18nProvider";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { parseLayers } from "@/components/GraphicsEditor";
 import { findAssetUsage } from "@/domain/asset-usage";
-import { errorMessage, jsonInit, requestJson, requestJsonWithProgress, uploadWithProgress } from "@/components/api";
+import { HttpStatusError, errorMessage, jsonInit, requestJson, requestJsonWithProgress, uploadWithProgress } from "@/components/api";
 import { sourceLabel } from "@/components/format";
 import type { ProjectDefinition, TimelineItem } from "@/domain/project";
 import { timelineDuration } from "@/domain/timeline";
 import { selectionFromValue } from "@/components/TemplatePicker";
 import { addSourceSection } from "@/domain/templates";
+import { readChapters, replaceWithChapters } from "@/domain/youtube-chapters";
+import { cutOutFeedOverlays, feedDeltaSeconds, moveToSource, withFeedOverlays, withoutFeedOverlays, type FeedSource } from "@/domain/feed-group";
 import { type ProjectVariable } from "@/domain/variables";
 import DurationNotice from "@/components/DurationNotice";
 import type { Reframe } from "@/domain/reframe";
@@ -115,6 +117,8 @@ export function useWorkspaceState() {
     [title, setTitle] = useState(""),
     [templateValue, setTemplateValue] = useState("builtin:sermon"),
     [uploadFiles, setUploadFiles] = useState<File[]>([]),
+    [captionFile, setCaptionFile] = useState<File | null>(null),
+    [captionLanguage, setCaptionLanguage] = useState("fi"),
     [uploadMode, setUploadMode] = useState<"now" | "later">("now"),
     [pendingFiles, setPendingFiles] = useState<Record<string, File>>({}),
     [youtubeUrl, setYoutubeUrl] = useState("");
@@ -138,13 +142,28 @@ export function useWorkspaceState() {
     [uploadProgress, setUploadProgress] = useState<number | null>(null),
     [uploadSession, setUploadSession] = useState<UploadSessionState | null>(null),
     [uploadAbort, setUploadAbort] = useState<(() => void) | null>(null);
+  // Errors shown next to the control that caused them (see InlineError), keyed by scope.
+  const [scopedErrors, setScopedErrors] = useState<Record<string, string>>({});
 
-  async function withBusy(fallback: string, fn: () => Promise<void>, setFlag: (busy: boolean) => void = setBusy) {
+  function setScopedError(scope: string, message: string) {
+    setScopedErrors((current) => ({ ...current, [scope]: message }));
+  }
+
+  // scope: when set, a failure is shown by <InlineError scope={scope} /> instead of the page-bottom banner.
+  async function withBusy(
+    fallback: string,
+    fn: () => Promise<void>,
+    setFlag: (busy: boolean) => void = setBusy,
+    scope?: string,
+  ) {
+    if (scope) setScopedError(scope, "");
     setFlag(true);
     try {
       await fn();
     } catch (e) {
-      setError(errorMessage(e, fallback));
+      const message = errorMessage(e, fallback);
+      if (scope) setScopedError(scope, message);
+      else setError(message);
     } finally {
       setFlag(false);
     }
@@ -286,6 +305,15 @@ export function useWorkspaceState() {
     });
   }
   async function requestUploadSession(projectId: string, file: File, sourceId?: string) {
+    try {
+      return await requestUploadSessionRaw(projectId, file, sourceId);
+    } catch (error) {
+      // 503 from the presigned-url route: ACCESS_SECRET is not set on a production server, so direct uploads are off.
+      if (error instanceof HttpStatusError && error.status === 503) throw new Error(t("ws.uploadAccessSecret"));
+      throw error;
+    }
+  }
+  async function requestUploadSessionRaw(projectId: string, file: File, sourceId?: string) {
     return requestJson<{
       uploadUrl: string;
       sourceId: string;
@@ -434,7 +462,7 @@ export function useWorkspaceState() {
     const finalized = await finalizeUploadedSource(projectId, session.sourceId, file);
     setUploadAbort(null);
     setUploadSession(null);
-    return finalized;
+    return { ...finalized, sourceId: session.sourceId };
   }
 
   async function pauseUpload() {
@@ -455,20 +483,32 @@ export function useWorkspaceState() {
       const result = await runSourceUpload(selected.id, match, uploadSession.sourceId);
       if (!result) return;
       await openProject(selected.id);
-    });
+    }, setBusy, "upload");
+  }
+
+  /** Stores a VTT file as the transcript of an uploaded source (the same import as Lähde → Transcriptions). */
+  async function importUploadedCaptions(sourceId: string, file: File, language: string) {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("language", language);
+    await requestJson(`/api/sources/${sourceId}/transcription-runs/upload`, { method: "POST", body: form }, t("src.captionFailed"));
   }
 
   async function addUploads() {
     if (!selected || !uploadFiles.length) return;
+    // A caption file belongs to one video, so it is only accepted with a single upload.
     await withBusy(t("ws.uploadFailed"), async () => {
+      if (captionFile && uploadFiles.length !== 1) throw new Error(t("src.captionNeedsOneVideo"));
       for (const file of uploadFiles) {
         const result = await runSourceUpload(selected.id, file);
         if (!result) return;
+        if (captionFile) await importUploadedCaptions(result.sourceId, captionFile, captionLanguage);
       }
+      setCaptionFile(null);
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.sourcesUploaded"));
-    });
+    }, setBusy, "upload");
   }
   async function addDeferredUploads() {
     if (!selected || !uploadFiles.length) return;
@@ -484,15 +524,17 @@ export function useWorkspaceState() {
       setUploadFiles([]);
       await openProject(selected.id);
       setMessage(t("ws.pendingAdded"));
-    });
+    }, setBusy, "upload");
   }
   async function uploadPendingSource(source: Source) {
     if (!selected) return false;
+    const scope = `source:${source.id}`;
     const file = pendingFiles[source.id];
     if (!file) {
-      setError(t("ws.chooseLocalFile", { name: source.originalName || source.id }));
+      setScopedError(scope, t("ws.chooseLocalFile", { name: source.originalName || source.id }));
       return false;
     }
+    setScopedError(scope, "");
 
     try {
       const result = await runSourceUpload(selected.id, file, source.id);
@@ -515,7 +557,7 @@ export function useWorkspaceState() {
       }
       return true;
     } catch (e) {
-      setError(errorMessage(e, t("ws.uploadFailed")));
+      setScopedError(scope, errorMessage(e, t("ws.uploadFailed")));
       setUploadSession(null);
       setUploadAbort(null);
       return false;
@@ -534,7 +576,7 @@ export function useWorkspaceState() {
       });
       await openProject(selected.id);
       setMessage(t("ws.deleted"));
-    });
+    }, setBusy, `source:${source.id}`);
   }
   async function addYoutube() {
     if (!selected || !youtubeUrl.trim()) return;
@@ -543,7 +585,16 @@ export function useWorkspaceState() {
       setYoutubeUrl("");
       await openProject(selected.id);
       setMessage(t("ws.youtubeAdded"));
-    });
+    }, setBusy, "youtube");
+  }
+  /** Queues the download of a YouTube source's video now, instead of waiting for a render or transcription to need it. */
+  async function downloadSource(source: Source) {
+    if (!selected) return;
+    await withBusy(t("ws.downloadFailed"), async () => {
+      await requestJson(`/api/projects/${selected.id}/source/${source.id}/download`, { method: "POST" }, t("ws.downloadFailed"));
+      await openProject(selected.id);
+      setMessage(t("ws.downloadQueued"));
+    }, setBusy, `source:${source.id}`);
   }
   function currentDefinition(): Definition {
     return (
@@ -588,6 +639,15 @@ export function useWorkspaceState() {
     });
     await saveDefinition(next as unknown as Definition);
     setMessage(t("ws.sectionSaved"));
+  }
+  /** Replaces the source's sequences (sections with their clips) by the YouTube chapters found in the downloaded file. */
+  async function useYouTubeChapters(sourceId: string) {
+    const source = selected?.sources.find((x) => x.id === sourceId);
+    const chapters = readChapters(source?.chapters);
+    if (!selected || !source || !chapters.length) return;
+    const next = replaceWithChapters(currentDefinition() as unknown as ProjectDefinition, sourceId, chapters, () => crypto.randomUUID(), source.durationMs ? source.durationMs / 1000 : undefined);
+    await saveDefinition(next as unknown as Definition);
+    setMessage(t("ws.chaptersApplied", { count: chapters.length }));
   }
   async function removeSegment(id: string) {
     const def = currentDefinition(),
@@ -639,6 +699,18 @@ export function useWorkspaceState() {
       grew = false;
       for (const x of def.sections ?? []) if (x.parentId && ids.has(x.parentId) && !ids.has(x.id)) (ids.add(x.id), (grew = true));
     }
+    // Two recordings of one imported stream do not start at the same moment: the section's times shift by their offset.
+    const feed = (id: string): FeedSource | undefined => {
+      const source = selected?.sources.find((x) => x.id === id);
+      return source ? { id: source.id, feedRole: source.feedRole ?? null, feedGroupId: source.feedGroupId ?? null, syncOffsetMs: source.syncOffsetMs ?? null } : undefined;
+    };
+    const delta = section.sourceId ? feedDeltaSeconds(feed(section.sourceId), feed(sourceId)) : null;
+    if (delta !== null && section.sourceId) {
+      const toDuration = selected?.sources.find((x) => x.id === sourceId)?.durationMs;
+      await saveDefinition(moveToSource(def as unknown as ProjectDefinition, section.sourceId, sourceId, delta, { sectionIds: ids, toDurationSeconds: toDuration ? toDuration / 1000 : undefined }) as unknown as Definition);
+      setMessage(t("ws.sectionSourceChanged", { label: section.label, source: sourceNames[sourceId] ?? sourceId }));
+      return;
+    }
     const moved = (def.sections ?? []).filter((x) => ids.has(x.id));
     const cutFrom = (i: Item) =>
       i.type === "source-clip" &&
@@ -650,6 +722,46 @@ export function useWorkspaceState() {
       composition: { ...def.composition, items: def.composition.items.map((i) => (cutFrom(i) ? { ...i, sourceId } : i)) },
     });
     setMessage(t("ws.sectionSourceChanged", { label: section.label, source: sourceNames[sourceId] ?? sourceId }));
+  }
+  const feedOf = (id: string): FeedSource | undefined => {
+    const source = selected?.sources.find((x) => x.id === id);
+    return source ? { id: source.id, feedRole: source.feedRole ?? null, feedGroupId: source.feedGroupId ?? null, syncOffsetMs: source.syncOffsetMs ?? null } : undefined;
+  };
+  /** Cuts every clip from another recording of the same imported stream (clean or program), keeping the sections on the same moments. */
+  async function switchFeed(toSourceId: string) {
+    const def = currentDefinition() as unknown as ProjectDefinition;
+    const to = selected?.sources.find((x) => x.id === toSourceId);
+    if (!to?.feedGroupId) return;
+    const siblings = new Set((selected?.sources ?? []).filter((x) => x.feedGroupId === to.feedGroupId && x.feedRole !== "DSK" && x.id !== toSourceId).map((x) => x.id));
+    let next = def;
+    for (const fromId of siblings) {
+      const delta = feedDeltaSeconds(feedOf(fromId), feedOf(toSourceId));
+      if (delta !== null) next = moveToSource(next, fromId, toSourceId, delta, { toDurationSeconds: to.durationMs ? to.durationMs / 1000 : undefined });
+    }
+    // The program feed already has the graphics in its picture; laying the graphics recording over it would show them twice.
+    if (to.feedRole === "PROGRAM") for (const dsk of (selected?.sources ?? []).filter((x) => x.feedGroupId === to.feedGroupId && x.feedRole === "DSK")) next = withoutFeedOverlays(next, dsk.id);
+    await saveDefinition(next as unknown as Definition);
+    setMessage(t("ws.feedSwitched", { feed: sourceNames[toSourceId] ?? toSourceId }));
+  }
+  /** Lays the graphics recording over the clean picture wherever the timeline cuts from the clean recording. */
+  async function addFeedGraphics(dskSourceId: string) {
+    const dsk = selected?.sources.find((x) => x.id === dskSourceId);
+    const clean = selected?.sources.find((x) => x.feedGroupId === dsk?.feedGroupId && x.feedRole === "CLEAN");
+    if (!dsk || !clean) { setError(t("ws.feedNoClean")); return; }
+    const def = currentDefinition() as unknown as ProjectDefinition;
+    if (!def.composition.items.some((item) => item.type === "source-clip" && item.sourceId === clean.id)) { setError(t("ws.feedUseClean")); return; }
+    const next = withFeedOverlays(def, feedOf(clean.id)!, feedOf(dsk.id)!, dsk.durationMs ? dsk.durationMs / 1000 : undefined);
+    await saveDefinition(next as unknown as Definition);
+    setMessage(t("ws.feedGraphicsAdded"));
+  }
+  async function removeFeedGraphics(dskSourceId: string) {
+    await saveDefinition(withoutFeedOverlays(currentDefinition() as unknown as ProjectDefinition, dskSourceId) as unknown as Definition);
+    setMessage(t("ws.feedGraphicsRemoved"));
+  }
+  async function cutOutFeedGraphics(dskSourceId: string, from: number, to: number) {
+    if (!(to > from)) { setError(t("ws.endAfterStart")); return; }
+    await saveDefinition(cutOutFeedOverlays(currentDefinition() as unknown as ProjectDefinition, dskSourceId, from, to) as unknown as Definition);
+    setMessage(t("ws.feedGraphicsCut"));
   }
   async function saveOutput(patch: Record<string, unknown>) {
     const def = currentDefinition(),
@@ -793,6 +905,14 @@ export function useWorkspaceState() {
     const layers = parseLayers<Graphic["layers"][number]>(item.data?.layers) ?? graphic.layers;
     await saveDefinition({ ...def, graphics: (def.graphics ?? []).map((g) => (g.id === id ? { ...g, layers } : g)) });
   }
+  async function renameGraphic(id: string, name: string) {
+    const def = currentDefinition();
+    const graphic = def.graphics?.find((g) => g.id === id);
+    const next = name.trim();
+    if (!graphic || !next || next === graphic.name) return;
+    await saveDefinition({ ...def, graphics: (def.graphics ?? []).map((g) => (g.id === id ? { ...g, name: next } : g)) });
+    setMessage(t("ws.graphicRenamed"));
+  }
   async function deleteGraphic(id: string) {
     const def = currentDefinition();
     if ((def.composition.items ?? []).some((i) => i.graphicId === id)) {
@@ -861,7 +981,7 @@ export function useWorkspaceState() {
         ),
       );
       await openProject(selected.id);
-    });
+    }, setBusy, "header");
   }
   async function previewRender() {
     if (!selected) return;
@@ -876,6 +996,7 @@ export function useWorkspaceState() {
         await openProject(selected.id);
       },
       setPreviewBusy,
+      "header",
     );
   }
   const sourceNames = useMemo(() => Object.fromEntries((selected?.sources ?? []).map((s) => [s.id, sourceLabel(s)])), [selected]);
@@ -888,7 +1009,7 @@ export function useWorkspaceState() {
             template: "rich",
             mode: "standalone" as const,
             durationSeconds: 5,
-            data: { layers: JSON.stringify(selectedGraphic.layers) },
+            data: { layers: JSON.stringify(selectedGraphic.layers), backgroundColor: selectedGraphic.backgroundColor },
           }
         : undefined,
     [selectedGraphic],
@@ -913,6 +1034,10 @@ export function useWorkspaceState() {
     setTemplateValue,
     uploadFiles,
     setUploadFiles,
+    captionFile,
+    setCaptionFile,
+    captionLanguage,
+    setCaptionLanguage,
     uploadMode,
     setUploadMode,
     pendingFiles,
@@ -958,6 +1083,8 @@ export function useWorkspaceState() {
     setConfirmDeleteGraphicId,
     previewBusy,
     setPreviewBusy,
+    scopedErrors,
+    setScopedError,
     withBusy,
     refreshProjects,
     refreshPublications,
@@ -971,14 +1098,20 @@ export function useWorkspaceState() {
     uploadPendingSource,
     deleteSource,
     addYoutube,
+    downloadSource,
     currentDefinition,
     saveDefinition,
     addSegment,
+    useYouTubeChapters,
     removeSegment,
     saveSections,
     saveVariables,
     saveTitle,
     changeSectionSource,
+    switchFeed,
+    addFeedGraphics,
+    removeFeedGraphics,
+    cutOutFeedGraphics,
     saveOutput,
     saveSectionReframe,
     durationNotice,
@@ -993,6 +1126,7 @@ export function useWorkspaceState() {
     createCaptionStyle,
     duplicateGraphic,
     updateGraphic,
+    renameGraphic,
     deleteGraphic,
     stopJob,
     uploadPendingSources,

@@ -1,0 +1,23 @@
+.frame {
+  position: absolute;
+  overflow: visible;
+}
+/* Dims everything outside the output frame (a huge shadow, clipped by the stage) and draws the red border. */
+.dim {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: 0 0 0 99999px rgba(2, 6, 23, 0.62);
+  outline: calc(3px * var(--ge-inv, 1)) solid #ef4444;
+  outline-offset: 0;
+}
+.label {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  color: #fca5a5;
+  font-size: calc(13px * var(--ge-inv, 1));
+  pointer-events: none;
+  white-space: nowrap;
+}

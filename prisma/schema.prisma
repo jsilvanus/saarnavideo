@@ -11,6 +11,19 @@ enum SourceType {
   UPLOAD
   YOUTUBE
 }
+/// Role of a source inside a feed group (a finished live stream imported as several recordings).
+enum FeedRole {
+  CLEAN
+  PROGRAM
+  DSK
+  ISO // one camera input of a switcher recording (ATEM), see docs/plans/atem-iso-import.md
+}
+enum ImportStatus {
+  PENDING
+  DOWNLOADING
+  READY
+  FAILED
+}
 enum SourceStatus {
   PENDING
   AVAILABLE
@@ -29,6 +42,7 @@ enum MediaJobType {
   VIDEO
   PODCAST
   TRANSCRIBE
+  IMPORT
 }
 enum MediaJobStatus {
   QUEUED
@@ -107,6 +121,13 @@ model Source {
   durationMs Int?
   referenceDurationMs Int?
   uploadSession Json?
+  feedRole FeedRole? // set on sources made by an import of separate recordings (clean, program, dsk)
+  feedGroupId String? // shared by the sources of one import
+  feedLabel String? // free name of the feed ("Cam 1"), for ISO feeds
+  syncOffsetMs Int? // where this file's t=0 lies on the clean feed's timeline
+  origin Json? // { system, instance, broadcastId, videoId, groupId, manifestVersion }
+  keyParams Json? // DSK feed: { color, similarity, blend } or { hasAlpha: true }
+  chapters Json? // YouTube chapters read from the downloaded file: [{ startSeconds, endSeconds, title }]
   createdAt DateTime @default(now())
   expiresAt DateTime? // legacy: unused, media is persistent
   projects Project[]
@@ -161,6 +182,7 @@ model Output {
   storagePath String
   mimeType String
   language String?
+  label String? // a name the user gave the file (download name); null = the default name
   sizeBytes BigInt?
   createdAt DateTime @default(now())
   expiresAt DateTime? // legacy: unused, media is persistent
@@ -205,6 +227,13 @@ model YouTubeConnection {
   scope String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Short-lived "only one process does this" locks (see src/lib/lease.ts). Rows are tiny and expire by themselves.
+model Lease {
+  name String @id
+  owner String
+  expiresAt DateTime
 }
 
 /// yt-dlp cookies for YouTube downloads (Netscape format), AES-256-GCM encrypted; singleton row. Never returned by the API.
@@ -332,4 +361,19 @@ model ApiRequest {
   updatedAt DateTime @updatedAt
   @@unique([connectorId, name])
   @@index([connectorId])
+}
+
+/// A finished stream handed over by another system (LCYT). Unique per (system, externalId) so one broadcast makes one project.
+model Import {
+  id String @id @default(cuid())
+  system String
+  externalId String
+  status ImportStatus @default(PENDING)
+  projectId String?
+  manifest Json? // short-lived download URLs inside; cleared when the import is READY
+  summary Json?
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([system, externalId])
 }

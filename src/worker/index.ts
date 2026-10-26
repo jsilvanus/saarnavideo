@@ -6,15 +6,18 @@ import { pathToFileURL } from "node:url";
 import { prisma } from "@/lib/prisma";
 import { timelineDuration } from "@/domain/timeline";
 import { buildCompositionRenderPlan } from "@/renderer/composition";
+import type { FeedKey } from "@/renderer/ffmpeg";
 import type { ProjectDefinition } from "@/domain/project";
 import { resolveSourcePaths } from "@/worker/source-resolution";
 import { withDownloadCookies } from "@/integrations/ytdlp-cookies";
 import { downloadYouTubeSource, uploadCaptionToYouTube, uploadToYouTube } from "@/integrations/youtube";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
+import { sttQueueMessage } from "@/worker/stt-queue";
 import { AuditorSttClient, type JobStatusResponse } from "@/integrations/auditorStt/client";
 import { createTranscriptionRun } from "@/lib/transcriptionRuns";
-import { applyRangeOffset, isPartialRange } from "@/worker/transcription-range";
+import { applyRangeOffset, isPartialRange, resolveTranscriptionRange } from "@/worker/transcription-range";
+import { probeChapters, probeVideo } from "@/worker/lcyt-feed";
 import { buildBurnedCaptionAss, buildCaptionCues, clipSourceIds, readCaptionOptions } from "@/worker/captions";
 import { CAPTION_MIME, toIso6392, wantsBurnedCaptions, wantsSoftCaptions, type CaptionOptions } from "@/domain/captions";
 import { readPodcastSettings, referencedAudioAssetIds } from "@/worker/podcast";
@@ -28,11 +31,16 @@ import { publishVideoToFacebook } from "@/worker/facebook-publish";
 import { createRemoteExecutorFromEnv, type RemoteRun } from "@/worker/remote-ffmpeg";
 import { createRemoteDownloaderFromEnv } from "@/worker/remote-download";
 import { getMediaStore } from "@/lib/media-store";
+import { withLease, type LeaseDb } from "@/lib/lease";
+import { liveWorkerHosts, localStorageHostWarning, pruneWorkers, registerWorker, type RegistryDb } from "@/worker/worker-registry";
+import { cleanupStalePendingUploads } from "@/lib/upload-cleanup";
+import { parseJobLimits, type JobLimits } from "@/worker/job-limits";
 import { HEARTBEAT_MS, heartbeat, recoverStaleJobs, type RecoveryDb } from "@/worker/job-recovery";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { openJobFiles, resolveLocalFile, type JobFiles } from "@/worker/media-io";
 import { createTranscriptionStaging } from "@/worker/transcription-staging";
+import { reconcileImports, runLcytImport } from "@/worker/lcyt-import";
 
 const execFileAsync = promisify(execFile);
 const MIN_POLL_MS = 500;
@@ -68,27 +76,56 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 async function logJobEvent(jobId: string, level: "DEBUG" | "INFO" | "WARN" | "ERROR", message: string, data?: Record<string, unknown>) { try { await prisma.jobLog.create({ data: { jobId, level, message, data: data ? JSON.stringify(data) : undefined } }); } catch (error) { console.error(`Failed to log job event: ${error}`); } }
 async function updateProgress(jobId: string, data: Record<string, unknown>, force = false) { const write = async () => { progressTimers.delete(jobId); try { await prisma.mediaJob.update({ where: { id: jobId }, data }); } catch (error) { console.error(`Failed to update job progress: ${error}`); } }; if (force) { const timer = progressTimers.get(jobId); if (timer) clearTimeout(timer); await write(); return; } if (progressTimers.has(jobId)) return; progressTimers.set(jobId, setTimeout(() => void write(), PROGRESS_WRITE_MS)); }
 
-export async function claimJob() {
-  const candidates = await prisma.mediaJob.findMany({ where: { status: "QUEUED" }, orderBy: [{ priority: "desc" }, { createdAt: "asc" }], take: 10 });
+/** Global per-type caps from `JOB_LIMITS` (empty = none). Read once; a bad value stops the worker at startup. */
+const JOB_LIMITS = parseJobLimits(process.env.JOB_LIMITS);
+
+type ClaimOptions = { workerId?: string; limits?: JobLimits };
+
+/** Job types that already have as many RUNNING jobs, across all workers, as their limit allows. */
+async function saturatedTypes(limits: JobLimits): Promise<string[]> {
+  const types = Object.keys(limits);
+  if (!types.length) return [];
+  const rows = await prisma.mediaJob.groupBy({ by: ["type"], where: { status: "RUNNING", type: { in: types as never } }, _count: { _all: true } });
+  return rows.filter(row => row._count._all >= (limits[row.type] ?? Infinity)).map(row => row.type);
+}
+
+/**
+ * Flips one QUEUED job to RUNNING for this worker; false when another worker got it first or its type is at its limit.
+ * The claim is one conditional update. Two workers can still both pass the limit check, so a limited type is verified
+ * after the claim: only the first `limit` RUNNING jobs (oldest start, then id) keep their place, the others go back to the queue.
+ */
+async function tryClaim(candidate: { id: string; type: string }, workerId: string, limits: JobLimits): Promise<boolean> {
+  const now = new Date();
+  const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: now, workerId, heartbeatAt: now, phase: "STARTING", message: "Worker claimed job" } });
+  if (result.count !== 1) return false;
+  const limit = limits[candidate.type];
+  if (limit === undefined) return true;
+  const keepers = await prisma.mediaJob.findMany({ where: { status: "RUNNING", type: candidate.type as never }, orderBy: [{ startedAt: "asc" }, { id: "asc" }], take: limit, select: { id: true } });
+  if (keepers.some(job => job.id === candidate.id)) return true;
+  await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "RUNNING", workerId }, data: { status: "QUEUED", startedAt: null, workerId: null, heartbeatAt: null, phase: null, message: "Waiting: job type limit reached" } });
+  return false;
+}
+
+export async function claimJob(options: ClaimOptions = {}) {
+  const workerId = options.workerId ?? WORKER_ID;
+  const limits = options.limits ?? JOB_LIMITS;
+  const blocked = await saturatedTypes(limits);
+  const candidates = await prisma.mediaJob.findMany({ where: { status: "QUEUED", ...(blocked.length ? { type: { notIn: blocked as never } } : {}) }, orderBy: [{ priority: "desc" }, { createdAt: "asc" }], take: 10 });
   for (const candidate of candidates) {
-    if (!candidate.dependsOnJobId) {
-      const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
-      if (result.count === 1) return candidate;
-      continue;
-    }
-    const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } });
-    if (!dependency) {
-      await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency job not found", error: "Dependency job not found" } }).catch(() => undefined);
-      continue;
-    }
-    if (dependency.status !== "COMPLETED") {
-      if (dependency.status === "FAILED" || dependency.status === "CANCELLED") {
-        await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency did not complete", error: "Dependency did not complete" } }).catch(() => undefined);
+    if (candidate.dependsOnJobId) {
+      const dependency = await prisma.mediaJob.findUnique({ where: { id: candidate.dependsOnJobId }, select: { status: true } });
+      if (!dependency) {
+        await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency job not found", error: "Dependency job not found" } }).catch(() => undefined);
+        continue;
       }
-      continue;
+      if (dependency.status !== "COMPLETED") {
+        if (dependency.status === "FAILED" || dependency.status === "CANCELLED") {
+          await prisma.mediaJob.update({ where: { id: candidate.id }, data: { status: "FAILED", phase: "FAILED", message: "Dependency did not complete", error: "Dependency did not complete" } }).catch(() => undefined);
+        }
+        continue;
+      }
     }
-    const result = await prisma.mediaJob.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date(), workerId: WORKER_ID, heartbeatAt: new Date(), phase: "STARTING", message: "Worker claimed job" } });
-    if (result.count === 1) return candidate;
+    if (await tryClaim(candidate, workerId, limits)) return candidate;
   }
   return null;
 }
@@ -135,8 +172,13 @@ async function processDownload(job: Awaited<ReturnType<typeof claimJob>>, files:
   });
   if (cookies) await logJobEvent(job.id, "INFO", cookies.source === "db" ? `Used the YouTube cookies from Settings${cookies.updated ? "; yt-dlp refreshed them and the stored copy was updated" : ""}` : "Used the cookie file from YTDLP_COOKIES_FILE");
   const s = await stat(localPath); const validation = validateSourceFile(s.size, RESOURCE_LIMITS); if (!validation.valid) { await rm(localPath, { force: true }); throw new Error(validation.reason); }
+  // YouTube metadata has no length here; the file's own duration lets the transcription and the sections use it (a failed probe leaves it unknown).
+  const durationMs = source.durationMs == null ? await probeVideo(localPath).then(probe => probe.durationMs, () => undefined) : undefined;
+  // yt-dlp wrote the video's chapters into the file (--embed-chapters); the structure step offers them as sequences.
+  const chapters = await probeChapters(localPath);
+  if (chapters.length) await logJobEvent(job.id, "INFO", `Found ${chapters.length} YouTube chapters`);
   const storagePath = await files.finalize(localPath, `sources/${job.projectId}/${source.youtubeVideoId}.mp4`, "video/mp4");
-  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size) } });
+  await prisma.source.update({ where: { id: source.id }, data: { storagePath, mimeType: "video/mp4", sizeBytes: BigInt(s.size), ...(durationMs !== undefined ? { durationMs } : {}), ...(chapters.length ? { chapters } : {}) } });
   await updateProgress(job.id, { progress: 100, phase: "DOWNLOADED", message: "Download complete", bytesProcessed: BigInt(s.size), totalBytes: BigInt(s.size) }, true);
 }
 
@@ -202,13 +244,13 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
     const video = await prisma.output.findFirst({ where: { projectId: project.id, type: "VIDEO", preview: false }, orderBy: { createdAt: "desc" } }); if (!video) throw new Error("No completed video available for thumbnail");
     const videoPath = await files.local(video.storagePath); const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}.jpg`); await updateProgress(job.id, { phase: "THUMBNAIL", message: "Extracting thumbnail", progress: 10 }, true); await runSimpleFfmpeg(job.id, ["-hide_banner", "-y", "-ss", "1", "-i", videoPath, "-frames:v", "1", "-q:v", "2", outputPath], { files: [videoPath], outputPath }); await createOutput(files, project.id, job.id, "THUMBNAIL", outputPath, "image/jpeg"); await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Thumbnail ready", completedAt: new Date() }, true); return;
   }
-  const sourcePaths = await localizePaths(files, resolveSourcePaths(definition, project.sources)); const assetRefs = new Map<string, string>(); for (const asset of project.assets) { assetRefs.set(asset.assetKey, asset.storagePath); assetRefs.set(asset.id, asset.storagePath); assetRefs.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
+  const sourcePaths = await localizePaths(files, resolveSourcePaths(definition, project.sources, { includeFeedOverlays: true })); const feedKeys = new Map(project.sources.filter(source => source.keyParams && typeof source.keyParams === "object").map(source => [source.id, source.keyParams as FeedKey] as const)); const assetRefs = new Map<string, string>(); for (const asset of project.assets) { assetRefs.set(asset.assetKey, asset.storagePath); assetRefs.set(asset.id, asset.storagePath); assetRefs.set(`/api/projects/${project.id}/assets/${asset.id}`, asset.storagePath); }
   for (const warning of findUnresolvedImageRefs(definition, project.assets)) await logJobEvent(job.id, "WARN", warning);
   // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
   for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetRefs.set(asset.id, asset.storagePath);
   const assetPaths = await localizePaths(files, assetRefs);
   const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
-  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined });
+  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined, feedKeys });
   const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const outputSeconds = definition.composition.items.length ? timelineDuration(definition.composition.items) : definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds; const totalMs = Math.max(1, Math.round(outputSeconds * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
   const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };
@@ -313,8 +355,9 @@ async function failJob(jobId: string, error: unknown, logMessage: string, data?:
 }
 
 type TranscribeParameters = {
-  rangeStartSeconds: number;
-  rangeEndSeconds: number;
+  /** Absent for a YouTube source queued before its download; the whole source is then transcribed (see resolveTranscriptionRange). */
+  rangeStartSeconds?: number;
+  rangeEndSeconds?: number;
   language: string;
   auditorJobId?: string;
   tempClipPath?: string;
@@ -325,14 +368,17 @@ type TranscribeParameters = {
 // See docs/transcription-editor-contract.md, "MediaJob.parameters shape for a TRANSCRIBE job".
 function readTranscribeParameters(parameters: unknown): TranscribeParameters {
   const params = (parameters && typeof parameters === "object" ? parameters : {}) as Partial<TranscribeParameters>;
-  if (typeof params.rangeStartSeconds !== "number" || typeof params.rangeEndSeconds !== "number" || typeof params.language !== "string") {
-    throw new Error("TRANSCRIBE job is missing rangeStartSeconds/rangeEndSeconds/language parameters");
-  }
-  return { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath, stagedKey: params.stagedKey };
+  if (typeof params.language !== "string") throw new Error("TRANSCRIBE job is missing the language parameter");
+  const hasRange = typeof params.rangeStartSeconds === "number" && typeof params.rangeEndSeconds === "number";
+  return { rangeStartSeconds: hasRange ? params.rangeStartSeconds : undefined, rangeEndSeconds: hasRange ? params.rangeEndSeconds : undefined, language: params.language, auditorJobId: params.auditorJobId, tempClipPath: params.tempClipPath, stagedKey: params.stagedKey };
 }
 
 function serializeTranscribeParameters(params: TranscribeParameters): Record<string, string | number> {
-  const result: Record<string, string | number> = { rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, language: params.language };
+  const result: Record<string, string | number> = { language: params.language };
+  if (params.rangeStartSeconds !== undefined && params.rangeEndSeconds !== undefined) {
+    result.rangeStartSeconds = params.rangeStartSeconds;
+    result.rangeEndSeconds = params.rangeEndSeconds;
+  }
   if (params.auditorJobId) result.auditorJobId = params.auditorJobId;
   if (params.tempClipPath) result.tempClipPath = params.tempClipPath;
   if (params.stagedKey) result.stagedKey = params.stagedKey;
@@ -347,6 +393,11 @@ async function releaseStagedSource(jobId: string) {
   const row = await prisma.mediaJob.findUnique({ where: { id: jobId }, select: { parameters: true } });
   const key = row?.parameters && typeof row.parameters === "object" ? (row.parameters as Record<string, unknown>).stagedKey : undefined;
   if (typeof key === "string") await transcriptionStaging.delete(key);
+}
+
+/** Length of a downloaded or uploaded source in seconds, read with ffprobe; undefined when the file cannot be read. */
+async function probeDurationSeconds(file: string): Promise<number | undefined> {
+  return probeVideo(file).then(probe => probe.durationMs / 1000, () => undefined);
 }
 
 async function extractTranscriptionClip(jobId: string, sourceStoragePath: string, rangeStartSeconds?: number, rangeEndSeconds?: number): Promise<string> {
@@ -379,10 +430,14 @@ async function processTranscriptionInner(job: MediaJobRow) {
   if (!job.sourceId) throw new Error("TRANSCRIBE job has no source");
   const source = await prisma.source.findUnique({ where: { id: job.sourceId } });
   if (!source) throw new Error("Source not found");
-  if (!source.storagePath) throw new Error("Source has no media available to transcribe");
+  const storagePath = source.storagePath;
+  if (!storagePath) throw new Error("Source has no media available to transcribe");
 
   let params = readTranscribeParameters(job.parameters);
   const client = new AuditorSttClient();
+  // S3-stored sources are downloaded into the worker cache first (ffmpeg needs a real file); memoized, it is needed at most once.
+  let localSource: string | undefined;
+  const sourcePath = async () => (localSource ??= await resolveLocalFile(await getMediaStore(), MEDIA_ROOT, storagePath));
 
   // Honor a cancellation that arrived while this job was still QUEUED (claimJob just flipped it to RUNNING and we haven't submitted anything yet).
   const preStart = await prisma.mediaJob.findUnique({ where: { id: job.id }, select: { cancelRequested: true } });
@@ -393,28 +448,35 @@ async function processTranscriptionInner(job: MediaJobRow) {
     return;
   }
 
+  // A job queued without a range (YouTube source, duration unknown) transcribes the whole file: its duration comes from the download.
+  let durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
+  // The DOWNLOAD dependency has run by now, so the file can be probed.
+  if (params.rangeStartSeconds === undefined || params.rangeEndSeconds === undefined) durationSeconds ??= await probeDurationSeconds(await sourcePath());
+  const range = resolveTranscriptionRange(params, durationSeconds);
+  params = { ...params, ...range };
+
   if (!params.auditorJobId) {
-    const durationSeconds = source.durationMs != null ? source.durationMs / 1000 : undefined;
-    const isPartial = isPartialRange(params.rangeStartSeconds, params.rangeEndSeconds, durationSeconds);
-    // S3-stored sources are downloaded into the worker cache first (ffmpeg needs a real file).
-    const sourcePath = await resolveLocalFile(await getMediaStore(), MEDIA_ROOT, source.storagePath);
-    let filePath = sourcePath;
+    const isPartial = isPartialRange(range.rangeStartSeconds, range.rangeEndSeconds, durationSeconds);
+    let filePath = await sourcePath();
     // With S3 staging the whole source is reduced to 16 kHz mono audio first, so far less than the video goes to the bucket.
     // In s3-source mode a whole source is staged as it is and the service strips the audio on a fleet worker.
     const stageSource = transcriptionStaging?.mode === "source" && !isPartial;
     if (isPartial || (transcriptionStaging && !stageSource)) {
       await updateProgress(job.id, { phase: "EXTRACTING_RANGE", message: isPartial ? "Extracting requested range" : "Extracting audio", progress: 0 }, true);
-      const tempClipPath = await extractTranscriptionClip(job.id, sourcePath, isPartial ? params.rangeStartSeconds : undefined, isPartial ? params.rangeEndSeconds : undefined);
+      const tempClipPath = await extractTranscriptionClip(job.id, filePath, isPartial ? range.rangeStartSeconds : undefined, isPartial ? range.rangeEndSeconds : undefined);
       params = { ...params, tempClipPath };
       await prisma.mediaJob.update({ where: { id: job.id }, data: { parameters: serializeTranscribeParameters(params) } });
       filePath = tempClipPath;
     }
     await updateProgress(job.id, { phase: "SUBMITTING", message: "Submitting to transcription service", progress: 0 }, true);
     let submission;
+    // The length of the audio that goes out, so the service can say when a queued job starts.
+    const sentSeconds = isPartial ? range.rangeEndSeconds - range.rangeStartSeconds : durationSeconds ?? range.rangeEndSeconds - range.rangeStartSeconds;
+    const durationOption = Number.isFinite(sentSeconds) && sentSeconds > 0 ? { durationSeconds: sentSeconds } : {};
     if (transcriptionStaging) {
       const staged = await transcriptionStaging.stage(filePath, job.id);
       try {
-        submission = await client.submitUrl(staged.url, { language: params.language });
+        submission = await client.submitUrl(staged.url, { language: params.language, ...durationOption });
       } catch (error) {
         await staged.release();
         throw error;
@@ -423,7 +485,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
       if (stageSource) params = { ...params, stagedKey: staged.key };
       else await staged.release();
     } else {
-      submission = await client.submitJob(filePath, { language: params.language });
+      submission = await client.submitJob(filePath, { language: params.language, ...durationOption });
     }
     params = { ...params, auditorJobId: submission.id };
     // Persisted before the first poll so a worker restart can resume watching this job (see "Resumability").
@@ -445,7 +507,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
     const status = await client.getJobStatus(auditorJobId);
     await updateProgress(job.id, {
       phase: status.phase,
-      message: status.phase,
+      message: (status.status === "queued" ? sttQueueMessage(status.queue) : null) ?? status.phase,
       progress: Math.round(status.progress),
       currentMs: BigInt(Math.round(status.current_seconds * 1000)),
       totalMs: BigInt(Math.round(status.total_seconds * 1000)),
@@ -469,9 +531,9 @@ async function processTranscriptionInner(job: MediaJobRow) {
   }
 
   const result = await client.getJobResult(auditorJobId);
-  const segments = applyRangeOffset(result.segments, params.rangeStartSeconds);
+  const segments = applyRangeOffset(result.segments, range.rangeStartSeconds);
 
-  await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: params.rangeStartSeconds, rangeEndSeconds: params.rangeEndSeconds, segments });
+  await createTranscriptionRun({ sourceId: source.id, jobId: job.id, origin: "SERVICE", language: params.language, rangeStartSeconds: range.rangeStartSeconds, rangeEndSeconds: range.rangeEndSeconds, segments });
 
   await cleanupTempClip(params.tempClipPath);
   await releaseStagedSource(job.id);
@@ -487,6 +549,7 @@ async function processTranscriptionInner(job: MediaJobRow) {
 async function recoverInterruptedJobs() {
   const { resume, failed } = await recoverStaleJobs(prisma as unknown as RecoveryDb, WORKER_ID);
   if (failed) console.warn(`Marked ${failed} stale job(s) as failed: their worker stopped`);
+  await reconcileImports().catch(error => console.error("Import reconcile failed:", error));
   for (const { id } of resume) {
     const job = await prisma.mediaJob.findUnique({ where: { id } });
     if (!job) continue;
@@ -494,7 +557,27 @@ async function recoverInterruptedJobs() {
   }
 }
 
-async function runClaimedJob(job: MediaJobRow) { let files: JobFiles | undefined; try { if (job.type === "TRANSCRIBE") await processTranscription(job); else { files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: job.id, cacheMaxBytes: process.env.MEDIA_CACHE_MAX_BYTES ? Number(process.env.MEDIA_CACHE_MAX_BYTES) : undefined }); if (job.type === "DOWNLOAD") await processDownload(job, files); else if (job.type === "PODCAST") await runPodcastJob(job, files); else await runFfmpegJob(job, job.type, files); } } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } finally { await files?.cleanup(); } }
+/** IMPORT job: fetches the recordings, captions and metadata of an LCYT broadcast into the project (see src/worker/lcyt-import.ts). */
+async function processImport(job: MediaJobRow, files: JobFiles) {
+  const importId = (job.parameters as { importId?: string } | null)?.importId;
+  if (!importId) throw new Error("IMPORT job has no importId");
+  let cancelled = false;
+  const stopWatching = watchCancel(job.id, () => { cancelled = true; });
+  try {
+    await runLcytImport(importId, {
+      files, mediaRoot: MEDIA_ROOT, maxFileBytes: RESOURCE_LIMITS.maxSourceFileSizeBytes,
+      log: (level, message) => logJobEvent(job.id, level, message),
+      progress: async (progress, message) => { await updateProgress(job.id, { progress, phase: "IMPORTING", message }); if (cancelled) throw new JobCancelled(); },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.import.update({ where: { id: importId }, data: { status: "FAILED", error: message.slice(0, 1000) } }).catch(() => undefined);
+    throw error;
+  } finally { stopWatching(); }
+  await updateProgress(job.id, { status: "COMPLETED", progress: 100, phase: "COMPLETE", message: "Import complete", completedAt: new Date() }, true);
+}
+
+async function runClaimedJob(job: MediaJobRow) { let files: JobFiles | undefined; try { if (job.type === "TRANSCRIBE") await processTranscription(job); else { files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: job.id, cacheMaxBytes: process.env.MEDIA_CACHE_MAX_BYTES ? Number(process.env.MEDIA_CACHE_MAX_BYTES) : undefined }); if (job.type === "DOWNLOAD") await processDownload(job, files); else if (job.type === "IMPORT") await processImport(job, files); else if (job.type === "PODCAST") await runPodcastJob(job, files); else await runFfmpegJob(job, job.type as "VIDEO" | "PREVIEW" | "THUMBNAIL", files); } } catch (error) { if (error instanceof JobCancelled) await updateProgress(job.id, { status: "CANCELLED", phase: "CANCELLED", message: "Cancelled by user", completedAt: new Date() }, true); else await failJob(job.id, error, "Media job failed", { type: job.type }); } finally { await files?.cleanup(); } }
 
 const captionPublishDeps: CaptionPublishDeps = {
   findSidecar: (jobId) => prisma.output.findFirst({ where: { jobId, type: "CAPTIONS_SRT", preview: false }, orderBy: { createdAt: "desc" }, select: { storagePath: true, language: true } }),
@@ -545,10 +628,25 @@ async function processPublication() {
 process.on("SIGTERM", async () => { for (const timer of progressTimers.values()) clearTimeout(timer); for (const proc of runningProcesses.values()) proc.kill("SIGTERM"); await remoteExecutor?.close(); await remoteDownloader?.close(); process.exit(0); });
 /** Publications run in their own lane: a slow upload (Facebook polls for up to 30 minutes) must not hold up renders. */
 async function publicationLane() { while (true) { try { if (!(await processPublication())) await sleep(POLL_MS); } catch (error) { console.error("Publication loop error:", error); await sleep(POLL_MS); } } }
+/** Renews this worker's lease and warns once if local media storage is used while workers run on several hosts. */
+async function announceWorker(warn: boolean) {
+  const registry = prisma as unknown as RegistryDb;
+  await registerWorker(registry, WORKER_ID);
+  await pruneWorkers(registry);
+  if (!warn) return;
+  const warning = localStorageHostWarning(await liveWorkerHosts(registry), process.env.MEDIA_STORAGE);
+  if (warning) console.warn(`[worker] ${warning}`);
+}
 async function main() {
+  await announceWorker(true).catch(error => console.error("Worker registration failed:", error));
+  setInterval(() => { void announceWorker(false).catch(error => console.error("Worker registration failed:", error)); }, HEARTBEAT_MS);
   setInterval(() => { void heartbeat(prisma as unknown as RecoveryDb, WORKER_ID).catch(error => console.error("Heartbeat failed:", error)); }, HEARTBEAT_MS);
   await recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error));
   setInterval(() => { void recoverInterruptedJobs().catch(error => console.error("Failed to recover interrupted jobs:", error)); }, 30_000);
+  // Stale direct uploads: one worker at a time (lease), so several workers do not repeat the same S3 deletes.
+  const cleanUploads = () => withLease(prisma as unknown as LeaseDb, "upload-cleanup", WORKER_ID, 5 * 60_000, () => cleanupStalePendingUploads()).catch(error => console.error("Upload cleanup failed:", error));
+  void cleanUploads();
+  setInterval(() => { void cleanUploads(); }, 10 * 60_000);
   void publicationLane();
   const running = new Set<Promise<void>>();
   while (true) {

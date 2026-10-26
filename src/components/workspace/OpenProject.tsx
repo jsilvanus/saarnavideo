@@ -9,6 +9,7 @@ import { outputSizeLabel } from "./helpers";
 import { STEPS } from "./types";
 import styles from "./OpenProject.module.css";
 import { useT } from "@/i18n/I18nProvider";
+import { InlineError } from "./InlineError";
 
 export default function OpenProject() {
   const { selected, step, setStep, message, error, busy, previewBusy, currentDefinition, generate, previewRender } = useOpenWorkspace();
@@ -30,6 +31,7 @@ export default function OpenProject() {
           <button className="primary" disabled={busy} onClick={() => void generate()}>
             {t("project.makeVideo")}
           </button>
+          <InlineError scope="header" />
         </div>
       </header>
       <nav className={styles["stepper"]} aria-label={t("steps.label")}>

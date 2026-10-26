@@ -28,7 +28,7 @@ function layersWithVariables(json: string, variables: readonly ProjectVariable[]
 
 /** Fills `{{name}}` in an item's plain-text data (legacy title/subtitle/text slates and overlays). */
 function itemWithVariables(item: TimelineItem, variables: readonly ProjectVariable[]): TimelineItem {
-  if (item.type === "source-clip" || !item.data) return item;
+  if (item.type === "source-clip" || item.type === "feed-overlay" || !item.data) return item;
   const data = Object.fromEntries(Object.entries(item.data).map(([key, value]) => [key, key === "layers" ? layersWithVariables(value, variables) : applyVariables(value, variables)]));
   return { ...item, data } as TimelineItem;
 }
@@ -39,7 +39,7 @@ export function materializeGraphics(definition: ProjectDefinition): ProjectDefin
   const graphics = new Map(definition.graphics.map((graphic) => [graphic.id, graphicWithVariables(graphic, variables)]));
   const items = definition.composition.items.map((original) => {
     const item = itemWithVariables(original, variables);
-    if (item.type === "source-clip" || !item.graphicId) return item;
+    if (item.type === "source-clip" || item.type === "feed-overlay" || !item.graphicId) return item;
     const graphic = graphics.get(item.graphicId);
     if (!graphic) throw new Error(`Missing graphic definition: ${item.graphicId}`);
     // A voiceover's picture is built like a slate's (audioClipAsSlate reads data.layers), so it only needs the layers.

@@ -1,3 +1,5 @@
+import { DESIGN_CANVAS } from "@/domain/output-presets";
+import { mapAxis } from "@/domain/frame-layout";
 import type { Graphic, GraphicLayer } from "@/domain/graphics";
 
 /**
@@ -126,15 +128,19 @@ export function captionStyleFromGraphic(graphic: Pick<Graphic, "layers" | "width
   const gh = own ? graphic!.height : 1080;
   const sx = videoWidth / gw;
   const sy = videoHeight / gh;
-  const s = sx; // uniform scale for sizes; positions use sx/sy so the box tracks the frame
+  // Same rule as every other graphic (src/domain/frame-layout.ts): sizes scale uniformly by the smaller factor,
+  // the box keeps the relative place of its centre on each axis.
+  const s = Math.min(sx, sy);
+  const across = mapAxis(layer.x, layer.width, sx, s, DESIGN_CANVAS.width);
+  const down = mapAxis(layer.y, layer.height, sy, s, DESIGN_CANVAS.height);
   const style = layer.style ?? {};
   const opacity = Math.min(1, Math.max(0, px(style.opacity, 1)));
   const withOpacity = (color: RGBA): RGBA => ({ ...color, a: color.a * opacity });
 
-  const width = Math.max(1, Math.round(layer.width * sx));
-  const height = Math.max(1, Math.round(layer.height * sy));
-  const x = Math.min(Math.max(0, Math.round(layer.x * sx)), videoWidth - 1);
-  const y = Math.min(Math.max(0, Math.round(layer.y * sy)), videoHeight - 1);
+  const width = Math.max(1, Math.round(across.length));
+  const height = Math.max(1, Math.round(down.length));
+  const x = Math.min(Math.max(0, Math.round(across.position)), videoWidth - 1);
+  const y = Math.min(Math.max(0, Math.round(down.position)), videoHeight - 1);
 
   const box = style.background !== undefined ? parseColor(style.background) : undefined;
   const stroke = /^\s*([\d.]+)px\s+(.+)$/.exec(String(style["-webkit-text-stroke"] ?? ""));

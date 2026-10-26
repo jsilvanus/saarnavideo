@@ -44,17 +44,18 @@ Project ──┬─ Source            uploaded file or YouTube reference
           └─ Asset (n:m)       library item linked to the project
 Asset ─ AssetFolder            library tree (organisation only)
 UserTemplate                   a saved project structure
+Import                         a finished stream handed over by LCYT (one per broadcast); its sources share Source.feedGroupId
 ApiConnector ─ ApiRequest      global connectors for fetched variables
 YouTubeConnection, YtDlpCookies  encrypted credentials (singletons)
 ```
 
-The composition itself is **one JSON document**, `Project.definition`, validated by Zod (`src/domain/project.ts`): template settings (size, fps, reframe), sections and segments, a timeline of items (source clips, slates, overlays, audio clips), graphics, variables, podcast settings. Rendering reads that document; nothing else describes a video. A template only seeds the document and is not referenced afterwards.
+The composition itself is **one JSON document**, `Project.definition`, validated by Zod (`src/domain/project.ts`): template settings (size, fps, reframe), sections and segments, a timeline of items (source clips, slates, overlays, audio clips, feed overlays), graphics, variables, podcast settings. Rendering reads that document; nothing else describes a video. A template only seeds the document and is not referenced afterwards.
 
-`MediaJob.type` is one of `DOWNLOAD`, `THUMBNAIL`, `PREVIEW`, `VIDEO`, `PODCAST`, `TRANSCRIBE`. Status goes `QUEUED → RUNNING → COMPLETED | FAILED | CANCELLED`; while running, `phase` and `progress` say where it is. `dependsOnJobId` chains jobs (a download before a render).
+`MediaJob.type` is one of `DOWNLOAD`, `THUMBNAIL`, `PREVIEW`, `VIDEO`, `PODCAST`, `TRANSCRIBE`, `IMPORT`. Status goes `QUEUED → RUNNING → COMPLETED | FAILED | CANCELLED`; while running, `phase` and `progress` say where it is. `dependsOnJobId` chains jobs (a download before a render).
 
 ## Request flow: from recording to published video
 
-1. **Source.** A file is streamed into the media store, or a YouTube link creates a `Source` and a `DOWNLOAD` job. The worker downloads with yt-dlp (locally or on a fleet worker, with the stored cookies if any) and records the file.
+1. **Source.** A file is streamed into the media store (with S3 storage the browser uploads it directly to the bucket through presigned, resumable multipart URLs and the app only finalizes the `Source`), or a YouTube link creates a `Source` and a `DOWNLOAD` job. The worker downloads with yt-dlp (locally or on a fleet worker, with the stored cookies if any) and records the file.
 2. **Transcription (optional).** A `TRANSCRIBE` job hands the audio to the speech-to-text service, polls it, and stores the result as a pending `TranscriptionRun`; the user applies it and the segments become the active transcript.
 3. **Editing.** The browser edits `definition` through `PATCH /api/projects/[id]`. Server-side validation (`validateRenderSettings`) rejects odd sizes, invalid reframes and bad variable names.
 4. **Generate.** `POST /api/projects/[id]/generate` links the library assets the definition uses, checks the options, returns warnings (duration, unresolved asset references) and queues a `VIDEO` (or `PREVIEW`, `PODCAST`) job plus a thumbnail job.
@@ -74,7 +75,7 @@ Pure code, no I/O: it turns a definition into ffmpeg arguments, so it is testabl
 
 `src/worker/index.ts` (`main`):
 
-- **Lanes.** Up to `MAX_CONCURRENT_JOBS` media jobs run side by side (1 locally, 4 with a fleet). Publications run in their own lane so a slow upload does not block renders.
+- **Lanes.** Up to `MAX_CONCURRENT_JOBS` media jobs run side by side (1 locally, 4 with a fleet). Publications run in their own lane so a slow upload does not block renders. With several workers, `MAX_CONCURRENT_JOBS` is per process; `JOB_LIMITS` (for example `TRANSCRIBE=2`) caps a job type across all workers. A claim is one conditional update, so no job is handed to two workers; a limited type is re-checked right after the claim and a job over the limit goes back to the queue. Chores that must not run twice at once (stale upload cleanup, YouTube token refresh) use short database leases (`Lease` table, `src/lib/lease.ts`).
 - **Claiming.** Atomic update of a `QUEUED` row; jobs with an unfinished dependency are skipped.
 - **Heartbeat and recovery.** Each worker has a `workerId` and refreshes `heartbeatAt` on its running jobs. `job-recovery.ts` fails jobs whose worker stopped, and lets another worker take over an interrupted transcription.
 - **Files.** `media-io.ts` gives each job a `JobFiles`: local references are used as they are, S3 references are downloaded into a size-capped cache, and outputs written to a scratch folder are uploaded when the job finishes.
@@ -89,7 +90,7 @@ Pure code, no I/O: it turns a definition into ffmpeg arguments, so it is testabl
 
 - **Access:** optional shared secret (`ACCESS_SECRET`) enforced by the Edge middleware for every page and API route; see [INSTALL.md](INSTALL.md#access-secret-login). No per-user accounts.
 - **Secrets at rest:** YouTube tokens and yt-dlp cookies are AES-256-GCM encrypted with `YOUTUBE_TOKEN_ENCRYPTION_KEY`. The Facebook Page token is environment-only. API connector secrets are stored in the database and never returned by the API (only `hasSecret`); they are **not encrypted at rest yet**.
-- **Outbound requests:** connector calls go through varfetch's address guard (private and loopback blocked unless allowed by `CONNECTOR_ALLOW`), with DNS pinning.
+- **Outbound requests:** connector calls and LCYT imports go through varfetch's address guard (private and loopback blocked unless allowed by `CONNECTOR_ALLOW` / `IMPORT_ALLOW`), with DNS pinning, every redirect hop checked and size limits (`src/lib/import-fetch.ts`).
 - **Uploads:** size limits and MIME checks per route; images are validated for type and dimensions.
 
 ## Source map
@@ -103,7 +104,7 @@ src/domain/               Zod schemas and pure business logic (project, template
 src/renderer/             definition → ffmpeg plans, captions, podcast
 src/worker/               the worker: loop, jobs, remote ffmpeg/yt-dlp, publishing, recovery
 src/integrations/         YouTube, Facebook, speech-to-text client, audio/image assets, cookies
-src/lib/                  media store, prisma client, asset linking, access gate, duration report, transcript text
+src/lib/                  LCYT import and guarded fetching, media store, prisma client, asset linking, access gate, duration report, transcript text
 src/i18n/                 fi / en / sv messages
 fleet/                    the fffleet `download` executor (plain ESM)
 prisma/                   both schemas (+ legacy migrations)

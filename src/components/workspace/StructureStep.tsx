@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useT } from "@/i18n/I18nProvider";
 import GraphicsEditor from "@/components/GraphicsEditor";
 import AssetPicker from "@/components/AssetPicker";
@@ -7,14 +8,37 @@ import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
 import VoiceoverPanel from "@/components/VoiceoverPanel";
 import SectionManager from "@/components/SectionManager";
+import SequenceTimeline from "@/components/SequenceTimeline";
 import TimelineView from "@/components/TimelineView";
 import ReframeEditor from "@/components/ReframeEditor";
 import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
-import { SectionPicker } from "./SectionPicker";
 import { graphicVariables } from "./helpers";
 import type { Definition } from "./types";
+
+// Name of the open graphic, edited in place. Saved on blur or Enter; an empty name is discarded.
+function GraphicNameInput({ name, onRename }: { name: string; onRename: (name: string) => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [name]);
+  return (
+    <input
+      className="graphic-name-input"
+      aria-label={t("str.graphicName")}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next && next !== name) onRename(next);
+        else setDraft(name);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
 
 export default function StructureStep() {
   const {
@@ -36,6 +60,7 @@ export default function StructureStep() {
     currentDefinition,
     saveDefinition,
     addSegment,
+    useYouTubeChapters,
     removeSegment,
     saveSections,
     changeSectionSource,
@@ -49,6 +74,7 @@ export default function StructureStep() {
     createCaptionStyle,
     duplicateGraphic,
     updateGraphic,
+    renameGraphic,
     sourceNames,
     selectedGraphic,
     editorItem,
@@ -60,6 +86,14 @@ export default function StructureStep() {
         title={t("str.sections.title")}
         text={t("str.sections.text")}
       >
+        <SequenceTimeline
+          sources={selected.sources}
+          sections={selected.definition?.sections ?? []}
+          pendingFiles={pendingFiles}
+          onSave={saveSections}
+          onAdd={addSegment}
+          onUseChapters={useYouTubeChapters}
+        />
         <SectionManager
           scope="SOURCE"
           suggestedNames={selected.definition?.template?.sectionNames}
@@ -96,12 +130,6 @@ export default function StructureStep() {
               )}
             </>
           )}
-        />
-        <SectionPicker
-          projectId={selected.id}
-          sources={selected.sources}
-          pendingFiles={pendingFiles}
-          onAdd={(id, l, s, e) => void addSegment(id, l, s, e)}
         />
         <div className="list">
           {(selected.definition?.semanticSegments ?? []).map((s) => (
@@ -172,7 +200,7 @@ export default function StructureStep() {
           <>
             <div className="graphic-editor-header" id="graphic-editor">
               <div>
-                <strong>{selectedGraphic.name}</strong>
+                <GraphicNameInput key={selectedGraphic.id} name={selectedGraphic.name} onRename={(name) => void renameGraphic(selectedGraphic.id, name)} />
                 <small>
                   {selectedGraphic.width} × {selectedGraphic.height}
                 </small>
@@ -202,6 +230,9 @@ export default function StructureStep() {
               item={editorItem}
               assets={selected.assets ?? []}
               title={selectedGraphic.name}
+              variables={selected.definition?.variables ?? []}
+              outputWidth={currentDefinition().template?.width ?? 1920}
+              outputHeight={currentDefinition().template?.height ?? 1080}
               onChange={(item) => void updateGraphic(selectedGraphic.id, item)}
               onAssetsChanged={refreshAssets}
             />
@@ -260,6 +291,13 @@ export default function StructureStep() {
           sections={selected.definition?.sections}
           sources={selected.sources}
           audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")}
+          onChange={(index, patch) => {
+            const def = currentDefinition();
+            void saveDefinition({
+              ...def,
+              composition: { ...def.composition, items: def.composition.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) },
+            });
+          }}
         />
         <h3 className="subhead">{t("str.editComposition")}</h3>
         <CompositionEditor

@@ -1,0 +1,51 @@
+.groups {
+  display: grid;
+  gap: 14px;
+}
+
+.group {
+  display: grid;
+  gap: 6px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--muted, #555);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.name {
+  min-width: 0;
+  flex: 1 1 200px;
+  overflow-wrap: anywhere;
+}
+
+.kind {
+  font-size: 0.85rem;
+  color: var(--muted, #555);
+}
+
+.input {
+  min-width: 0;
+  flex: 1 1 220px;
+  max-width: 100%;
+}
+
+.error {
+  flex-basis: 100%;
+  color: #b00020;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 480px) {
+  .row {
+    gap: 6px;
+  }
+}

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FfprobeUnavailableError, probeViaFleet, usesFleetProbe, type AudioProbe } from "./fleet-probe";
 
 const execFileAsync = promisify(execFile);
 
@@ -47,7 +48,7 @@ export function audioExtension(mimeType: string): string {
   return AUDIO_TYPES[mimeType] ?? "bin";
 }
 
-export type AudioProbe = { durationMs: number };
+export { FfprobeUnavailableError, type AudioProbe } from "./fleet-probe";
 
 /** Parses the last `time=HH:MM:SS.xx` progress stamp out of ffmpeg's stderr; used when the container header has no duration (MediaRecorder WebM); the file is remuxed, not decoded. */
 export function parseFfmpegTime(stderr: string): number | undefined {
@@ -57,12 +58,24 @@ export function parseFfmpegTime(stderr: string): number | undefined {
 }
 
 /**
- * Checks with ffprobe that the file holds an audio stream and returns its duration. Streams without a duration in the
- * header (Chrome's MediaRecorder WebM) are remuxed once (stream copy, no decoding) to measure it; the reported time matches a full decode. Returns null for a file ffprobe cannot read as audio.
+ * Checks that the file holds an audio stream and returns its duration, or null for a file that cannot be read as audio.
+ * With RENDER_EXECUTOR=fffleet or FFFLEET_URL the probe runs on the fleet (see fleet-probe.ts); otherwise the local
+ * ffprobe below is used (developer machines, tests). Throws FfprobeUnavailableError when the probe cannot run.
  */
 export async function probeAudioFile(filePath: string): Promise<AudioProbe | null> {
+  if (usesFleetProbe()) return probeViaFleet(filePath);
+  return probeAudioFileLocally(filePath);
+}
+
+/**
+ * Local variant: ffprobe, and for a stream without a header duration (Chrome's MediaRecorder WebM) a stream-copy remux
+ * with ffmpeg to measure it. Returns null for a file ffprobe cannot read as audio. Throws FfprobeUnavailableError when the binary is missing.
+ */
+async function probeAudioFileLocally(filePath: string): Promise<AudioProbe | null> {
   try {
-    const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type:format=duration", "-of", "json", filePath]);
+    const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type:format=duration", "-of", "json", filePath]).catch((error: NodeJS.ErrnoException) => {
+      throw error.code === "ENOENT" ? new FfprobeUnavailableError() : error;
+    });
     const data = JSON.parse(stdout) as { streams?: Array<{ codec_type?: string }>; format?: { duration?: string } };
     if (!data.streams?.some(stream => stream.codec_type === "audio")) return null;
     const header = Number(data.format?.duration);
@@ -70,7 +83,8 @@ export async function probeAudioFile(filePath: string): Promise<AudioProbe | nul
     const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-v", "info", "-stats", "-i", filePath, "-map", "0:a:0", "-c", "copy", "-f", "null", "-"], { maxBuffer: 16 * 1024 * 1024 }).catch(error => ({ stderr: String((error as { stderr?: string }).stderr ?? "") }));
     const measured = parseFfmpegTime(stderr);
     return measured && measured > 0 ? { durationMs: Math.round(measured * 1000) } : null;
-  } catch {
+  } catch (error) {
+    if (error instanceof FfprobeUnavailableError) throw error;
     return null;
   }
 }

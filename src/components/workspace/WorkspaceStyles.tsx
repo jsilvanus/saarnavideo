@@ -12,106 +12,9 @@ export default function WorkspaceStyles() {
         color: #18202a;
         font-family: system-ui, sans-serif;
       }
-      .sidebar {
-        width: 270px;
-        flex: none;
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-        color: white;
-        padding: 20px 14px;
-        border-right: 2px solid #10b981;
-      }
-      .brand {
-        font-size: 21px;
-        font-weight: 750;
-        padding: 4px 8px 18px;
-        color: #d1fae5;
-      }
-      .new {
-        width: 100%;
-        padding: 10px;
-        border: 2px solid #10b981;
-        border-radius: 8px;
-        font-weight: 650;
-        margin-bottom: 14px;
-        background: #10b981;
-        color: white;
-        cursor: pointer;
-        transition: all 0.2s ease;
-      }
-      .new:hover {
-        background: #059669;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-      }
-      .projects {
-        display: grid;
-        gap: 4px;
-      }
-      .project {
-        position: relative;
-        display: flex;
-        border-radius: 8px;
-        transition: all 0.2s ease;
-      }
-      .project:hover {
-        background: rgba(16, 185, 129, 0.15);
-      }
-      .project.selected {
-        background: rgba(16, 185, 129, 0.25);
-        border-left: 3px solid #10b981;
-        padding-left: 0;
-      }
-      .project-main {
-        flex: 1;
-        text-align: left;
-        background: none;
-        color: #e5e7eb;
-        border: 0;
-        padding: 10px;
-      }
-      .project.selected .project-main {
-        color: #d1fae5;
-      }
-      .more {
-        background: none;
-        color: #cbd5e1;
-        border: 0;
-        padding: 0 10px;
-        font-size: 20px;
-      }
-      .menu {
-        position: absolute;
-        right: 4px;
-        top: 40px;
-        background: white;
-        color: #111827;
-        border-radius: 8px;
-        box-shadow: 0 8px 25px #0003;
-        padding: 5px;
-        z-index: 3;
-        min-width: 150px;
-        border: 2px solid #10b981;
-      }
-      .menu button {
-        display: block;
-        width: 100%;
-        text-align: left;
-        background: none;
-        border: 0;
-        padding: 9px;
-        border-radius: 5px;
-        transition: all 0.2s ease;
-      }
-      .menu button:hover {
-        background: #d1fae5;
-        color: #059669;
-      }
       .danger,
       .dangerButton {
         color: #ef4444 !important;
-      }
-      .menu button.danger:hover {
-        background: #fee2e2;
-        color: #ef4444;
       }
       .workspace {
         flex: 1;
@@ -364,6 +267,23 @@ export default function WorkspaceStyles() {
       .graphic-editor-header small {
         color: #059669;
         font-weight: 600;
+      }
+      .graphic-name-input {
+        font: inherit;
+        font-weight: 700;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 2px 4px;
+        margin-left: -4px;
+        color: inherit;
+        min-width: 0;
+      }
+      .graphic-name-input:hover,
+      .graphic-name-input:focus {
+        border-color: #10b981;
+        background: #fff;
+        outline: none;
       }
       .graphic-editor-actions {
         display: flex;
@@ -1081,23 +1001,8 @@ export default function WorkspaceStyles() {
         .app {
           flex-direction: column;
         }
-        .app .sidebar {
-          width: 100% !important;
-          padding: 12px !important;
-        }
-        .app .sidebar .projects {
-          display: flex !important;
-          overflow-x: auto;
-        }
-        .app .sidebar .brand,
-        .app .sidebar .new {
-          display: block !important;
-        }
         .sidebar-toggle {
           display: none !important;
-        }
-        .project {
-          flex: none;
         }
         .content {
           padding: 14px !important;
@@ -1135,9 +1040,6 @@ export default function WorkspaceStyles() {
       @media (max-width: 850px) {
         .workspace header {
           padding: 70px 16px 16px;
-        }
-        .sidebar {
-          width: 220px;
         }
         .content {
           padding: 18px;

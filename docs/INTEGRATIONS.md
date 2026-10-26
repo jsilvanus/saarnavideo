@@ -17,7 +17,8 @@ Contents: [fffleet](#fffleet-render-and-download-on-workers) · [Media in S3](#m
 | Render, preview, thumbnail, podcast (ffmpeg) | A fleet worker, as a batch job | `RENDER_EXECUTOR=fffleet` |
 | YouTube download (yt-dlp) | A fleet worker with the `download` executor, as a batch job | `DOWNLOAD_EXECUTOR=fffleet` |
 | Transcription audio strip (`AUDITOR_STT_FETCH=s3-source`) | A fleet worker, started by the auditor service, not by this app | see [Speech-to-text](#speech-to-text-liturgos-auditor) |
-| Queue, job state, outputs, publishing, audio ffprobe, transcription polling | The app's own worker (`npm run worker`) | always local |
+| Audio probe of an uploaded or recorded audio file (ffprobe, and a stream copy for WebM without a duration) | A fleet worker, as a batch job of type `ffprobe` (and `ffmpeg`); from the app server itself, so the app image needs no ffmpeg | `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` (see [Audio probing](#audio-probing-through-the-fleet)) |
+| Queue, job state, outputs, publishing, transcription polling | The app's own worker (`npm run worker`) | always local |
 
 SaarnaVideo keeps its own job queue in the database. The fleet only does the heavy command. The app's worker stays the one that claims jobs, writes progress and creates `Output` rows, so downloads, thumbnails and publishing do not change, and a worker restart recovers jobs the same way with or without a fleet.
 
@@ -89,6 +90,17 @@ MAX_CONCURRENT_JOBS=4                       # default is already 4 with the flee
 
 **5. Check.** Queue a preview. The job log shows the phase going through SUBMITTING and ENCODING; `GET /v1/workers` on the orchestrator lists your worker, and `GET /metrics` shows the queue. If no reachable fleet answers, the same job runs on the worker's own machine through an in-process fffleet runner with the same S3 staging (so the staging bucket and a local ffmpeg are still needed). Unset `FFFLEET_URL` on purpose to use that.
 
+### Audio probing through the fleet
+
+Uploading or recording audio into the library (`POST /api/assets`, the Ääni panel) needs its duration. With `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` set, the app server does not run ffprobe itself (`src/integrations/fleet-probe.ts`):
+
+1. The temporary upload is copied to `FFFLEET_S3_PREFIX/tmp/probe-<uuid>/in.<ext>` in `FFFLEET_S3_BUCKET` (only when a bucket and S3 credentials are set; otherwise the job reads the local file in-process).
+2. A batch job of type `ffprobe` (fffleet's built-in executor, contract v1, `ffprobe: { show: ['format', 'streams'] }`) reads it through an `s3:` input; the JSON comes back inline in the job result (`outputs[].data`). No audio stream is a `400`.
+3. A WebM recording without a duration in its header (Chrome's MediaRecorder) gets a stream-copy job first (`ffmpeg -map 0:a:0 -c copy -f matroska`, no decoding) into `tmp/probe-<uuid>/copy.mka`, and that copy is probed.
+4. Every staged object is deleted when the probe ends, also on failure and timeout.
+
+The whole probe must finish within 60 s. A fleet that cannot be reached falls back to the in-process runner (fffleet's `fallback: 'local'`), which needs `ffprobe` (and `ffmpeg` for WebM) on the app server. A missing binary, a worker without the probe capability, a failed S3 read or a timeout answers `503` with a readable message; only a file that ffprobe or ffmpeg refuses is `400`. Developer machines without either variable keep the local ffprobe path. Requires fffleet 2.3.1 or newer (`node_modules/fffleet`, `type: 'ffprobe'`).
+
 ### Downloads on a fleet worker (optional)
 
 yt-dlp needs python and the SaarnaVideo executor, so use the image built from `Dockerfile.fleet-worker` for the workers that should take downloads:
@@ -102,6 +114,8 @@ It is the published worker plus python3, yt-dlp and `fleet/download-executor.mjs
 ```bash
 DOWNLOAD_EXECUTOR=fffleet      # plus the same FFFLEET_* and AWS_* settings as above
 ```
+
+Downloads pass `--embed-chapters` (also in the fleet job's `extraArgs`), so a video with YouTube chapters carries them in the mp4; the worker reads them with ffprobe afterwards and offers them as sequences in the Rakenne step (the fleet worker needs ffmpeg, which every fffleet worker has).
 
 The job type is `download`; the worker advertises `type:download`, so downloads only go to workers that have the executor. YouTube cookies saved in **Settings** are decrypted into a private temporary file for each run, staged for the fleet job, and removed afterwards; the executor never prints cookie contents. If yt-dlp rewrote the cookie file, the new copy is saved back, encrypted. Needs `YOUTUBE_TOKEN_ENCRYPTION_KEY`.
 
@@ -144,9 +158,36 @@ AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...
 MEDIA_CACHE_MAX_BYTES=21474836480      # worker's cache of downloaded files
 ```
 
-Set it on the app and on every worker. Startup fails if the bucket or keys are missing; there is no silent fallback to disk. A stored reference (`storagePath`) is either a local absolute path or `s3://bucket/key`, so existing rows keep working after the switch; move them with `npm run media:migrate -- --to s3` (or `--to local`). The app serves S3 files through itself (with Range support), uploads are streamed, and the worker downloads what it needs into a size-capped cache and uploads outputs when a job finishes. With several workers, each job heartbeats; a stale job is failed and an interrupted transcription is taken over by another worker.
+Set it on the app and on every worker. Startup fails if the bucket or keys are missing; there is no silent fallback to disk. A stored reference (`storagePath`) is either a local absolute path or `s3://bucket/key`, so existing rows keep working after the switch; move them with `npm run media:migrate -- --to s3` (or `--to local`). The app serves S3 files through itself (with Range support), source uploads go from the browser directly to the bucket (presigned, multipart, resumable; `MEDIA_S3_ENDPOINT_PUBLIC` for the browser-facing address; [LARGE_FILE_UPLOADS.md](LARGE_FILE_UPLOADS.md)), library assets are streamed, and the worker downloads what it needs into a size-capped cache and uploads outputs when a job finishes. With several workers, each job heartbeats; a stale job is failed and an interrupted transcription is taken over by another worker.
 
 You can use the same bucket for render staging (`FFFLEET_S3_BUCKET`) or a different one; staged objects live under their own prefix and are deleted after use, media is kept.
+
+## Import from LCYT (finished live streams)
+
+[LCYT](https://github.com/jsilvanus/live-captions-yt) can hand a finished broadcast to SaarnaVideo: the recordings, the captions, the on-air graphics log and the broadcast's details become a **new project**. The manifest contract (v1) is owned by LCYT (`docs/plans/plan_saarnavideo_handoff.md`); `src/domain/lcyt-manifest.ts` is SaarnaVideo's copy and ignores fields it does not know.
+
+**Set up.** On LCYT set `SAARNAVIDEO_URL` (this app's address), `SAARNAVIDEO_TOKEN` and `PUBLIC_URL` (LCYT's own address, which SaarnaVideo must be able to reach). With `ACCESS_SECRET` set on the app, `SAARNAVIDEO_TOKEN` is that secret (it is sent as `Authorization: Bearer`); a scoped import token is a planned follow-up, so keep the secret out of untrusted hands. LCYT then posts `{ manifestUrl }` to `POST /api/imports/lcyt` from its "Send to Saarnavideo" button (or automatically with `HANDOFF_AUTO_SEND`). A **worker** must be running: it does the fetching (job type `IMPORT`, any worker, one per import).
+
+**Network.** The app and worker fetch the manifest and every file from LCYT's links. They use the same address guard as the API connectors: private, loopback and link-local targets are refused unless listed in `CONNECTOR_ALLOW` or `IMPORT_ALLOW` (comma lists, `CONNECTOR_DENY` / `IMPORT_DENY` win). In the `deploy-media` stack LCYT is on the private network, so allow its host name there. Links carry a short-lived token in the query string; it is never written to logs or error messages, and the stored manifest is cleared once the import is ready.
+
+**What arrives.**
+- Each feed with a file becomes a source of the new project (`Source.feedRole` CLEAN, PROGRAM or DSK, `feedGroupId` = the import id, `syncOffsetMs` = where the file's start lies on the clean feed's clock). `program` is the broadcast as aired; it is an alias of `clean` (no second file) when no graphics were composited. A feed that was recorded in several parts is joined into one file, with a gap (black, or the key colour for the graphics recording) where the stream was not recording, so every file keeps one timeline.
+- Captions (VTT) become one transcript run per language on every picture feed, moved onto that file's own time (so the caption editor, burned and soft captions work on whichever feed you cut from).
+- The new project starts from the template named in the request (`templateKey` or `userTemplateId`), else `LCYT_IMPORT_TEMPLATE`, else a blank project sized like the recording. Its title is the broadcast title; the manifest's `variables` fill the project variables (names the variable rules refuse are skipped and listed in the notices). The working source is `program` when it has a file (or the `defaultFeed` asked for), cut into one section for the whole recording, or one per cue marker.
+- The graphics log (`dskEvents`) is kept with the import and shown in the Lähde step; it is not yet mapped to SaarnaVideo graphics.
+
+**Editing with the separate feeds** (Lähde step, on each source card):
+1. *Use this picture for the clips* moves the clips, sections and segments to another recording of the same stream, shifted by the offset, so every section stays on the same moment. A single section can be moved the same way from the section's source picker.
+2. *Lay the graphics over the clean picture* (on the graphics recording) adds one `feed-overlay` per clean clip. The renderer keys out the key colour LCYT used on air (`colorkey`, or nothing when the recording has alpha), fits the picture exactly like the clip underneath, and overlays it. The result equals the broadcast as aired, but the graphics are now a layer: *Cut out of the graphics* removes a stretch (a wrong lower third), and removing the layer leaves the clean picture. Graphics you add yourself still sit on top.
+3. Choosing the program feed removes the graphics layer, because those graphics are already in its picture.
+
+A key colour on H.264 leaves faint colour edges around the graphics; a recording with real alpha (a later LCYT option) avoids that.
+
+**Idempotent.** One broadcast (`origin.groupId`) makes one project. Delivering it again returns the existing import (HTTP 200); only a failed import is queued again, and it resumes: sources and caption runs that already arrived are kept. A job whose worker disappeared is marked failed within about 30 s, so the Lähde step offers *Try again*.
+
+**Data protection.** Recordings and transcripts of worship services can reveal religious belief and show identifiable people. Nothing is fetched unless an authenticated call asks, handoff is off by default on the LCYT side, and the files stay until someone deletes the project or source. Fixtures in this repository are synthetic.
+
+**Not done yet** (see `docs/plans/lcyt-import.md`): a scoped import token, a pull page that lists broadcasts from LCYT, mapping the graphics log to SaarnaVideo graphics, automatic audio sync when offsets are missing, `s3://` references (LCYT currently sends https links), a run against a real LCYT.
 
 ## API connectors and church-year data (varfetch)
 
@@ -171,7 +212,7 @@ How the audio reaches the service (`AUDITOR_STT_FETCH`):
 - `s3`: the worker stages 16 kHz mono audio in the staging bucket, sends a presigned URL (one hour), and deletes the object as soon as the service has downloaded it. The service must list the bucket host in its `AUDITOR_STT_SOURCE_URL_HOSTS`.
 - `s3-source`: the worker stages the *original* file and the service strips the audio on an fffleet worker (`AUDITOR_STT_STRIP=fleet` there), so no ffmpeg runs in SaarnaVideo's worker. The staged object is kept until the job ends. Partial ranges still use `s3`.
 
-The service keeps its own durable queue; the worker polls it and resumes after a restart. End-to-end transcription tests (`npm run test:e2e:transcription`) skip themselves unless `AUDITOR_STT_URL` points at a running service.
+The service keeps its own durable queue; the worker polls it and resumes after a restart. The worker sends `duration_seconds` (length of the audio it submits) and, while the auditor job is `queued`, copies the job's `queue` block into the MediaJob message (`STT: position 2, starts about 14:35`); the job panel's fleet strip adds `stt N queued` from the auditor's `/status`. End-to-end transcription tests (`npm run test:e2e:transcription`) skip themselves unless `AUDITOR_STT_URL` points at a running service.
 
 ## YouTube
 

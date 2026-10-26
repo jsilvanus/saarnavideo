@@ -144,6 +144,27 @@ For direct-to-S3 uploads, use `POST /projects/{projectId}/source/presigned-url`,
 - Supported formats: MP4, MOV, MKV, WebM
 - Kept permanently in the shared library
 
+#### YouTube Source
+
+```
+POST /projects/{projectId}/source
+Content-Type: application/json
+
+{ "youtubeUrl": "https://www.youtube.com/watch?v=..." }
+
+Response: 201 Created
+{ "id": "source-id", "type": "YOUTUBE", "status": "AVAILABLE", "youtubeVideoId": "...", "youtubeUrl": "...", "originalName": "Video title" }
+```
+
+`originalName` is the video title from YouTube's public oEmbed document (5 s timeout). When the lookup fails it is `null` and the URL stands in for the name. The video itself is not downloaded yet.
+
+```
+POST /projects/{projectId}/source/{sourceId}/download
+Response: 202 Accepted { "id": "job-id", "type": "DOWNLOAD", "status": "QUEUED", "progress": 0 }
+```
+
+Queues the DOWNLOAD job of a YouTube source (the same job a render or transcription queues when it needs the file). `400` for an uploaded source, `404` for a source of another project, `409` when the file is already on the server or a download of it is queued or running.
+
 **Identical bytes already in the library** are reused (200 instead of 201): the existing asset and its `assetKey` stay, and the response adds `"reused": true` and, when the name asked for differs, `"requestedKey": "logo"` so the caller knows overlays must use the returned `assetKey`.
 
 ### Assets (Images for Slates/Overlays)
@@ -283,6 +304,39 @@ Response: 202 Accepted
 }
 ```
 
+#### List jobs of all projects (job panel)
+
+```
+GET /jobs[?active=1][&recentMinutes=60][&recentLimit=15]
+
+Response: 200
+{
+  "jobs": [{ "id": "...", "projectId": "...", "projectTitle": "Sunday", "type": "TRANSCRIBE", "status": "RUNNING",
+             "phase": "transcribing", "progress": 42, "message": "STT: position 2, starts about 14:35",
+             "error": null, "etaSeconds": null, "workerId": "host-1234", "cancelRequested": false, "sourceId": "...",
+             "createdAt": "...", "startedAt": "...", "completedAt": null }],
+  "counts": { "running": 1, "queued": 3 }
+}
+```
+
+Every QUEUED and RUNNING job of every type (VIDEO, PREVIEW, THUMBNAIL, PODCAST, DOWNLOAD, TRANSCRIBE, IMPORT), oldest first, then the latest finished ones (`recentMinutes`, default 60, max 1440; `recentLimit`, default 15, max 100); `active=1` leaves the finished ones out. A queued TRANSCRIBE job waiting at the speech-to-text service carries `STT: position N, starts about HH:MM` in `message`. Cancel with `POST /projects/{projectId}/jobs/{jobId}/cancel`.
+
+#### Fleet status (fleet strip)
+
+```
+GET /fleet/status
+
+Response: 200
+{ "enabled": true,
+  "fleet": { "state": "ok", "workers": 3, "slotsUsed": 5, "slotsTotal": 8, "queued": 2, "draining": 1,
+             "pools": [{ "name": "hetzner", "instances": 1, "max": 5 }] },   // null without FFFLEET_URL; { "state": "offline" } when it does not answer
+  "local": null,                                                             // without a fleet: { "workers": 1, "lanes": 4 } (live worker leases, MAX_CONCURRENT_JOBS each)
+  "app": { "running": 1, "queued": 4 },
+  "stt": { "queued": 1, "running": 0 } }                                    // null unless AUDITOR_STT_URL and AUDITOR_STT_API_KEY are set and answer
+```
+
+`{ "enabled": false }` when `FLEET_STRIP=0`. The orchestrator's `GET /v1/capabilities` gives workers, slots and queue; `GET /v1/workers` and `GET /v1/pools` need an admin-scoped login and are used only when the credentials allow them (401/403: capabilities only). The answer is cached for 2 s, each upstream call has a 1.5 s timeout, and neither the address nor any credential is returned.
+
 #### Get Job Status
 
 ```
@@ -368,13 +422,33 @@ Add a `Range` header (or `?inline=1`, which also advertises `Accept-Ranges: byte
 Caption outputs carry a `language` (BCP 47 tag) and are named `saarnavideo-captions-<language>.<ext>`.
 They exist only for renders queued with `captions.mode = "soft"`, and share the video's `jobId`.
 
+When the output has a `label` (see below) the file is named after it instead: the label is sanitised for file names (path and shell characters become spaces), the extension comes from the output type, and `Content-Disposition` also carries the UTF-8 name as `filename*=UTF-8''...`, so `Pääsiäinen.mp4` arrives intact.
+
+#### Rename an output
+
+```
+PATCH /outputs/{outputId}
+Content-Type: application/json
+
+{ "label": "Sunnuntai 14.6. klo 10" }
+
+Response: 200 OK
+{ "id": "...", "projectId": "...", "jobId": "...", "type": "VIDEO", "preview": false,
+  "mimeType": "video/mp4", "language": null, "label": "Sunnuntai 14.6. klo 10",
+  "sizeBytes": "1234567890", "createdAt": "2026-10-18T14:32:01.000Z" }
+```
+
+- `label` is trimmed and kept to 120 characters (longer: `400`). An empty string (or `null`) clears it, and the download goes back to the default name.
+- Unknown output: `404`. Body without `label` or not JSON: `400`.
+- `GET /projects/{projectId}` lists every output with its `label`, `jobId` and `createdAt` (newest first). The outputs of one render share a `jobId`; the Julkaisu step groups them by it, newest render first, and shows each render's time (Intl, locale aware).
+
 #### Audio assets (voiceovers, podcast intro/outro)
 
 `POST /assets` and `POST /projects/{projectId}/assets` also accept audio: MP3, M4A, WAV, OGG or WebM
 (the type is taken from the MIME type, codec parameters such as `audio/webm;codecs=opus` are ignored, a
 missing/generic type falls back to the file extension). The asset is stored with `type: "AUDIO"` whatever
 `type` the form sends, the duration is probed with ffprobe (`durationMs` in every asset response) and files
-that ffprobe cannot read as audio return `400`. The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
+that ffprobe cannot read as audio return `400`. The probe runs on the fffleet fleet when `RENDER_EXECUTOR=fffleet` or `FFFLEET_URL` is set (see INTEGRATIONS.md, "Audio probing through the fleet"), otherwise with the local ffprobe. A missing ffprobe (local or on the fleet), a fleet that cannot be reached or a probe that does not finish within 60 s answers `503` with a readable message (e.g. `"ffprobe is not available on the app server"`). The size limit is `MAX_AUDIO_ASSET_SIZE_BYTES` (default
 200 MB, `413` above it). Identical bytes are deduplicated like images. `GET /assets/{id}` and
 `GET /projects/{projectId}/assets/{assetId}` serve audio with `Range` support.
 
@@ -667,6 +741,15 @@ Connectors are global (like the asset library) and configured on the Asetukset p
 - `POST /api/projects/[id]/fetch-variables` - `{ requestId, variables? }`; project variables fill `{{name}}`, `variables` overrides them (for example `paiva`, the service date). Returns `{ ok, status, values }` and saves nothing; the Lähde step shows old and new values and saves the accepted ones with the normal project PATCH. 502 with the remote error when the call fails.
 
 Private-network targets are blocked by default. Allow or deny hosts with the env vars `CONNECTOR_ALLOW` / `CONNECTOR_DENY` (comma lists; deny wins). They are env-only because the app has no login.
+
+## Imports from LCYT
+
+See [INTEGRATIONS.md](INTEGRATIONS.md#import-from-lcyt-finished-live-streams). All routes sit behind the access gate like the rest.
+
+- `POST /api/imports/lcyt` - `{ manifestUrl }` (a signed link to LCYT's handoff manifest) or an inline `manifest`; optional `templateKey`, `userTemplateId`, `defaultFeed` (`clean` | `program`). Validates the manifest, creates the project, the import and an `IMPORT` job. **202** `{ importId, projectId, status: "PENDING", created: true }`; **200** with `created: false` when that broadcast was already delivered (a failed import is queued again and reports `status: "PENDING"`); 400 request not usable, 422 manifest breaks the contract, 502 the manifest could not be fetched (including addresses the guard blocks), 404 unknown template.
+- `GET /api/imports` - the 50 latest imports.
+- `GET /api/imports/[id]` - `{ id, system, externalId, status: PENDING|DOWNLOADING|READY|FAILED, projectId, error, summary }`; `?events=1` adds `summary.dskEvents`, the graphics log. The stored manifest (it holds download links) is never returned.
+- `POST /api/imports/[id]/retry` - queue a failed import again (409 when it is not failed).
 
 ## Rate Limiting (Future)
 
