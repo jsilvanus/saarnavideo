@@ -460,6 +460,7 @@ export const fi = {
   "tl.horizontal": "Vaaka",
   "tl.vertical": "Pysty",
   "tl.empty": "Aikajana on tyhjä. Lisää osioita koostukseen alla.",
+  "tl.bin.help": "Vedä grafiikka kuvarivin päälle välikuvaksi tai grafiikkarivin päälle päällegrafiikaksi. Vedä puhe ääniriville miksattavaksi videon päälle tai kuvariville puheosioksi.",
   "tl.graphic": "Grafiikka",
   "tl.audio": "Ääni",
   "tl.source": "lähde",

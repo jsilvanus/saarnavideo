@@ -196,3 +196,20 @@
 .time-editor label { display: grid; gap: 2px; font-size: 13px; }
 .time-editor input { width: 90px; }
 .time-editor button { min-height: 36px; }
+
+.drop-mark {
+  position: absolute;
+  pointer-events: none;
+  background: #2563eb;
+  z-index: 3;
+}
+.timeline-h-track .drop-mark {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.timeline-v-track .drop-mark {
+  left: 0;
+  right: 0;
+  height: 2px;
+}
