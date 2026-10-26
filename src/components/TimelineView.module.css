@@ -213,3 +213,42 @@
   right: 0;
   height: 2px;
 }
+
+.podcast-slots {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.podcast-slots-help {
+  flex: 1;
+  align-self: center;
+  text-align: center;
+  font-size: 12px;
+  min-width: 160px;
+}
+.podcast-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 2px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.podcast-slot select {
+  max-width: 180px;
+}
+.podcast-slot button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.podcast-slot-over {
+  border-color: #2563eb;
+  background: #dbeafe;
+}

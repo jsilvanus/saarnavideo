@@ -11,6 +11,7 @@ import { overlayOutputBounds, overlayOutputRange, overlayStoredRange } from "@/r
 import { editRange, snapTime, type RangeEdit, type TimeRange } from "@/domain/range-edit";
 import { dropOnTimeline, laneAccepts, type DropLane, type DropPayload } from "@/domain/timeline-drop";
 import { RESOURCE_TYPE_PREFIX } from "./ResourceBin";
+import PodcastSlots, { type PodcastSlot } from "./PodcastSlots";
 import { formatTime, sourceLabel } from "./format";
 import styles from "./TimelineView.module.css";
 
@@ -26,6 +27,9 @@ type Props = {
   onChange?: (index: number, patch: { startSeconds: number; endSeconds: number }) => void;
   /** Receives the composition items after a resource from the resource bin was dropped on a lane. Without it the lanes accept no drops. */
   onItemsChange?: (items: TimelineItem[]) => void;
+  /** The podcast intro and outro (library audio asset ids). With `onPodcastSlot` they show as two slots at the ends of the audio lane. */
+  podcast?: { introAssetId?: string; outroAssetId?: string };
+  onPodcastSlot?: (slot: PodcastSlot, assetId: string | undefined) => void;
 };
 type Orientation = "horizontal" | "vertical";
 type Lane = "video" | "graphics" | "audio";
@@ -50,7 +54,7 @@ const DESKTOP_QUERY = "(min-width: 760px)";
  * an edge or the block (0.1 s steps, at least 0.5 s, inside the clip), or click it for exact start and end; arrow keys nudge
  * the focused block (Shift = 1 s, Alt = the end edge). Everything else is edited in CompositionEditor.
  */
-export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange }: Props) {
+export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange, podcast, onPodcastSlot }: Props) {
   const t = useT();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ key: string; range: TimeRange } | null>(null);
@@ -173,6 +177,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
     </div>
     {!blocks.length && !droppable ? <p className="muted">{t("tl.empty")}</p>
       : orientation === "horizontal" ? <Horizontal blocks={blocks} view={view} /> : <Vertical blocks={blocks} view={view} />}
+    {onPodcastSlot && <PodcastSlots introAssetId={podcast?.introAssetId} outroAssetId={podcast?.outroAssetId} audioAssets={audioAssets} onChange={onPodcastSlot} />}
     {onChange && blocks.some(b => b.editable) && !editing && <p className="muted">{t("tl.edit.hint")}</p>}
     {editing && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)} />}
   </div>;
