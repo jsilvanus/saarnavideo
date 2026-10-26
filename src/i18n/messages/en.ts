@@ -457,6 +457,8 @@ export const en: Record<keyof typeof fi, string> = {
   "tl.lane.video": "Video",
   "tl.lane.graphics": "Graphics",
   "tl.lane.audio": "Audio",
+  "tl.black": "Black screen",
+  "tl.crossfade": "Crossfade (s)",
   "tl.lane.sequences": "Sequences",
   "tl.sequence.add": "Add sequence",
   "tl.sequence.new": "New sequence",

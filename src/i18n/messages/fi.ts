@@ -455,6 +455,8 @@ export const fi = {
   "tl.lane.video": "Video",
   "tl.lane.graphics": "Grafiikat",
   "tl.lane.audio": "Ääni",
+  "tl.black": "Musta ruutu",
+  "tl.crossfade": "Ristiinhäivytys (s)",
   "tl.lane.sequences": "Jaksot",
   "tl.sequence.add": "Lisää jakso",
   "tl.sequence.new": "Uusi jakso",
