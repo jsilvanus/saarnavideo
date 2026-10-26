@@ -90,46 +90,23 @@ export default function StructureStep() {
           sources={selected.sources}
           sections={selected.definition?.sections ?? []}
           pendingFiles={pendingFiles}
+          extras={{
+            outWidth: currentDefinition().template?.width ?? 1920,
+            outHeight: currentDefinition().template?.height ?? 1080,
+            onSaveReframe: saveSectionReframe,
+            onChangeSource: changeSectionSource,
+          }}
           onSave={saveSections}
           onAdd={addSegment}
           onUseChapters={useYouTubeChapters}
         />
         <SectionManager
           scope="SOURCE"
+          hideList
           suggestedNames={selected.definition?.template?.sectionNames}
           sections={selected.definition?.sections ?? []}
           sources={selected.sources}
           onChange={saveSections}
-          renderActions={(section) => (
-            <>
-              {section.scope === "SOURCE" && !section.parentId && selected.sources.length > 1 && (
-                <select
-                  aria-label={t("str.sourceOf", { label: section.label })}
-                  className="inline-select"
-                  value={section.sourceId ?? ""}
-                  onChange={(e) => void changeSectionSource(section.id, e.target.value)}
-                >
-                  {selected.sources.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {sourceLabel(s)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {section.startSeconds !== undefined && (
-                <ReframeEditor
-                  title={t("str.sectionReframe", { label: section.label })}
-                  current={section.reframe}
-                  defaultLabel={t("str.projectDefault")}
-                  source={selected.sources.find((x) => x.id === section.sourceId)}
-                  atSeconds={section.startSeconds}
-                  outWidth={currentDefinition().template?.width ?? 1920}
-                  outHeight={currentDefinition().template?.height ?? 1080}
-                  onSave={(r) => saveSectionReframe(section.id, r)}
-                />
-              )}
-            </>
-          )}
         />
         <div className="list">
           {(selected.definition?.semanticSegments ?? []).map((s) => (
