@@ -3,29 +3,66 @@ import type { Section } from "@/domain/sections";
 /** The shortest sequence the timeline allows, in seconds. */
 export const MIN_SEQUENCE_SECONDS = 0.5;
 
-export type TimelineRow = { section: Section; depth: 0 | 1 };
+/** `depth` is the nesting level: 0 for a top-level sequence, 1 inside it, and so on. */
+export type TimelineRow = { section: Section; depth: number };
 
 /** Rounds to a tenth of a second, as the timeline stores positions. */
 export const tenth = (n: number) => Math.round(n * 10) / 10;
 
 /**
  * Rows for one source's positioned sections: each top-level sequence, followed by its nested
- * sequences, ordered by start time. Sections without a position are left out (the Structure
- * list still shows them).
+ * sequences at any depth (depth first), ordered by start time among siblings. Sections without a position
+ * are left out (`unplacedRows` lists them).
  */
 export function timelineRows(sections: Section[], sourceId: string): TimelineRow[] {
   const placed = (section: Section) => section.startSeconds !== undefined && section.endSeconds !== undefined;
   const byStart = (a: Section, b: Section) => (a.startSeconds ?? 0) - (b.startSeconds ?? 0);
-  const roots = sections
+  const rows: TimelineRow[] = [];
+  const visit = (section: Section, depth: number, seen: Set<string>) => {
+    if (seen.has(section.id)) return; // a parent cycle in bad data must not loop
+    seen.add(section.id);
+    rows.push({ section, depth });
+    sections.filter(child => child.parentId === section.id && placed(child)).sort(byStart).forEach(child => visit(child, depth + 1, seen));
+  };
+  const seen = new Set<string>();
+  sections
     .filter(section => section.scope === "SOURCE" && section.sourceId === sourceId && !section.parentId && placed(section))
-    .sort(byStart);
-  return roots.flatMap(root => [
-    { section: root, depth: 0 as const },
-    ...sections
-      .filter(section => section.parentId === root.id && placed(section))
-      .sort(byStart)
-      .map(child => ({ section: child, depth: 1 as const })),
-  ]);
+    .sort(byStart)
+    .forEach(root => visit(root, 0, seen));
+  return rows;
+}
+
+/** Ids of every section below `id`, at any depth. */
+export function descendantIds(sections: Section[], id: string): Set<string> {
+  const ids = new Set<string>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const section of sections) {
+      if (section.parentId && (section.parentId === id || ids.has(section.parentId)) && !ids.has(section.id)) { ids.add(section.id); grew = true; }
+    }
+  }
+  return ids;
+}
+
+/** The list without the section and everything nested in it. */
+export function removeWithDescendants(sections: Section[], id: string): Section[] {
+  const gone = descendantIds(sections, id);
+  gone.add(id);
+  return sections.filter(section => !gone.has(section.id));
+}
+
+/** Nesting level of a section (0 = top level). */
+export function sectionDepth(sections: Section[], section: Section): number {
+  let depth = 0;
+  let parentId = section.parentId;
+  while (parentId && depth < 20) {
+    const parent = sections.find(candidate => candidate.id === parentId);
+    if (!parent) break;
+    depth += 1;
+    parentId = parent.parentId;
+  }
+  return depth;
 }
 
 /** Length given to a new sequence when only one edge is known (seconds). */
@@ -39,7 +76,7 @@ export const DEFAULT_SEQUENCE_SECONDS = 10;
 export function unplacedRows(sections: Section[], sourceId: string): TimelineRow[] {
   const missing = (section: Section) => section.startSeconds === undefined || section.endSeconds === undefined;
   const mine = sections.filter(section => section.scope === "SOURCE" && section.sourceId === sourceId && missing(section));
-  return mine.map(section => ({ section, depth: section.parentId ? 1 as const : 0 as const }));
+  return mine.map(section => ({ section, depth: sectionDepth(sections, section) }));
 }
 
 /**
@@ -105,31 +142,60 @@ export function applySectionChange(sections: Section[], id: string, patch: Range
     ...(ranged ? { startSeconds: start, endSeconds: end } : {}),
   };
 
-  if (!ranged || target.parentId) {
-    if (target.parentId && ranged) {
-      const parent = sections.find(section => section.id === target.parentId);
-      if (parent?.startSeconds !== undefined && parent.endSeconds !== undefined) {
-        if (start < parent.startSeconds || end > parent.endSeconds) return { error: "outsideSource" };
-      }
-    }
-    return { sections: sections.map(section => (section.id === id ? updated : section)) };
+  if (ranged && target.parentId) {
+    const parent = sections.find(section => section.id === target.parentId);
+    if (parent?.startSeconds !== undefined && parent.endSeconds !== undefined && (start < parent.startSeconds || end > parent.endSeconds)) return { error: "outsideSource" };
   }
+  if (!ranged) return { sections: sections.map(section => (section.id === id ? updated : section)) };
 
-  // A top-level sequence moved: its nested sequences must still fit inside it.
-  const children = sections.filter(section => section.parentId === id);
-  const fitted: Section[] = [];
-  for (const child of children) {
-    const childStart = Math.max(child.startSeconds ?? start, start);
-    const childEnd = Math.min(child.endSeconds ?? end, end);
-    if (childEnd - childStart < MIN_SEQUENCE_SECONDS) return { error: "nestedTooShort" };
-    fitted.push({ ...child, startSeconds: tenth(childStart), endSeconds: tenth(childEnd) });
-  }
-  return {
-    sections: sections.map(section => {
-      if (section.id === id) return updated;
-      return fitted.find(child => child.id === section.id) ?? section;
-    }),
+  // The range changed: everything nested below it must still fit, at any depth.
+  const fitted = fitDescendants(sections, id, start, end);
+  if ("error" in fitted) return fitted;
+  return { sections: sections.map(section => (section.id === id ? updated : fitted.sections.get(section.id) ?? section)) };
+}
+
+/** Clamps the sequences below `id` into its new range, level by level; refuses when one would drop under the minimum. */
+function fitDescendants(sections: Section[], id: string, start: number, end: number): { sections: Map<string, Section> } | { error: "nestedTooShort" } {
+  const changed = new Map<string, Section>();
+  const walk = (parentId: string, from: number, to: number): "nestedTooShort" | undefined => {
+    for (const child of sections.filter(section => section.parentId === parentId)) {
+      const childStart = Math.max(child.startSeconds ?? from, from);
+      const childEnd = Math.min(child.endSeconds ?? to, to);
+      if (childEnd - childStart < MIN_SEQUENCE_SECONDS) return "nestedTooShort";
+      changed.set(child.id, { ...child, startSeconds: tenth(childStart), endSeconds: tenth(childEnd) });
+      const failure = walk(child.id, tenth(childStart), tenth(childEnd));
+      if (failure) return failure;
+    }
+    return undefined;
   };
+  const failure = walk(id, start, end);
+  return failure ? { error: failure } : { sections: changed };
+}
+
+/**
+ * Moves a sequence by `delta` seconds, keeping its length. With `withChildren` the sequences nested in it move
+ * the same distance; otherwise they stay and must still fit (else the move is refused). The move is limited to
+ * the source (0..duration) and to the parent sequence.
+ */
+export function moveSequence(sections: Section[], id: string, delta: number, durationSeconds: number, withChildren: boolean): RangeChange {
+  const target = sections.find(section => section.id === id);
+  if (!target || target.startSeconds === undefined || target.endSeconds === undefined) return { sections };
+  const parent = target.parentId ? sections.find(section => section.id === target.parentId) : undefined;
+  const floor = parent?.startSeconds ?? 0;
+  const ceiling = Math.min(parent?.endSeconds ?? Infinity, durationSeconds);
+  const length = target.endSeconds - target.startSeconds;
+  const start = tenth(Math.min(Math.max(target.startSeconds + delta, floor), ceiling - length));
+  const shift = tenth(start - target.startSeconds);
+  if (shift === 0) return { sections };
+  const moving = new Set<string>([id, ...(withChildren ? descendantIds(sections, id) : [])]);
+  const moved = sections.map(section => moving.has(section.id) && section.startSeconds !== undefined && section.endSeconds !== undefined
+    ? { ...section, startSeconds: tenth(section.startSeconds + shift), endSeconds: tenth(section.endSeconds + shift) }
+    : section);
+  if (withChildren) return { sections: moved };
+  const nowAt = moved.find(section => section.id === id)!;
+  const fitted = fitDescendants(moved, id, nowAt.startSeconds!, nowAt.endSeconds!);
+  if ("error" in fitted) return fitted;
+  return { sections: moved.map(section => fitted.sections.get(section.id) ?? section) };
 }
 
 /** The section after (or before) the current one in timeline order, wrapping at the ends. */

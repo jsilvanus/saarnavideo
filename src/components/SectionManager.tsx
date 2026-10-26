@@ -18,9 +18,11 @@ type Props = {
   onChange: (sections: Section[]) => Promise<void>;
   /** Extra per-section controls, e.g. the reframe button. */
   renderActions?: (section: Section) => ReactNode;
+  /** Leave out the list of sections (the source sequences are listed on the sequence timeline instead). */
+  hideList?: boolean;
 };
 
-export default function SectionManager({ scope, sections, sources = [], durationSeconds, suggestedNames, onChange, renderActions }: Props) {
+export default function SectionManager({ scope, sections, sources = [], durationSeconds, suggestedNames, onChange, renderActions, hideList }: Props) {
   const t = useT();
   const localizedTemplates = SECTION_TEMPLATES.map(item => ({ ...item, label: t(`sectionTemplate.${item.key}` as MessageKey), sections: t(`sectionTemplate.${item.key}.sections` as MessageKey).split("|") }));
   const templates = [...localizedTemplates, ...(suggestedNames?.length ? [{ key: "project-template", label: t("sec.templateOwn"), sections: suggestedNames }] : [])];
@@ -93,12 +95,12 @@ export default function SectionManager({ scope, sections, sources = [], duration
       <button disabled title={t("sec.aiHint")}>{t("sec.aiButton")}</button>
     </div>
     <p className="muted">{canPlace ? t("sec.placed", { start: formatTime(rangeStart), end: formatTime(rangeEnd) }) : t("sec.notPlaced")}</p>
-    <div className="list">
+    {!hideList && <div className="list">
       {visible.map(section => <div className="row" key={section.id}>
         <span><strong>{section.label}</strong><small>{section.startSeconds !== undefined ? formatTime(section.startSeconds) + " → " + formatTime(section.endSeconds ?? section.startSeconds) : t("sec.noPosition")} · {t(`sec.origin.${section.origin}` as MessageKey)}</small></span>
         <span className="button-row">{renderActions?.(section)}<button onClick={() => setParentId(section.id)}>{t("sec.inside.button")}</button><button onClick={() => void removeSection(section.id)}>{t("common.remove")}</button></span>
       </div>)}
       {!visible.length && <p className="muted">{parentId ? t("sec.noSub") : t("sec.none")}</p>}
-    </div>
+    </div>}
   </div>;
 }

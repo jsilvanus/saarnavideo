@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Section } from "@/domain/sections";
 import { createSectionsFromLines } from "@/domain/sections";
-import { applySectionChange, checkNewSequence, defaultNewRange, neighbourRow, timelineRows, unplacedRows } from "./sequence-timeline";
+import { applySectionChange, checkNewSequence, defaultNewRange, descendantIds, moveSequence, neighbourRow, removeWithDescendants, timelineRows, unplacedRows } from "./sequence-timeline";
 
 const section = (over: Partial<Section> & { id: string }): Section => ({
   label: over.id, scope: "SOURCE", sourceId: "s1", origin: "MANUAL", ...over,
@@ -112,5 +112,37 @@ describe("checkNewSequence", () => {
   });
   it("does not need a known duration", () => {
     expect(checkNewSequence([], { label: "x", start: 500, end: 600 })).toMatchObject({ ok: true });
+  });
+});
+
+describe("nesting at any depth", () => {
+  const deep: Section[] = [
+    section({ id: "a", startSeconds: 0, endSeconds: 100 }),
+    section({ id: "a1", parentId: "a", startSeconds: 10, endSeconds: 50 }),
+    section({ id: "a1x", parentId: "a1", startSeconds: 20, endSeconds: 30 }),
+    section({ id: "b", startSeconds: 100, endSeconds: 120 }),
+  ];
+  it("lists grandchildren under their parent with their depth", () => {
+    expect(timelineRows(deep, "s1").map(row => `${row.depth}:${row.section.id}`)).toEqual(["0:a", "1:a1", "2:a1x", "0:b"]);
+  });
+  it("finds and removes everything below a section", () => {
+    expect([...descendantIds(deep, "a")].sort()).toEqual(["a1", "a1x"]);
+    expect(removeWithDescendants(deep, "a1").map(s => s.id)).toEqual(["a", "b"]);
+  });
+  it("clamps grandchildren when a middle sequence shrinks, and refuses when one would vanish", () => {
+    const shrunk = applySectionChange(deep, "a1", { endSeconds: 25 }, 300);
+    expect("sections" in shrunk && shrunk.sections.find(s => s.id === "a1x")).toMatchObject({ startSeconds: 20, endSeconds: 25 });
+    expect(applySectionChange(deep, "a1", { endSeconds: 20.2 }, 300)).toEqual({ error: "nestedTooShort" });
+  });
+  it("moves a sequence with its children, or alone when they still fit", () => {
+    const withKids = moveSequence(deep, "a1", 10, 300, true);
+    expect("sections" in withKids && withKids.sections.filter(s => s.id.startsWith("a1")).map(s => s.startSeconds)).toEqual([20, 30]);
+    const alone = moveSequence(deep, "a1x", 5, 300, false);
+    expect("sections" in alone && alone.sections.find(s => s.id === "a1x")?.startSeconds).toBe(25);
+    expect(moveSequence(deep, "a1", 30, 300, false)).toEqual({ error: "nestedTooShort" });
+  });
+  it("keeps a moved sequence inside its parent", () => {
+    const result = moveSequence(deep, "a1", 500, 300, true);
+    expect("sections" in result && result.sections.find(s => s.id === "a1")).toMatchObject({ startSeconds: 60, endSeconds: 100 });
   });
 });
