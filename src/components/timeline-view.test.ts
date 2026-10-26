@@ -36,4 +36,17 @@ describe("timeline view blocks", () => {
     expect(graphics.find((b) => b.itemIndex === 4)).toMatchObject({ editable: true, bounds: { start: 0, end: 90 } });
     expect(graphics.find((b) => b.key === "feed-5")?.editable).toBeUndefined();
   });
+
+  it("puts composition sections with a range on the sequences lane", () => {
+    const items = [{ type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 60 }] as unknown as TimelineItem[];
+    const sections = [
+      { id: "c1", label: "Alku", scope: "COMPOSITION", startSeconds: 5, endSeconds: 20, origin: "MANUAL" },
+      { id: "c2", label: "Ei rajaa", scope: "COMPOSITION", origin: "MANUAL" },
+      { id: "s1", label: "Lähde", scope: "SOURCE", sourceId: "a", startSeconds: 0, endSeconds: 60, origin: "MANUAL" },
+    ] as never;
+    const { blocks } = buildBlocks(items, [], sections, [{ id: "a" }], []);
+    const seq = blocks.filter((b) => b.lane === "sequences");
+    expect(seq).toHaveLength(1);
+    expect(seq[0]).toMatchObject({ sectionId: "c1", start: 5, end: 20, editable: true, label: "Alku" });
+  });
 });

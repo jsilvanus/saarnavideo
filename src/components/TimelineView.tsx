@@ -30,19 +30,23 @@ type Props = {
   /** The podcast intro and outro (library audio asset ids). With `onPodcastSlot` they show as two slots at the ends of the audio lane. */
   podcast?: { introAssetId?: string; outroAssetId?: string };
   onPodcastSlot?: (slot: PodcastSlot, assetId: string | undefined) => void;
+  /** Receives all sections after a sequence of the finished video (a COMPOSITION section) was added, moved, renamed or removed. Without it the sequences lane is read-only and hidden when empty. */
+  onSections?: (sections: Section[]) => void;
 };
 type Orientation = "horizontal" | "vertical";
-type Lane = "video" | "graphics" | "audio";
+type Lane = "video" | "graphics" | "audio" | "sequences";
 type Block = {
-  key: string; lane: Lane; start: number; end: number; label: string; detail: string; tone: "clip" | "slate" | "graphic" | "audio" | "voice-picture";
+  key: string; lane: Lane; start: number; end: number; label: string; detail: string; tone: "clip" | "slate" | "graphic" | "audio" | "voice-picture" | "sequence";
   /** An overlay or overlay slate: its start and end can be edited. `itemIndex` is its place in the composition items. */
   itemIndex?: number;
+  /** A sequence: the id of its COMPOSITION section. */
+  sectionId?: string;
   editable?: boolean;
   /** Output seconds the block must stay inside (its clip, or the whole picture timeline). */
   bounds?: TimeRange;
 };
 
-const LANES: Array<{ id: Lane; labelKey: MessageKey }> = [{ id: "video", labelKey: "tl.lane.video" }, { id: "graphics", labelKey: "tl.lane.graphics" }, { id: "audio", labelKey: "tl.lane.audio" }];
+const LANES: Array<{ id: Lane; labelKey: MessageKey }> = [{ id: "video", labelKey: "tl.lane.video" }, { id: "graphics", labelKey: "tl.lane.graphics" }, { id: "audio", labelKey: "tl.lane.audio" }, { id: "sequences", labelKey: "tl.lane.sequences" }];
 const STORAGE_KEY = "saarnavideo.timelineOrientation";
 /** Narrower than this the timeline opens vertical (lanes as columns), wider it opens horizontal. */
 const DESKTOP_QUERY = "(min-width: 760px)";
@@ -54,7 +58,7 @@ const DESKTOP_QUERY = "(min-width: 760px)";
  * an edge or the block (0.1 s steps, at least 0.5 s, inside the clip), or click it for exact start and end; arrow keys nudge
  * the focused block (Shift = 1 s, Alt = the end edge). Everything else is edited in CompositionEditor.
  */
-export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange, podcast, onPodcastSlot }: Props) {
+export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange, podcast, onPodcastSlot, onSections }: Props) {
   const t = useT();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ key: string; range: TimeRange } | null>(null);
@@ -75,7 +79,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
   const [dropMark, setDropMark] = useState<{ lane: Lane; fraction: number } | null>(null);
   /** Drop handling for one lane's track: a marker while a fitting resource is dragged over, the drop itself on release. */
   function dropProps(lane: Lane, axis: "h" | "v", length: number): React.HTMLAttributes<HTMLElement> {
-    if (!onItemsChange) return {};
+    if (!onItemsChange || lane === "sequences") return {};
     const kindOf = (event: React.DragEvent): DropPayload["kind"] | undefined => (["graphic", "audio"] as const).find(kind => event.dataTransfer.types.includes(`${RESOURCE_TYPE_PREFIX}${kind}`));
     const fractionOf = (event: React.DragEvent<HTMLElement>) => {
       const rect = event.currentTarget.getBoundingClientRect();
@@ -104,10 +108,14 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
     };
   }
 
-  const editing = onChange ? blocks.find(b => b.key === selectedKey && b.editable) : undefined;
+  const editing = (onChange || onSections) ? blocks.find(b => b.key === selectedKey && b.editable) : undefined;
 
   /** Writes a block's new output range back as the item stores it. */
   function commitRange(block: Block, range: TimeRange) {
+    if (block.sectionId !== undefined) {
+      if (onSections && !(range.start === block.start && range.end === block.end)) onSections(sections.map(s => s.id === block.sectionId ? { ...s, startSeconds: range.start, endSeconds: range.end } : s));
+      return;
+    }
     if (!onChange || block.itemIndex === undefined) return;
     const item = (items as TimelineItem[])[block.itemIndex];
     if (!item || (range.start === block.start && range.end === block.end)) return;
@@ -118,7 +126,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
 
   const horizontal = orientation === "horizontal";
   function startDrag(event: ReactPointerEvent<HTMLElement>, block: Block, mode: "start" | "end" | "move") {
-    if (!block.editable || !onChange) return;
+    if (!block.editable || !(onChange || onSections)) return;
     const track = event.currentTarget.closest<HTMLElement>("[data-track]");
     if (!track) return;
     event.preventDefault();
@@ -151,7 +159,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
   }
 
   function onBlockKey(event: KeyboardEvent<HTMLElement>, block: Block) {
-    if (!block.editable || !onChange) return;
+    if (!block.editable || !(onChange || onSections)) return;
     const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
     const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
     if (!back && !forward) return;
@@ -163,9 +171,18 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
   }
 
   const droppable = Boolean(onItemsChange);
+  const hasSequences = blocks.some(b => b.lane === "sequences");
+  const lanes = LANES.filter(l => l.id !== "sequences" || onSections || hasSequences);
+  const addSequence = () => {
+    if (!onSections) return;
+    const at = Math.min(Math.max(0, total - 10), Math.max(0, ...sections.filter(s => s.scope === "COMPOSITION" && s.endSeconds !== undefined).map(s => s.endSeconds as number)));
+    const id = `seq-${Date.now().toString(36)}`;
+    onSections([...sections, { id, label: t("tl.sequence.new"), scope: "COMPOSITION", origin: "MANUAL", startSeconds: snapTime(at), endSeconds: snapTime(Math.min(Math.max(at + 10, 1), Math.max(total, 10))) } as Section]);
+    setSelectedKey(`sequence-${id}`);
+  };
   // An empty composition still shows the lanes when resources can be dropped, so the first item can be placed.
   const shownTotal = blocks.length ? total : 30;
-  const view = { total: shownTotal, drag, selectedKey, canEdit: Boolean(onChange), startDrag, onBlockKey, select: setSelectedKey, dropProps, dropMark };
+  const view = { total: shownTotal, drag, selectedKey, canEdit: Boolean(onChange || onSections), lanes, startDrag, onBlockKey, select: setSelectedKey, dropProps, dropMark };
 
   return <div className={styles["timeline-view"]} data-testid="timeline-view" data-orientation={orientation}>
     <div className={styles["timeline-view-head"]}>
@@ -178,8 +195,11 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
     {!blocks.length && !droppable ? <p className="muted">{t("tl.empty")}</p>
       : orientation === "horizontal" ? <Horizontal blocks={blocks} view={view} /> : <Vertical blocks={blocks} view={view} />}
     {onPodcastSlot && <PodcastSlots introAssetId={podcast?.introAssetId} outroAssetId={podcast?.outroAssetId} audioAssets={audioAssets} onChange={onPodcastSlot} />}
-    {onChange && blocks.some(b => b.editable) && !editing && <p className="muted">{t("tl.edit.hint")}</p>}
-    {editing && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)} />}
+    {onSections && <p><button type="button" onClick={addSequence}>{t("tl.sequence.add")}</button></p>}
+    {(onChange || onSections) && blocks.some(b => b.editable) && !editing && <p className="muted">{t("tl.edit.hint")}</p>}
+    {editing && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)}
+      onRename={editing.sectionId && onSections ? label => onSections(sections.map(s => s.id === editing.sectionId ? { ...s, label } : s)) : undefined}
+      onRemove={editing.sectionId && onSections ? () => { setSelectedKey(null); onSections(sections.filter(s => s.id !== editing.sectionId && s.parentId !== editing.sectionId)); } : undefined} />}
   </div>;
 }
 
@@ -188,6 +208,7 @@ type View = {
   drag: { key: string; range: TimeRange } | null;
   selectedKey: string | null;
   canEdit: boolean;
+  lanes: typeof LANES;
   startDrag: (event: ReactPointerEvent<HTMLElement>, block: Block, mode: "start" | "end" | "move") => void;
   onBlockKey: (event: KeyboardEvent<HTMLElement>, block: Block) => void;
   select: (key: string | null) => void;
@@ -208,7 +229,7 @@ function Horizontal({ blocks, view }: { blocks: Block[]; view: View }) {
   const { total } = view;
   return <div className={styles["timeline-h"]}>
     <div className={styles["timeline-h-ruler"]} aria-hidden="true">{ticks(total).map(tick => <span key={tick} style={{ left: `${(tick / total) * 100}%` }}>{formatTime(tick)}</span>)}</div>
-    {LANES.map(lane => <div className={styles["timeline-h-lane"]} key={lane.id}>
+    {view.lanes.map(lane => <div className={styles["timeline-h-lane"]} key={lane.id}>
       <span className={styles["timeline-lane-label"]}>{t(lane.labelKey)}</span>
       <div className={styles["timeline-h-track"]} data-track onClick={() => view.select(null)} {...view.dropProps(lane.id, "h", total)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "h")} />)}{view.dropMark?.lane === lane.id && <span className={styles["drop-mark"]} style={{ left: `${view.dropMark.fraction * 100}%` }} aria-hidden="true" />}</div>
     </div>)}
@@ -220,10 +241,10 @@ function Vertical({ blocks, view }: { blocks: Block[]; view: View }) {
   const { total } = view;
   // Tall enough to read, short enough not to scroll forever on an hour-long service.
   const height = Math.round(Math.min(1400, Math.max(480, total * 1.2)));
-  return <div className={styles["timeline-v"]} style={{ gridTemplateRows: `auto ${height}px` }}>
-    <span />{LANES.map(lane => <span className={styles["timeline-lane-label"]} key={lane.id}>{t(lane.labelKey)}</span>)}
+  return <div className={styles["timeline-v"]} style={{ gridTemplateRows: `auto ${height}px`, gridTemplateColumns: `48px repeat(${view.lanes.length}, minmax(0, 1fr))` }}>
+    <span />{view.lanes.map(lane => <span className={styles["timeline-lane-label"]} key={lane.id}>{t(lane.labelKey)}</span>)}
     <div className={styles["timeline-v-ruler"]} aria-hidden="true">{ticks(total).map(tick => <span key={tick} style={{ top: `${(tick / total) * 100}%` }}>{formatTime(tick)}</span>)}</div>
-    {LANES.map(lane => <div className={styles["timeline-v-track"]} data-track key={lane.id} onClick={() => view.select(null)} {...view.dropProps(lane.id, "v", total)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "v")} />)}{view.dropMark?.lane === lane.id && <span className={styles["drop-mark"]} style={{ top: `${view.dropMark.fraction * 100}%` }} aria-hidden="true" />}</div>)}
+    {view.lanes.map(lane => <div className={styles["timeline-v-track"]} data-track key={lane.id} onClick={() => view.select(null)} {...view.dropProps(lane.id, "v", total)}>{blocks.filter(b => b.lane === lane.id).map(b => <BlockView key={b.key} block={b} view={view} style={placement(b, view, "v")} />)}{view.dropMark?.lane === lane.id && <span className={styles["drop-mark"]} style={{ top: `${view.dropMark.fraction * 100}%` }} aria-hidden="true" />}</div>)}
   </div>;
 }
 
@@ -243,7 +264,7 @@ function BlockView({ block, view, style }: { block: Block; view: View; style: Re
 }
 
 /** Exact start and end (output seconds) of the selected graphics block. */
-function GraphicTimes({ block, total, onCommit, onClose }: { block: Block; total: number; onCommit: (range: TimeRange) => void; onClose: () => void }) {
+function GraphicTimes({ block, total, onCommit, onClose, onRename, onRemove }: { block: Block; total: number; onCommit: (range: TimeRange) => void; onClose: () => void; onRename?: (label: string) => void; onRemove?: () => void }) {
   const t = useT();
   const bounds = block.bounds ?? { start: 0, end: total };
   const [start, setStart] = useState(String(Number(block.start.toFixed(2))));
@@ -255,10 +276,11 @@ function GraphicTimes({ block, total, onCommit, onClose }: { block: Block; total
     onCommit(editRange(from, { edge, to: snapTime(n) }, bounds));
   };
   return <div className={styles["time-editor"]}>
-    <strong>{block.label}</strong>
+    {onRename ? <input aria-label={t("tl.sequence.name")} defaultValue={block.label} onBlur={e => { const v = e.target.value.trim(); if (v && v !== block.label) onRename(v); }} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /> : <strong>{block.label}</strong>}
     <label>{t("tl.edit.start")}<input type="number" step="0.1" min={bounds.start} max={bounds.end} value={start} onChange={e => setStart(e.target.value)} onBlur={() => apply("start", start)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
     <label>{t("tl.edit.end")}<input type="number" step="0.1" min={bounds.start} max={bounds.end} value={end} onChange={e => setEnd(e.target.value)} onBlur={() => apply("end", end)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
     <span className="muted">{t("tl.edit.within", { start: formatTime(bounds.start), end: formatTime(bounds.end) })}</span>
+    {onRemove && <button type="button" onClick={onRemove}>{t("tl.sequence.remove")}</button>}
     <button type="button" onClick={onClose}>{t("tl.edit.close")}</button>
   </div>;
 }
@@ -308,5 +330,10 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
     }
   });
   const total = Math.max(0.001, ...blocks.map(b => b.end));
-  return { blocks, total };
+  // Sequences of the finished video: COMPOSITION sections with a range, kept inside the timeline.
+  sections.forEach(section => {
+    if (section.scope !== "COMPOSITION" || section.startSeconds === undefined || section.endSeconds === undefined) return;
+    blocks.push({ key: `sequence-${section.id}`, lane: "sequences", start: section.startSeconds, end: section.endSeconds, label: section.label, detail: formatTime(section.endSeconds - section.startSeconds), tone: "sequence", sectionId: section.id, editable: true, bounds: { start: 0, end: Math.max(total, section.endSeconds) } });
+  });
+  return { blocks, total: Math.max(total, ...blocks.map(b => b.end)) };
 }
