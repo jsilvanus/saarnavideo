@@ -6,12 +6,14 @@ import { KEYFRAMES } from "./graphics-editor/constants";
 import { GraphicsEditorToolbar } from "./graphics-editor/GraphicsEditorToolbar";
 import { GraphicsEditorCanvas } from "./graphics-editor/GraphicsEditorCanvas";
 import { GraphicsEditorProperties } from "./graphics-editor/GraphicsEditorProperties";
+import { GraphicsEditorLayerList } from "./graphics-editor/GraphicsEditorLayerList";
 import { moveInFrame, resizeInFrame } from "./graphics-editor/geometry";
 import { boxToFrame, frameLayout } from "@/domain/frame-layout";
 import type { Asset, Item, Layer } from "./graphics-editor/types";
 import { createCaptionLayer } from "@/domain/caption-style";
 import AssetPicker from "./AssetPicker";
 import { useT } from "@/i18n/I18nProvider";
+import { requestJson } from "./api";
 
 /** Parses a serialised layer list; undefined when missing or not a valid array (old/simple graphic). */
 export function parseLayers<T = Layer>(raw: string | undefined): T[] | undefined {
@@ -34,7 +36,8 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
   const [grid, setGrid] = useState(false);
   const [safe, setSafe] = useState(false);
   const [aspectLock, setAspectLock] = useState(true);
-  const [assetPicker, setAssetPicker] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [showValues, setShowValues] = useState(true);
   const [scale, setScale] = useState(0.5);
@@ -98,13 +101,40 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
 
   function pointerUp() { const d = dragRef.current; dragRef.current = null; if (d) emit(layersRef.current); }
   const primary = layers.find(l => l.id === primaryId) ?? null;
-  const assetMap = useMemo(() => new Map(assets.map(a => [a.assetKey, a])), [assets]);
-  function chooseAsset(key: string) { if (!primary || primary.type !== "image") return; updateLayer(primary.id, { src: `/api/projects/${projectId}/assets/${assetMap.get(key)?.id ?? ""}` }); setAssetPicker(false); }
+  function chooseAsset(assetId: string) { if (!primary || primary.type !== "image") return; updateLayer(primary.id, { src: `/api/projects/${projectId}/assets/${assetId}` }); }
+
+  /** Uploads an image into the library, links it to the project and puts it into the selected image layer. */
+  async function uploadImage(file: File) {
+    if (!primary || primary.type !== "image") return;
+    const layerId = primary.id;
+    setUploading(true); setUploadError(null);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("assetKey", file.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 60) || "image");
+      const created = await requestJson<{ id: string }>(`/api/projects/${projectId}/assets`, { method: "POST", body: form }, t("ge.uploadFailed"));
+      updateLayer(layerId, { src: `/api/projects/${projectId}/assets/${created.id}` });
+      await onAssetsChanged?.();
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : t("ge.uploadFailed"));
+    } finally { setUploading(false); }
+  }
+
+  function moveLayer(id: string, direction: "up" | "down") {
+    const i = layers.findIndex(l => l.id === id), j = direction === "up" ? i + 1 : i - 1;
+    if (i < 0 || j < 0 || j >= layers.length) return;
+    const next = [...layers]; [next[i], next[j]] = [next[j], next[i]]; commit(next);
+  }
+  function selectFromList(id: string, additive: boolean) {
+    if (!additive) { selectOnly(id); return; }
+    const next = new Set(selectedIds); if (next.has(id)) next.delete(id); else next.add(id);
+    setSelectedIds(next); setPrimaryId(id);
+  }
 
   async function chooseLibraryAsset(asset: { id: string }) {
     if (!primary || primary.type !== "image") return;
     updateLayer(primary.id, { src: `/api/projects/${projectId}/assets/${asset.id}` });
-    setLibraryOpen(false); setAssetPicker(false);
+    setLibraryOpen(false);
     await onAssetsChanged?.();
   }
 
@@ -112,7 +142,7 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
     {libraryOpen && <AssetPicker projectId={projectId} kind="image" title={t("ge.pickFromLibrary")} linkedIds={assets.map(a => a.id)} onPick={chooseLibraryAsset} onClose={() => setLibraryOpen(false)} />}
     <style>{KEYFRAMES}</style>
     <GraphicsEditorToolbar grid={grid} safe={safe} onAdd={addLayer} onDuplicate={duplicateSelected} onDelete={removeSelected} showValues={showValues} hasVariables={variables.length > 0} onToggleValues={() => setShowValues(v => !v)} onToggleGrid={() => setGrid(v => !v)} onToggleSafe={() => setSafe(v => !v)} />
-    <div className="ge-layout"><GraphicsEditorCanvas layout={layout} margin={margin} scale={scale} variables={showValues ? variables : []} canvasRef={canvasRef} artboardRef={artboardRef} layers={layers} selectedIds={selectedIds} grid={grid} safe={safe} background={item.data?.backgroundColor ?? "#111"} onPointerMove={pointerMove} onPointerUp={pointerUp} onCanvasPointerDown={() => selectOnly(null)} onLayerPointerDown={beginPointer} /><GraphicsEditorProperties variables={variables} onInsertVariable={name => { if (primary && (primary.type === "text" || primary.type === "caption")) updateLayer(primary.id, { text: `${primary.text ?? ""}{{${name}}}` }); }} projectId={projectId} graphicId={graphicId} item={item} assets={assets} primary={primary} assetPicker={assetPicker} aspectLock={aspectLock} onLayer={updateLayer} onStyle={updateStyle} onChooseAsset={chooseAsset} onToggleAssetPicker={() => setAssetPicker(v => !v)} onOpenLibrary={() => setLibraryOpen(true)} onAspectLock={setAspectLock} /></div>
-    <style jsx global>{`.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px 10px;cursor:pointer}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:620px}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:calc(12px*var(--ge-inv,1));height:calc(12px*var(--ge-inv,1));background:#38bdf8;border:calc(2px*var(--ge-inv,1)) solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:calc(12px*var(--ge-inv,1));height:calc(12px*var(--ge-inv,1));background:#f472b6;border:calc(2px*var(--ge-inv,1)) solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:10px 14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}details.ge-fold{border-bottom:1px solid #263244}details.ge-fold>summary{cursor:pointer;padding:9px 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;list-style:none;display:flex;justify-content:space-between}details.ge-fold>summary::after{content:"▸"}details.ge-fold[open]>summary::after{content:"▾"}details.ge-fold>.ge-section{border-bottom:0;padding-top:0}.ge-chips{display:flex;flex-wrap:wrap;gap:5px}.ge-chips button{padding:3px 8px!important;font-size:12px}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
+    <div className="ge-layout"><GraphicsEditorLayerList layers={layers} selectedIds={selectedIds} primaryId={primaryId} assets={assets} onSelect={selectFromList} onMove={moveLayer} /><GraphicsEditorCanvas layout={layout} margin={margin} scale={scale} variables={showValues ? variables : []} canvasRef={canvasRef} artboardRef={artboardRef} layers={layers} selectedIds={selectedIds} grid={grid} safe={safe} background={item.data?.backgroundColor ?? "#111"} onPointerMove={pointerMove} onPointerUp={pointerUp} onCanvasPointerDown={() => selectOnly(null)} onLayerPointerDown={beginPointer} /><GraphicsEditorProperties variables={variables} onInsertVariable={name => { if (primary && (primary.type === "text" || primary.type === "caption")) updateLayer(primary.id, { text: `${primary.text ?? ""}{{${name}}}` }); }} projectId={projectId} graphicId={graphicId} item={item} assets={assets} primary={primary} uploading={uploading} uploadError={uploadError} aspectLock={aspectLock} onLayer={updateLayer} onStyle={updateStyle} onChooseAsset={chooseAsset} onUploadImage={file => void uploadImage(file)} onOpenLibrary={() => setLibraryOpen(true)} onAspectLock={setAspectLock} /></div>
+    <style jsx global>{`.graphics-editor{background:#111827;color:#e5e7eb;border-radius:10px;overflow:hidden;border:1px solid #263244}.ge-toolbar{display:flex;gap:6px;padding:9px;background:#0b1220;border-bottom:1px solid #263244;flex-wrap:wrap}.ge-toolbar button,.ge-properties button{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px 10px;cursor:pointer}.ge-toolbar button.ge-active{background:#164e63}.ge-spacer{flex:1}.ge-layout{display:grid;grid-template-columns:190px minmax(0,1fr) 300px;min-height:620px}.ge-layers{padding:10px 8px;background:#0b1220;border-right:1px solid #263244;overflow:auto}.ge-layers ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:3px}.ge-layers li{display:flex;gap:2px;align-items:center;border-radius:5px;border:1px solid transparent}.ge-layers li.ge-layer-selected{background:#1e293b;border-color:#334155}.ge-layers li.ge-layer-primary{border-color:#60a5fa}.ge-layer-pick{flex:1;min-width:0;display:flex;gap:6px;align-items:center;background:none;border:0;color:inherit;padding:6px;cursor:pointer;text-align:left}.ge-layer-icon{width:20px;text-align:center;opacity:.8;font-size:12px}.ge-layer-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ge-layer-order{display:flex}.ge-layer-order button{background:none;border:0;color:inherit;cursor:pointer;padding:4px 5px}.ge-layer-order button:disabled{opacity:.25;cursor:default}.ge-layer-empty{opacity:.6;padding:6px;font-size:13px}.ge-thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.ge-thumb{padding:3px!important;aspect-ratio:1;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#374151 0 25%,#1f2937 0 50%) 50%/12px 12px!important}.ge-thumb img{max-width:100%;max-height:100%;object-fit:contain}.ge-thumb.ge-active{outline:2px solid #60a5fa}.ge-canvas-wrap{padding:18px;display:flex;align-items:flex-start;justify-content:center;background:#0f172a;overflow:auto}.ge-canvas{width:min(100%,960px);aspect-ratio:16/9;position:relative;touch-action:none}.ge-artboard{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:#111}.ge-grid{position:absolute;inset:0;background-image:linear-gradient(#38bdf822 1px,transparent 1px),linear-gradient(90deg,#38bdf822 1px,transparent 1px);background-size:${100/96}% ${100/54}%;pointer-events:none}.ge-safe{position:absolute;pointer-events:none;border:1px dashed rgba(255,255,0,.6);z-index:1000}.safe90{left:5%;right:5%;top:5%;bottom:5%}.safe80{left:10%;right:10%;top:10%;bottom:10%;border-color:rgba(255,140,0,.6)}.ge-handle{position:absolute;width:calc(12px*var(--ge-inv,1));height:calc(12px*var(--ge-inv,1));background:#38bdf8;border:calc(2px*var(--ge-inv,1)) solid #fff;border-radius:2px;transform:translate(-50%,-50%);z-index:20}.ge-rotate{position:absolute;width:calc(12px*var(--ge-inv,1));height:calc(12px*var(--ge-inv,1));background:#f472b6;border:calc(2px*var(--ge-inv,1)) solid #fff;border-radius:50%;transform:translate(-50%,-50%);z-index:20}.ge-properties{padding:10px 14px;background:#111827;border-left:1px solid #263244;overflow:auto}.ge-section{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid #263244}.ge-section>b{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}.ge-section label{display:grid;gap:4px;font-size:12px;color:#94a3b8}.ge-section input,.ge-section select,.ge-section textarea{width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:5px;padding:7px}.ge-section textarea{min-height:90px;resize:vertical}.ge-two{display:grid;grid-template-columns:1fr 1fr;gap:7px}.ge-section span{color:#cbd5e1}details.ge-fold{border-bottom:1px solid #263244}details.ge-fold>summary{cursor:pointer;padding:9px 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;list-style:none;display:flex;justify-content:space-between}details.ge-fold>summary::after{content:"▸"}details.ge-fold[open]>summary::after{content:"▾"}details.ge-fold>.ge-section{border-bottom:0;padding-top:0}.ge-chips{display:flex;flex-wrap:wrap;gap:5px}.ge-chips button{padding:3px 8px!important;font-size:12px}@media(max-width:850px){.ge-layout{grid-template-columns:1fr}.ge-layers{border-right:0;border-bottom:1px solid #263244;max-height:180px}.ge-properties{border-left:0;border-top:1px solid #263244}.ge-canvas-wrap{min-height:400px}}`}</style>
   </div>;
 }

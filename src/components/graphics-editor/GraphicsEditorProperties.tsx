@@ -5,6 +5,7 @@ import { ANIMATIONS } from "./constants";
 import { parsePx, styleValue } from "./geometry";
 import type { ProjectVariable } from "@/domain/variables";
 import type { Asset, Item, Layer } from "./types";
+import { layerAssetId } from "./layer-label";
 
 async function exportGraphic(projectId: string, graphicId: string, t: TFunction) {
   const response = await fetch(`/api/projects/${projectId}/graphics/${graphicId}/export`);
@@ -24,18 +25,19 @@ async function importGraphic(projectId: string, file: File, t: TFunction) {
 }
 
 export const GraphicsEditorProperties: FC<{
-  projectId: string; graphicId: string; item: Item; assets: Asset[]; primary: Layer | null; assetPicker: boolean;
+  projectId: string; graphicId: string; item: Item; assets: Asset[]; primary: Layer | null; uploading?: boolean; uploadError?: string | null;
   aspectLock: boolean; variables?: ProjectVariable[]; onInsertVariable?: (name: string) => void;
   onLayer: (id: string, patch: Partial<Layer>) => void;
   onStyle: (id: string, key: string, value: string | number) => void;
-  onChooseAsset: (key: string) => void; onToggleAssetPicker: () => void; onOpenLibrary?: () => void;
+  onChooseAsset: (assetId: string) => void; onUploadImage?: (file: File) => void; onOpenLibrary?: () => void;
   onAspectLock: (value: boolean) => void;
-}> = ({ projectId, graphicId, item, assets, primary, assetPicker, aspectLock, variables = [], onInsertVariable, onLayer, onStyle, onChooseAsset, onToggleAssetPicker, onOpenLibrary, onAspectLock }) => {
+}> = ({ projectId, graphicId, item, assets, primary, uploading, uploadError, aspectLock, variables = [], onInsertVariable, onLayer, onStyle, onChooseAsset, onUploadImage, onOpenLibrary, onAspectLock }) => {
   const t = useT();
+  const images = assets.filter(a => a.type !== "FONT" && a.type !== "AUDIO");
   return (
   <aside className="ge-properties">
     <details className="ge-fold"><summary>{t("ge.package")}</summary><div className="ge-section"><button onClick={() => void exportGraphic(projectId, graphicId, t)}>{t("ge.export")}</button><label>{t("ge.import")}<input type="file" accept=".svgraphic,application/vnd.saarnavideo.graphic+json,application/json" onChange={e => { const file = e.target.files?.[0]; if (file) void importGraphic(projectId, file, t); e.currentTarget.value = ""; }} /></label></div></details>
-    {primary && <><details className="ge-fold" open><summary>{t("ge.layer", { id: primary.id })}</summary><div className="ge-section"><label>{t("ge.type")}<span>{primary.type}</span></label>{primary.type === "caption" && <small>{t("ge.captionHelp")}</small>}{(primary.type === "text" || primary.type === "caption") && <label>{primary.type === "caption" ? t("ge.sampleText") : t("ge.text")}<textarea value={primary.text ?? ""} onChange={e => onLayer(primary.id, { text: e.target.value })} /></label>}{(primary.type === "text" || primary.type === "caption") && variables.length > 0 && <div className="ge-chips" title={t("ge.insertVariable")}>{variables.map(v => <button key={v.key} type="button" onClick={() => onInsertVariable?.(v.key)}>{`{{${v.key}}}`}</button>)}</div>}{primary.type === "image" && <label>{t("ge.image")}<button onClick={onToggleAssetPicker}>{primary.src ? t("ge.changeImage") : t("ge.chooseImage")}</button></label>}
+    {primary && <><details className="ge-fold" open><summary>{t("ge.layer", { id: primary.id })}</summary><div className="ge-section"><label>{t("ge.type")}<span>{primary.type}</span></label>{primary.type === "caption" && <small>{t("ge.captionHelp")}</small>}{(primary.type === "text" || primary.type === "caption") && <label>{primary.type === "caption" ? t("ge.sampleText") : t("ge.text")}<textarea value={primary.text ?? ""} onChange={e => onLayer(primary.id, { text: e.target.value })} /></label>}{(primary.type === "text" || primary.type === "caption") && variables.length > 0 && <div className="ge-chips" title={t("ge.insertVariable")}>{variables.map(v => <button key={v.key} type="button" onClick={() => onInsertVariable?.(v.key)}>{`{{${v.key}}}`}</button>)}</div>}{primary.type === "image" && <div className="ge-images"><b>{t("ge.assets")}</b><div className="ge-thumbs">{images.map(a => <button key={a.id} title={a.assetKey} className={`ge-thumb ${layerAssetId(primary.src) === a.id ? "ge-active" : ""}`} onClick={() => onChooseAsset(a.id)}><img src={`/api/projects/${projectId}/assets/${a.id}`} alt={a.assetKey} /></button>)}</div>{!images.length && <span>{t("ge.noAssets")}</span>}{onOpenLibrary && <button data-testid="choose-from-library" onClick={onOpenLibrary}>{t("ge.fromLibrary")}</button>}{onUploadImage && <label className="ge-upload">{uploading ? t("ge.uploading") : t("ge.uploadImage")}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={e => { const file = e.target.files?.[0]; if (file) onUploadImage(file); e.currentTarget.value = ""; }} /></label>}{uploadError && <small role="alert">{uploadError}</small>}</div>}
       </div></details>
       <details className="ge-fold" open><summary>{t("ge.geometry")}</summary><div className="ge-section">
       <div className="ge-two"><label>X<input type="number" value={primary.x} onChange={e => onLayer(primary.id, { x: Number(e.target.value) })} /></label><label>Y<input type="number" value={primary.y} onChange={e => onLayer(primary.id, { y: Number(e.target.value) })} /></label></div>
@@ -61,7 +63,6 @@ export const GraphicsEditorProperties: FC<{
       {(primary.type === "rect" || primary.type === "ellipse") && <label>{t("ge.background")}<input type="text" value={styleValue(primary, "background", primary.type === "ellipse" ? "#fff" : "#000")} onChange={e => onStyle(primary.id, "background", e.target.value)} /></label>}
       <label>{t("ge.animation")}<select value={(primary.animation ?? "").split(" ")[0]} onChange={e => onLayer(primary.id, { animation: e.target.value ? `${e.target.value} 1s ease 0s 1 normal forwards` : undefined })}>{ANIMATIONS.map(v => <option key={v} value={v}>{t(`ge.anim.${v || "none"}` as MessageKey)}</option>)}</select></label>
     </div></details></>}
-    {assetPicker && <div className="ge-section"><b>{t("ge.assets")}</b>{assets.filter(a => a.type !== "FONT" && a.type !== "AUDIO").map(a => <button key={a.id} onClick={() => onChooseAsset(a.assetKey)}>{a.assetKey}</button>)}{!assets.some(a => a.type !== "FONT" && a.type !== "AUDIO") && <span>{t("ge.noAssets")}</span>}{onOpenLibrary && <button data-testid="choose-from-library" onClick={onOpenLibrary}>{t("ge.fromLibrary")}</button>}</div>}
   </aside>
 );
 };
