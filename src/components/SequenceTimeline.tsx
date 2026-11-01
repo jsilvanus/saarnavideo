@@ -11,6 +11,8 @@ import { sectionColor, type Section } from "@/domain/sections";
 import { applySectionChange, checkNewSequence, defaultNewRange, moveSequence, neighbourRow, removeWithDescendants, tenth, timelineRows, unplacedRows, type RangePatch, type TimelineRow } from "@/domain/sequence-timeline";
 import type { Reframe } from "@/domain/reframe";
 import ReframeEditor from "./ReframeEditor";
+import SectionAudio from "./SectionAudio";
+import type { ClipAudio } from "@/domain/clip-audio";
 import type { MessageKey } from "@/i18n/translate";
 import styles from "./SequenceTimeline.module.css";
 
@@ -31,6 +33,7 @@ import styles from "./SequenceTimeline.module.css";
 export type SequenceExtras = {
   outWidth: number; outHeight: number;
   onSaveReframe: (sectionId: string, reframe: Reframe | undefined) => Promise<void>;
+  onSaveAudio?: (sectionId: string, audio: ClipAudio | undefined) => Promise<void>;
   onChangeSource: (sectionId: string, sourceId: string) => Promise<void> | void;
 };
 
@@ -352,6 +355,7 @@ function SelectedSequence({ section, parentLabel, colour, current, source, sourc
         />
       </span>
     )}
+    {extras.onSaveAudio && <SectionAudio key={section.id} current={section.audio} onSave={audio => extras.onSaveAudio!(section.id, audio)} />}
     {!section.parentId && sources.length > 1 && (
       <label>{t("sec.source")}
         <select value={section.sourceId ?? ""} onChange={e => void extras.onChangeSource(section.id, e.target.value)}>

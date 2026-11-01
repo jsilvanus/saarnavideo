@@ -1,5 +1,6 @@
 import { baseItemDuration, isBaseItem, type AudioClipItem, type PodcastSettings, type ProjectDefinition } from "@/domain/project";
 import { layoutTimeline, timelineDuration } from "@/domain/timeline";
+import { resolveClipAudio } from "@/domain/clip-audio";
 import { AUDIO_NORMALIZE, audioAssetPath, audioClipFilter, audioMixFilters, formatSeconds, sourceAudioFilter, type FfmpegPlan } from "@/renderer/ffmpeg";
 
 /** Integrated loudness target for spoken word, in LUFS. */
@@ -113,7 +114,7 @@ export function buildPodcastRenderPlan(definition: ProjectDefinition, sourcePath
         if (!sourcePath) throw new Error(`Missing source path for sourceId: ${item.sourceId}`);
         sourceInputs.set(item.sourceId, addInput(sourcePath));
       }
-      filters.push(sourceAudioFilter(sourceInputs.get(item.sourceId)!, item.startSeconds, duration, label));
+      filters.push(sourceAudioFilter(sourceInputs.get(item.sourceId)!, item.startSeconds, duration, label, resolveClipAudio(item, definition.sections)));
     } else {
       filters.push(audioClipFilter(addInput(audioAssetPath(assetPaths, item.assetId)), item, label));
     }

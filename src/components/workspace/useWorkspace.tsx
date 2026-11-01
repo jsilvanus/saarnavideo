@@ -15,6 +15,7 @@ import { cutOutFeedOverlays, feedDeltaSeconds, moveToSource, withFeedOverlays, w
 import { type ProjectVariable } from "@/domain/variables";
 import DurationNotice from "@/components/DurationNotice";
 import type { Reframe } from "@/domain/reframe";
+import type { ClipAudio } from "@/domain/clip-audio";
 import { type Publication } from "@/components/PublishPanel";
 import type { Section as SemanticSection } from "@/domain/sections";
 import type { Graphic } from "@/domain/graphics";
@@ -782,6 +783,17 @@ export function useWorkspaceState() {
     });
     setMessage(t("ws.reframeSaved"));
   }
+  async function saveSectionAudio(id: string, audio: ClipAudio | undefined) {
+    const def = currentDefinition();
+    await saveDefinition({
+      ...def,
+      sections: (def.sections ?? []).map((x) => {
+        if (x.id !== id) return x;
+        const { audio: _old, ...rest } = x;
+        return audio ? { ...rest, audio } : rest;
+      }),
+    });
+  }
   const durationNotice = selected ? <DurationNotice definition={currentDefinition()} assets={selected.assets} /> : null;
   function compositionDurationSeconds() {
     return timelineDuration(currentDefinition().composition.items as TimelineItem[]);
@@ -1114,6 +1126,7 @@ export function useWorkspaceState() {
     cutOutFeedGraphics,
     saveOutput,
     saveSectionReframe,
+    saveSectionAudio,
     durationNotice,
     compositionDurationSeconds,
     refreshAssets,

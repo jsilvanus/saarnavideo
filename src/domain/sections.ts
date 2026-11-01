@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { clipAudioSchema } from "@/domain/clip-audio";
 import { reframeSchema } from "@/domain/reframe";
 
 export const sectionScopeSchema = z.enum(["SOURCE", "COMPOSITION"]);
@@ -16,6 +17,8 @@ export const sectionSchema = z.object({
   origin: sectionOriginSchema.default("MANUAL"),
   /** Crop / fit used for the clips made from this section (a clip can override it). */
   reframe: reframeSchema.optional(),
+  /** Sound settings (fader, high-pass, hum filter, normalise) for the clips made from this section; a clip can override it. */
+  audio: clipAudioSchema.optional(),
   /** Timeline colour (#rrggbb). Nested sections without one take their parent's colour. */
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
 }).superRefine((section, ctx) => {

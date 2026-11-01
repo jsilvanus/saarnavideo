@@ -67,6 +67,7 @@ export default function StructureStep() {
     saveSections,
     changeSectionSource,
     saveSectionReframe,
+    saveSectionAudio,
     durationNotice,
     compositionDurationSeconds,
     refreshAssets,
@@ -96,6 +97,7 @@ export default function StructureStep() {
             outWidth: currentDefinition().template?.width ?? 1920,
             outHeight: currentDefinition().template?.height ?? 1080,
             onSaveReframe: saveSectionReframe,
+            onSaveAudio: saveSectionAudio,
             onChangeSource: changeSectionSource,
           }}
           onSave={saveSections}
