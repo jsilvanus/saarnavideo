@@ -1,3 +1,4 @@
+import { previewSrc } from "./SvgRecolor";
 import type { FC, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { GRID, HANDLE_LIST } from "./constants";
 import { anchor, captionAlignment, layerContentStyle, layerFrameStyle } from "./geometry";
@@ -36,7 +37,7 @@ export const GraphicsEditorCanvas: FC<{
                   {l.type === "text" && <div style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden" }}>{applyVariables(l.text ?? "", variables)}</div>}
                   {l.type === "caption" && <div style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden", display: "flex", ...captionAlignment(l) }}><span style={{ maxWidth: "100%" }}>{applyVariables(l.text ?? "", variables)}</span></div>}
                   {l.type === "ellipse" && <div style={{ width: "100%", height: "100%", borderRadius: "50%", pointerEvents: "none" }} />}
-                  {l.type === "image" && <img src={l.src || ""} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none" }} />}
+                  {l.type === "image" && <img src={previewSrc(l)} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none" }} />}
                 </div>
                 {selectedIds.has(l.id) && <>
                   {HANDLE_LIST.map(h => { const a = anchor(h, display); return <span key={h} className="ge-handle" style={{ left: a.left, top: a.top, cursor: `${h}-resize` }} onPointerDown={e => onLayerPointerDown(e, l.id, "resize", h)} />; })}

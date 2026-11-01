@@ -5,6 +5,7 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { checkSvg, layerRecolor, recolorSvg, SVG_RECOLOR_STYLE_KEY } from "@/domain/svg";
 import { validateAssetKey, validateAssetType, validateImageFile, type ImageMetadata } from "@/integrations/image-assets";
 import { FfprobeUnavailableError, MAX_AUDIO_ASSET_SIZE, audioExtension, canonicalAudioType, probeAudioFile } from "@/integrations/audio-assets";
 import { prisma } from "@/lib/prisma";
@@ -13,7 +14,7 @@ import { getMediaStore } from "@/lib/media-store";
 import { rangedFileResponse, uploadScratchDir } from "./files";
 
 export const MAX_ASSET_SIZE = Number(process.env.MAX_ASSET_SIZE_BYTES ?? 10 * 1024 * 1024);
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
 
 function mimeForExtension(extension: string): string | undefined {
   return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" }[extension.toLowerCase()];
@@ -30,6 +31,15 @@ export async function assetFileResponse(asset: { storagePath: string; mimeType: 
     const store = await getMediaStore();
     const info = await store.stat(asset.storagePath);
     if (!info) return jsonError("Asset file unavailable", 404);
+    if (asset.mimeType === "image/svg+xml") {
+      // Served as inline markup with a policy that forbids scripts and fetches; `?recolor={"#000000":"#00a94f"}` previews a colour map.
+      const chunks: Buffer[] = [];
+      for await (const chunk of await store.stream(asset.storagePath)) chunks.push(Buffer.from(chunk));
+      let svg = Buffer.concat(chunks).toString("utf8");
+      const raw = request ? new URL(request.url).searchParams.get("recolor") : null;
+      if (raw) svg = recolorSvg(svg, layerRecolor({ [SVG_RECOLOR_STYLE_KEY]: raw }));
+      return new Response(svg, { headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:", "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600" } });
+    }
     return new Response(Readable.toWeb(await store.stream(asset.storagePath)) as ReadableStream, { headers: { "Content-Type": asset.mimeType, "Content-Length": String(info.size), "Cache-Control": "private, max-age=3600" } });
   } catch {
     return jsonError("Asset file unavailable", 404);
@@ -58,9 +68,14 @@ export type ImageUpload = { buffer: Buffer; mimeType: string; metadata: ImageMet
 /** Size/MIME/content checks for an uploaded image; returns the decoded upload or an error response. */
 export async function readImageUpload(file: File): Promise<ImageUpload | Response> {
   if (file.size > MAX_ASSET_SIZE) return jsonError("Asset is too large", 413);
-  const mimeType = file.type || "application/octet-stream";
-  if (!ALLOWED_IMAGE_TYPES.includes(mimeType)) return jsonError("File must be PNG, JPEG, or WebP", 400);
+  const mimeType = file.type === "image/svg+xml" || (!file.type && file.name.toLowerCase().endsWith(".svg")) ? "image/svg+xml" : file.type || "application/octet-stream";
+  if (!ALLOWED_IMAGE_TYPES.includes(mimeType)) return jsonError("File must be PNG, JPEG, WebP or SVG", 400);
   const buffer = Buffer.from(await file.arrayBuffer());
+  if (mimeType === "image/svg+xml") {
+    const checked = checkSvg(buffer.toString("utf8"));
+    if (!checked.ok) return jsonError(checked.reason, 400);
+    return { buffer, mimeType, metadata: { width: checked.width, height: checked.height, hasAlpha: true, mimeType, format: "svg" }, contentHash: sha256(buffer) };
+  }
   const validation = validateImageFile(buffer, mimeType);
   if (!validation.valid || !validation.metadata) return jsonError(validation.reason ?? "Unable to extract image metadata", 400);
   return { buffer, mimeType, metadata: validation.metadata, contentHash: sha256(buffer) };
