@@ -1,0 +1,22 @@
+.audio {
+  flex-basis: 100%;
+}
+.audio summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 6px 0;
+}
+.row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.row input[type="number"] {
+  width: 5em;
+}

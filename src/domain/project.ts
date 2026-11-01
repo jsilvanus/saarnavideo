@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { graphicSchema, type Graphic } from "@/domain/graphics";
 import { sectionSchema, type Section } from "@/domain/sections";
+import { clipAudioSchema } from "@/domain/clip-audio";
 import { reframeSchema } from "@/domain/reframe";
 import { evenDimension } from "@/domain/output-presets";
 import { projectVariablesSchema } from "@/domain/variables";
@@ -18,7 +19,7 @@ const sourceClipFields = {
   transitionIn: transitionSchema.optional(),
 };
 
-export const sourceClipSchema = z.object({ type: z.literal("source-clip"), sourceId: z.string().min(1), reframe: reframeSchema.optional(), ...sourceClipFields }).refine(...endAfterStart);
+export const sourceClipSchema = z.object({ type: z.literal("source-clip"), sourceId: z.string().min(1), reframe: reframeSchema.optional(), audio: clipAudioSchema.optional(), ...sourceClipFields }).refine(...endAfterStart);
 
 export const overlaySchema = z.object({
   type: z.literal("overlay"),

@@ -1,3 +1,4 @@
+import { clipAudioFilters, resolveClipAudio, type ClipAudio } from "@/domain/clip-audio";
 import { DESIGN_CANVAS } from "@/domain/output-presets";
 import { mapAxis } from "@/domain/frame-layout";
 import { resolveReframe, type Reframe } from "@/domain/reframe";
@@ -127,7 +128,11 @@ export function audioMixFilters(base: string, inputIndex: number, item: AudioCli
 function audioClipAsSlate(item: AudioClipItem): SlateItem {
   return { type: "slate", template: "rich", mode: "standalone", durationSeconds: item.endSeconds - item.startSeconds, graphicId: item.graphicId, backgroundImage: item.backgroundImage, data: item.data ?? {} };
 }
-export function sourceAudioFilter(inputIndex: number, start: number, duration: number, label: string): string { return `[${inputIndex}:a]atrim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)},${AUDIO_NORMALIZE}[${label}]`; }
+export function sourceAudioFilter(inputIndex: number, start: number, duration: number, label: string, audio?: ClipAudio): string {
+  // The section's sound settings go between the trim and the format filter: loudnorm resamples to 192 kHz, which AUDIO_NORMALIZE brings back to 48 kHz.
+  const chain = [`atrim=start=${formatSeconds(start)}:duration=${formatSeconds(duration)}`, "asetpts=PTS-STARTPTS", ...clipAudioFilters(audio), AUDIO_NORMALIZE.replace("asetpts=PTS-STARTPTS,", "")];
+  return `[${inputIndex}:a]${chain.join(",")}[${label}]`;
+}
 
 function richLayers(item: GraphicCarrierItem): RichLayer[] {
   try {
@@ -274,7 +279,7 @@ export function buildCompositionRenderPlan(definition: ProjectDefinition, source
     filters.push(`[${v}]fps=${fps},settb=AVTB,format=yuv420p[vn${index}]`);
     if (item.type === "source-clip") {
       const input = sourceIndexMap.get(item.sourceId)!;
-      filters.push(...sourceVideoFilters(input, item.startSeconds, duration, v, { width, height, bars: backgroundColor }, resolveReframe(item, definition.sections, template?.reframe)), sourceAudioFilter(input, item.startSeconds, duration, a));
+      filters.push(...sourceVideoFilters(input, item.startSeconds, duration, v, { width, height, bars: backgroundColor }, resolveReframe(item, definition.sections, template?.reframe)), sourceAudioFilter(input, item.startSeconds, duration, a, resolveClipAudio(item, definition.sections)));
       return;
     }
     const video = nextInput++;
