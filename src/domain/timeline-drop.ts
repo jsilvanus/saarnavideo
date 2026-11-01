@@ -5,7 +5,8 @@ import { layoutTimeline } from "@/domain/timeline";
 import { overlayStoredRange } from "@/renderer/overlay-timing";
 
 /** What the resource bin drags: a graphic or a library audio asset. */
-export type DropPayload = { kind: "graphic" | "audio"; id: string };
+/** `black` is the black screen: a slate without a graphic (the template background colour), `id` is ignored. */
+export type DropPayload = { kind: "graphic" | "audio" | "black"; id: string };
 export type DropLane = "video" | "graphics" | "audio";
 
 /** Default length of a graphic dropped on the graphics lane, and of its slate on the video lane (seconds). */
@@ -37,6 +38,11 @@ export function dropOnTimeline(items: TimelineItem[], { payload, lane, time, gra
   const slots = layoutTimeline(items);
   const total = slots.reduce((end, slot) => Math.max(end, slot.outputStart + slot.duration), 0);
   const at = Math.max(0, time);
+
+  if (payload.kind === "black") {
+    if (lane !== "video") return undefined;
+    return insertBase(items, at, { type: "slate", template: "rich", mode: "standalone", durationSeconds: DROPPED_GRAPHIC_SECONDS, data: {} } as unknown as TimelineItem);
+  }
 
   if (payload.kind === "graphic") {
     if (!graphics.some(graphic => graphic.id === payload.id)) return undefined;
@@ -77,5 +83,6 @@ function insertBase(items: TimelineItem[], time: number, item: TimelineItem): Ti
 
 /** Whether a resource can be dropped on a lane at all (used to show the drop marker only where it means something). */
 export function laneAccepts(kind: DropPayload["kind"], lane: DropLane): boolean {
+  if (kind === "black") return lane === "video";
   return kind === "graphic" ? lane !== "audio" : lane !== "graphics";
 }

@@ -49,4 +49,10 @@ describe("timeline view blocks", () => {
     expect(seq).toHaveLength(1);
     expect(seq[0]).toMatchObject({ sectionId: "c1", start: 5, end: 20, editable: true, label: "Alku" });
   });
+
+  it("lets the length of a standalone slate be edited, not its start", () => {
+    const items = [{ type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 20 }, { type: "slate", mode: "standalone", durationSeconds: 5, transitionIn: { type: "crossfade", durationSeconds: 1 }, data: {} }] as unknown as TimelineItem[];
+    const { blocks } = buildBlocks(items, [], [], [{ id: "a" }], []);
+    expect(blocks.find((b) => b.itemIndex === 1)).toMatchObject({ lane: "video", editable: true, lengthOnly: true, crossfade: 1, start: 19, end: 24 });
+  });
 });

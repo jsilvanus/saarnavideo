@@ -19,6 +19,14 @@ describe("dropOnTimeline", () => {
     expect(types(dropOnTimeline(items, { ...base, payload: { kind: "graphic", id: "g" }, lane: "video", time: 500 }))).toEqual(["source-clip", "source-clip", "slate"]);
   });
 
+  it("makes the black screen a slate without a graphic, on the video lane only", () => {
+    const next = dropOnTimeline(items, { ...base, payload: { kind: "black", id: "black" }, lane: "video", time: 5 });
+    expect(next?.[0]).toMatchObject({ type: "slate", mode: "standalone", durationSeconds: 5 });
+    expect((next?.[0] as { graphicId?: string }).graphicId).toBeUndefined();
+    expect(dropOnTimeline(items, { ...base, payload: { kind: "black", id: "black" }, lane: "graphics", time: 5 })).toBeUndefined();
+    expect(laneAccepts("black", "video")).toBe(true);
+    expect(laneAccepts("black", "audio")).toBe(false);
+  });
   it("makes a graphic on the graphics lane an overlay anchored to the section under it, in source seconds", () => {
     const next = dropOnTimeline(items, { ...base, payload: { kind: "graphic", id: "g" }, lane: "graphics", time: 40 })!;
     expect(next.at(-1)).toMatchObject({ type: "overlay", sectionId: "sb", startSeconds: 110, endSeconds: 115 });
