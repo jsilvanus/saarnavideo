@@ -1,3 +1,4 @@
+import { prepareSvgAssets } from "./svg-assets";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -248,9 +249,11 @@ async function runFfmpegJob(job: Awaited<ReturnType<typeof claimJob>>, type: "VI
   for (const warning of findUnresolvedImageRefs(definition, project.assets)) await logJobEvent(job.id, "WARN", warning);
   // Voiceovers are looked up by id in the whole library (they need not be linked to the project like images do).
   for (const asset of await prisma.asset.findMany({ where: { id: { in: referencedAudioAssetIds(definition) } } })) assetRefs.set(asset.id, asset.storagePath);
-  const assetPaths = await localizePaths(files, assetRefs);
+  const localAssetPaths = await localizePaths(files, assetRefs);
+  const svgReady = await prepareSvgAssets(definition, localAssetPaths, path.join(files.scratchDir, `svg-${job.id}`));
+  const assetPaths = svgReady.assetPaths;
   const outputPath = path.join(files.scratchDir, `${project.id}-${job.id}${type === "PREVIEW" ? ".preview" : ""}.mp4`); const captions = readCaptionOptions(job.parameters); const prepared = captions.mode !== "none" ? await prepareCaptions(job.id, definition, outputPath, captions) : null; const captionFiles = prepared?.soft ?? null;
-  const plan = buildCompositionRenderPlan(definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined, feedKeys });
+  const plan = buildCompositionRenderPlan(svgReady.definition, sourcePaths, outputPath, assetPaths, { captions: captionFiles ? { path: captionFiles.srtPath, language: toIso6392(captionFiles.language) } : undefined, burnedCaptions: prepared?.burn ?? undefined, preview: type === "PREVIEW" ? { width: 640 } : undefined, feedKeys });
   const phase = type === "PREVIEW" ? "PREVIEW_RENDER" : "ENCODING"; const message = type === "PREVIEW" ? "Rendering preview" : "Rendering video"; const outputSeconds = definition.composition.items.length ? timelineDuration(definition.composition.items) : definition.composition.sourceEndSeconds - definition.composition.sourceStartSeconds; const totalMs = Math.max(1, Math.round(outputSeconds * 1000));
   await updateProgress(job.id, { phase, message, progress: 0, totalMs: BigInt(totalMs) }, true);
   const fontFile = definition.template?.fontFile; const remote = { files: [...sourcePaths.values(), ...assetPaths.values(), ...(captionFiles ? [captionFiles.srtPath] : []), ...(prepared?.burn ? [prepared.burn.assPath] : [])], fonts: fontFile && prepared?.burn?.fontsDir ? { file: fontFile, dir: prepared.burn.fontsDir } : undefined, outputPath };

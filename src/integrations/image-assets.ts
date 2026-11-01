@@ -29,7 +29,7 @@ export interface ImageMetadata {
   height: number;
   hasAlpha: boolean;
   mimeType: string;
-  format: "png" | "jpeg" | "webp";
+  format: "png" | "jpeg" | "webp" | "svg";
 }
 
 /**
@@ -266,6 +266,7 @@ export function getExtensionFromMimeType(mimeType: string): string {
   const ext = mimeType.split("/")[1];
   if (!ext || ext === "octet-stream") return "bin";
   if (ext === "jpeg") return "jpg";
+  if (ext === "svg+xml") return "svg";
   return ext;
 }
 

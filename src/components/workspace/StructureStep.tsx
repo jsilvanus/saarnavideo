@@ -131,7 +131,7 @@ export default function StructureStep() {
         <div className="form-grid four">
           <label>
             {t("str.imageFile")}
-            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setAssetFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(e) => setAssetFile(e.target.files?.[0] ?? null)} />
           </label>
           <label>
             {t("str.name")}
