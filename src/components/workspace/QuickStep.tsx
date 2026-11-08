@@ -9,10 +9,8 @@ import { formatTime, sourceLabel } from "@/components/format";
 import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { ProjectTitle } from "./ProjectTitle";
-import { jobStatusLabel, outputLabel } from "./helpers";
+import { outputLabel } from "./helpers";
 import type { CaptionMode, Source } from "./types";
-
-const ACTIVE = ["QUEUED", "ACQUIRING_SOURCE", "PROCESSING", "RENDERING"];
 
 /** Length of a source in seconds when it is known (uploads, or a YouTube reference duration), otherwise null. */
 function knownSeconds(source: Source) {
@@ -41,7 +39,6 @@ export default function QuickStep() {
     generate,
     previewRender,
     previewBusy,
-    stopJob,
     refreshPublications,
     openProject,
     durationNotice,
@@ -55,7 +52,6 @@ export default function QuickStep() {
   const manual = Number(manualSeconds.replace(",", "."));
   const wholeSeconds = firstSource ? (knownSeconds(firstSource) ?? (manual > 0 ? manual : null)) : null;
   const jobs = selected.jobs ?? [];
-  const activeJob = jobs.find((j) => ACTIVE.includes(j.status));
   const video = selected.outputs?.find((o) => o.type === "VIDEO" && !o.preview);
   const failed = jobs.find((j) => j.status === "FAILED" && !j.preview);
   const wholeSource = () => {
@@ -149,15 +145,7 @@ export default function QuickStep() {
             {t("quick.finalVideo")}
           </button>
         </div>
-        {activeJob && (
-          <p className="job-row">
-            <strong>{activeJob.preview ? t("quick.jobPreview") : t("quick.jobVideo")} {jobStatusLabel(t, activeJob.status)}</strong> <span>{activeJob.progress}%</span>
-            <button className="stop-button" onClick={() => void stopJob(activeJob)}>
-              {t("common.stop")}
-            </button>
-          </p>
-        )}
-        {failed && !activeJob && <p className="error">{failed.errorMessage ? t("quick.lastFailedWith", { error: failed.errorMessage }) : t("quick.lastFailed")}</p>}
+        {failed && <p className="error">{failed.errorMessage ? t("quick.lastFailedWith", { error: failed.errorMessage }) : t("quick.lastFailed")}</p>}
         {video && (
           <div className="downloads">
             <video controls preload="metadata" src={`/api/outputs/${video.id}`} />

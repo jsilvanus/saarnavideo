@@ -989,6 +989,7 @@ export const fi = {
   "seq.chapters.confirm": "Korvataanko tämän lähteen {count} jaksoa {chapters} YouTube-luvulla? Nykyiset jaksot ja niistä leikatut pätkät poistetaan.",
   "ws.chaptersApplied": "Jaksoiksi asetettiin {count} YouTube-lukua.",
   "tl.edit.hint": "Vedä grafiikan reunoja tai lohkoa, tai klikkaa lohkoa ja kirjoita ajat. Askel 0,1 s, vähintään 0,5 s, pysyy leikkeen sisällä.",
+  "tl.clampOverlays": "Rajoita grafiikka leikkeen reunoihin",
   "tl.edit.start": "Alku",
   "tl.edit.end": "Loppu",
   "tl.edit.within": "Sallittu väli {start}–{end}.",

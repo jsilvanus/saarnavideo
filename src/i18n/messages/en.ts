@@ -991,6 +991,7 @@ export const en: Record<keyof typeof fi, string> = {
   "seq.chapters.confirm": "Replace the {count} sequences of this source with the {chapters} YouTube chapters? The current sequences and the clips cut from them are removed.",
   "ws.chaptersApplied": "Set {count} YouTube chapters as sequences.",
   "tl.edit.hint": "Drag the edges or the body of a graphic, or click it and type the times. Steps of 0.1 s, at least 0.5 s, stays inside the clip.",
+  "tl.clampOverlays": "Clamp graphics to clip boundaries",
   "tl.edit.start": "Start",
   "tl.edit.end": "End",
   "tl.edit.within": "Allowed range {start}–{end}.",

@@ -991,6 +991,7 @@ export const sv: Record<keyof typeof fi, string> = {
   "seq.chapters.confirm": "Ska de {count} sekvenserna för den här källan ersättas med de {chapters} YouTube-kapitlen? Nuvarande sekvenser och klippen som skurits från dem tas bort.",
   "ws.chaptersApplied": "{count} YouTube-kapitel lades in som sekvenser.",
   "tl.edit.hint": "Dra i grafikens kanter eller block, eller klicka på den och skriv tiderna. Steg om 0,1 s, minst 0,5 s, stannar inom klippet.",
+  "tl.clampOverlays": "Begränsa grafik till klippets gränser",
   "tl.edit.start": "Start",
   "tl.edit.end": "Slut",
   "tl.edit.within": "Tillåtet intervall {start}–{end}.",

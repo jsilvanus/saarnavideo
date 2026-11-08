@@ -33,6 +33,8 @@ type Props = {
   onPodcastSlot?: (slot: PodcastSlot, assetId: string | undefined) => void;
   /** Receives all sections after a sequence of the finished video (a COMPOSITION section) was added, moved, renamed or removed. Without it the sequences lane is read-only and hidden when empty. */
   onSections?: (sections: Section[]) => void;
+  /** When false, overlay graphics are not constrained to their section clip; they can be dragged beyond clip boundaries. Default true. */
+  clampOverlays?: boolean;
 };
 type Orientation = "horizontal" | "vertical";
 type Lane = "video" | "graphics" | "audio" | "captions" | "sequences";
@@ -65,7 +67,7 @@ const DESKTOP_QUERY = "(min-width: 760px)";
  * an edge or the block (0.1 s steps, at least 0.5 s, inside the clip), or click it for exact start and end; arrow keys nudge
  * the focused block (Shift = 1 s, Alt = the end edge). Everything else is edited in CompositionEditor.
  */
-export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange, podcast, onPodcastSlot, onSections }: Props) {
+export default function TimelineView({ items, graphics = [], sections = [], sources, audioAssets = [], onChange, onItemsChange, podcast, onPodcastSlot, onSections, clampOverlays = true }: Props) {
   const t = useT();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ key: string; range: TimeRange } | null>(null);
@@ -81,7 +83,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
     try { window.localStorage.setItem(STORAGE_KEY, next); } catch { /* storage unavailable */ }
   };
 
-  const { blocks, total } = useMemo(() => buildBlocks(items as TimelineItem[], graphics, sections, sources, audioAssets, t), [items, graphics, sections, sources, audioAssets, t]);
+  const { blocks, total } = useMemo(() => buildBlocks(items as TimelineItem[], graphics, sections, sources, audioAssets, t, clampOverlays), [items, graphics, sections, sources, audioAssets, t, clampOverlays]);
 
   const [dropMark, setDropMark] = useState<{ lane: Lane; fraction: number } | null>(null);
   /** Drop handling for one lane's track: a marker while a fitting resource is dragged over, the drop itself on release. */
@@ -337,7 +339,7 @@ function ticks(total: number): number[] {
 }
 
 /** Blocks on the output timeline, in seconds. Section overlays are placed on their clip exactly as the renderer places them. */
-export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections: Section[], sources: Source[], audioAssets: AudioAsset[], t: TFunction = makeT("fi")): { blocks: Block[]; total: number } {
+export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections: Section[], sources: Source[], audioAssets: AudioAsset[], t: TFunction = makeT("fi"), clampOverlays = true): { blocks: Block[]; total: number } {
   const graphicName = (id?: string) => graphics.find(g => g.id === id)?.name ?? t("tl.graphic");
   const audioName = (id?: string) => audioAssets.find(a => a.id === id)?.assetKey ?? t("tl.audio");
   const sourceName = (id: string) => { const source = sources.find(s => s.id === id); return source ? sourceLabel(source) : t("tl.source"); };
@@ -364,8 +366,8 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
       if (item.startSeconds === undefined || item.endSeconds === undefined) return;
       const range = item.type === "overlay" ? overlayOutputRange(item, items, { sections }) : { startSeconds: item.startSeconds, endSeconds: item.endSeconds };
       if (!range) return;
-      // A section overlay stays in its clip; any other graphic stays on the picture timeline (and where it already is).
-      const clip = item.type === "overlay" ? overlayOutputBounds(item, items, { sections }) : undefined;
+      // A section overlay stays in its clip (when clamped); any other graphic stays on the picture timeline.
+      const clip = clampOverlays && item.type === "overlay" ? overlayOutputBounds(item, items, { sections }) : undefined;
       const bounds = clip ? { start: clip.startSeconds, end: clip.endSeconds } : { start: 0, end: Math.max(pictureEnd, range.endSeconds) };
       blocks.push({ key: `graphic-${index}`, lane: "graphics", start: range.startSeconds, end: range.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || t("tl.graphic"), detail: item.type === "slate" ? t("tl.overlayBackground") : t("tl.overlay"), tone: "graphic", itemIndex: index, editable: true, bounds });
     } else if (item.type === "caption-style") {

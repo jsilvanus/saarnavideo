@@ -108,7 +108,7 @@ function sessionFromSource(projectId: string, source: Source, upload: SourceUplo
   };
 }
 
-export function useWorkspaceState() {
+export function useWorkspaceState(initialProjectId?: string) {
   const t = useT();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
@@ -178,7 +178,10 @@ export function useWorkspaceState() {
       setSelected(null);
       setSelectedId(null);
     }
-    if (!selectedId && data[0]) await openProject(data[0].id);
+    if (!selectedId) {
+      const toOpen = initialProjectId ?? data[0]?.id;
+      if (toOpen) await openProject(toOpen);
+    }
   }
   /** Reloads only the publications (a few rows) of the open project; the publish panel polls this while an upload runs. */
   async function refreshPublications(id: string) {
@@ -1159,8 +1162,8 @@ export function useWorkspaceState() {
 export type Workspace = ReturnType<typeof useWorkspaceState>;
 const WorkspaceContext = createContext<Workspace | null>(null);
 
-export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const workspace = useWorkspaceState();
+export function WorkspaceProvider({ children, initialProjectId }: { children: ReactNode; initialProjectId?: string }) {
+  const workspace = useWorkspaceState(initialProjectId);
   return <WorkspaceContext.Provider value={workspace}>{children}</WorkspaceContext.Provider>;
 }
 

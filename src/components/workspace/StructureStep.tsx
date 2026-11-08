@@ -83,6 +83,7 @@ export default function StructureStep() {
     editorItem,
   } = useOpenWorkspace();
   const t = useT();
+  const [clampOverlays, setClampOverlays] = useState(true);
   return (
     <div className="step-stack">
       <Panel
@@ -268,7 +269,12 @@ export default function StructureStep() {
       >
         {durationNotice}
         <ResourceBin graphics={selected.definition?.graphics ?? []} audioAssets={(selected.assets ?? []).filter((a) => a.type === "AUDIO")} />
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: "normal", marginBottom: 8 }}>
+          <input type="checkbox" checked={clampOverlays} onChange={(e) => setClampOverlays(e.target.checked)} />
+          {t("tl.clampOverlays")}
+        </label>
         <TimelineView
+          clampOverlays={clampOverlays}
           podcast={selected.definition?.podcast}
           onPodcastSlot={(slot, assetId) => {
             const def = currentDefinition();
