@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useT } from "@/i18n/I18nProvider";
-import GraphicsEditor from "@/components/GraphicsEditor";
+import GraphicsEditorDialog from "@/components/GraphicsEditorDialog";
 import AssetPicker from "@/components/AssetPicker";
 import { formatTime, sourceLabel } from "@/components/format";
 import CompositionEditor from "@/components/CompositionEditor";
@@ -18,29 +18,6 @@ import { useOpenWorkspace } from "./useWorkspace";
 import { Panel } from "./Panel";
 import { graphicVariables } from "./helpers";
 import type { Definition } from "./types";
-
-// Name of the open graphic, edited in place. Saved on blur or Enter; an empty name is discarded.
-function GraphicNameInput({ name, onRename }: { name: string; onRename: (name: string) => void }) {
-  const t = useT();
-  const [draft, setDraft] = useState(name);
-  useEffect(() => setDraft(name), [name]);
-  return (
-    <input
-      className="graphic-name-input"
-      aria-label={t("str.graphicName")}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        const next = draft.trim();
-        if (next && next !== name) onRename(next);
-        else setDraft(name);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-    />
-  );
-}
 
 export default function StructureStep() {
   const {
@@ -179,47 +156,25 @@ export default function StructureStep() {
           {!selected.definition?.graphics?.length && <p className="muted">{t("str.noGraphics")}</p>}
         </div>
         {selectedGraphic && editorItem && (
-          <>
-            <div className="graphic-editor-header" id="graphic-editor">
-              <div>
-                <GraphicNameInput key={selectedGraphic.id} name={selectedGraphic.name} onRename={(name) => void renameGraphic(selectedGraphic.id, name)} />
-                <small>
-                  {selectedGraphic.width} × {selectedGraphic.height}
-                </small>
-              </div>
-              <div className="graphic-editor-actions">
-                <button
-                  className="icon-button"
-                  title={t("str.duplicateGraphic")}
-                  aria-label={t("str.duplicateGraphic")}
-                  onClick={() => void duplicateGraphic(selectedGraphic.id)}
-                >
-                  ⧉
-                </button>
-                <button
-                  className="icon-button danger-icon"
-                  title={t("str.deleteGraphic")}
-                  aria-label={t("str.deleteGraphic")}
-                  onClick={() => setConfirmDeleteGraphicId(selectedGraphic.id)}
-                >
-                  🗑
-                </button>
-              </div>
-            </div>
-            <GraphicsEditor
-              key={selectedGraphic.id}
-              projectId={selected.id}
-              graphicId={selectedGraphic.id}
-              item={editorItem}
-              assets={selected.assets ?? []}
-              title={selectedGraphic.name}
-              variables={selected.definition?.variables ?? []}
-              outputWidth={currentDefinition().template?.width ?? 1920}
-              outputHeight={currentDefinition().template?.height ?? 1080}
-              onChange={(item) => void updateGraphic(selectedGraphic.id, item)}
-              onAssetsChanged={refreshAssets}
-            />
-          </>
+          <GraphicsEditorDialog
+            key={selectedGraphic.id}
+            projectId={selected.id}
+            graphicId={selectedGraphic.id}
+            graphicName={selectedGraphic.name}
+            graphicWidth={selectedGraphic.width}
+            graphicHeight={selectedGraphic.height}
+            item={editorItem}
+            assets={selected.assets ?? []}
+            variables={selected.definition?.variables ?? []}
+            outputWidth={currentDefinition().template?.width ?? 1920}
+            outputHeight={currentDefinition().template?.height ?? 1080}
+            onChange={(item) => void updateGraphic(selectedGraphic.id, item)}
+            onRename={(name) => void renameGraphic(selectedGraphic.id, name)}
+            onDuplicate={() => void duplicateGraphic(selectedGraphic.id)}
+            onDelete={() => setConfirmDeleteGraphicId(selectedGraphic.id)}
+            onClose={() => setSelectedGraphicId(null)}
+            onAssetsChanged={refreshAssets}
+          />
         )}
         <div className="cards">
           {(selected.assets ?? []).map((a) => (

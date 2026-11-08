@@ -8,6 +8,7 @@ import type { Asset, Item, Layer } from "./types";
 import { ColorField } from "./ColorField";
 import { SvgRecolor } from "./SvgRecolor";
 import { layerAssetId } from "./layer-label";
+import { DESIGN_CANVAS } from "@/domain/output-presets";
 
 async function exportGraphic(projectId: string, graphicId: string, t: TFunction) {
   const response = await fetch(`/api/projects/${projectId}/graphics/${graphicId}/export`);
@@ -47,6 +48,7 @@ export const GraphicsEditorProperties: FC<{
       <div className="ge-two"><label>{t("ge.width")}<input type="number" min="20" value={primary.width} onChange={e => onLayer(primary.id, { width: Number(e.target.value) })} /></label><label>{t("ge.height")}<input type="number" min="20" value={primary.height} onChange={e => onLayer(primary.id, { height: Number(e.target.value) })} /></label></div>
       <label>{t("ge.rotation")}<input type="number" value={primary.rotation ?? 0} onChange={e => onLayer(primary.id, { rotation: Number(e.target.value) })} /></label>
       <label><span>{t("ge.aspectLock")}</span><input type="checkbox" checked={aspectLock} onChange={e => onAspectLock(e.target.checked)} /></label>
+      <button type="button" title={t("ge.fitToAreaTitle")} onClick={() => onLayer(primary.id, { x: 0, y: 0, width: DESIGN_CANVAS.width, height: DESIGN_CANVAS.height, rotation: 0 })}>{t("ge.fitToArea")}</button>
       </div></details>
       <details className="ge-fold"><summary>{t("ge.appearance")}</summary><div className="ge-section">
       <label>{t("ge.opacity")}<input type="range" min="0" max="1" step="0.01" value={parsePx(primary.style?.opacity, 1)} onChange={e => onStyle(primary.id, "opacity", e.target.value)} /></label>

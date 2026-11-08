@@ -565,6 +565,8 @@ export const en: Record<keyof typeof fi, string> = {
   "ge.insertVariable": "Insert a variable into the text",
   "ge.showValuesTitle": "Show variable values in the preview",
   "ge.aspectLock": "Aspect lock",
+  "ge.fitToArea": "Fit to full area",
+  "ge.fitToAreaTitle": "Set this layer to cover the full design canvas (1920 × 1080)",
   "ge.assets": "Assets",
   "ge.noAssets": "No image assets linked to this project yet.",
   "ge.fromLibrary": "Choose from library…",

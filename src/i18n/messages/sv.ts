@@ -565,6 +565,8 @@ export const sv: Record<keyof typeof fi, string> = {
   "ge.insertVariable": "Infoga en variabel i texten",
   "ge.showValuesTitle": "Visa variablernas värden i förhandsvisningen",
   "ge.aspectLock": "Lås proportioner",
+  "ge.fitToArea": "Anpassa till hela ytan",
+  "ge.fitToAreaTitle": "Ange lagrets storlek till hela designytan (1920 × 1080)",
   "ge.assets": "Bilder",
   "ge.noAssets": "Inga bilder är länkade till projektet än.",
   "ge.fromLibrary": "Välj från biblioteket…",

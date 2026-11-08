@@ -563,6 +563,8 @@ export const fi = {
   "ge.insertVariable": "Lisää muuttuja tekstiin",
   "ge.showValuesTitle": "Näytä muuttujien arvot esikatselussa",
   "ge.aspectLock": "Lukitse mittasuhde",
+  "ge.fitToArea": "Sovita koko kuva-alaan",
+  "ge.fitToAreaTitle": "Aseta tason kooksi koko suunnittelualue (1920 × 1080)",
   "ge.assets": "Kuvat",
   "ge.noAssets": "Projektiin ei ole vielä linkitetty kuvia.",
   "ge.fromLibrary": "Valitse kirjastosta…",
