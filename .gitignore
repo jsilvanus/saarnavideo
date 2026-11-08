@@ -51,3 +51,5 @@ prisma/dev.db
 .next-*/
 .claude/
 tsconfig.tsbuildinfo
+prisma/*-w*.db
+prisma/*-w*.db-journal

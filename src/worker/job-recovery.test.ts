@@ -1,3 +1,4 @@
+import { PrismaClient } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { claimJob } from "./index";
@@ -65,11 +66,15 @@ describe("job recovery", () => {
         await tx.$executeRawUnsafe(corrupt);
       });
     } else {
-      await prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
+      // The PRAGMA is per connection and the shared client pools several, so the UPDATE could run on another
+      // connection with the check still on: use a single-connection client for both statements.
+      const url = process.env.DATABASE_URL ?? "file:./dev.db";
+      const single = new PrismaClient({ datasourceUrl: `${url}${url.includes("?") ? "&" : "?"}connection_limit=1` });
       try {
-        await prisma.$executeRawUnsafe(corrupt);
+        await single.$executeRawUnsafe('PRAGMA foreign_keys = OFF;');
+        await single.$executeRawUnsafe(corrupt);
       } finally {
-        await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+        await single.$disconnect();
       }
     }
     
