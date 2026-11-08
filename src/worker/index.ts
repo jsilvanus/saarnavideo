@@ -224,7 +224,7 @@ async function prepareCaptions(jobId: string, definition: ProjectDefinition, out
     const assPath = `${base}.ass`;
     await writeFile(assPath, built.ass, "utf8");
     burn = { assPath, fontsDir: fontFile && fontName ? path.dirname(fontFile) : undefined };
-    await logJobEvent(jobId, "INFO", "Burned-in captions prepared", { cues: cues.length, displayCues: built.lines, styleGraphicId: options.styleGraphicId ?? "default", font: fontName ?? built.style.fontFamily });
+    await logJobEvent(jobId, "INFO", "Burned-in captions prepared", { cues: cues.length, displayCues: built.lines, styleGraphicId: options.styleGraphicId ?? "default", styles: built.styles, font: fontName ?? built.style.fontFamily });
   }
   return { soft, burn };
 }

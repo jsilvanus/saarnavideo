@@ -56,3 +56,17 @@ describe("dropOnTimeline", () => {
     expect(laneAccepts("audio", "video")).toBe(true);
   });
 });
+
+describe("caption style spans on the captions lane", () => {
+  const graphics = [{ id: "g", name: "G", layers: [] }, { id: "cs", name: "Tekstitys", layers: [{ id: "c", type: "caption" }] }] as never;
+  it("adds a span from the pointer for a caption style graphic, cut at the end of the video", () => {
+    const next = dropOnTimeline(items, { ...base, graphics, payload: { kind: "graphic", id: "cs" }, lane: "captions", time: 50 });
+    expect(next?.at(-1)).toEqual({ type: "caption-style", styleGraphicId: "cs", startSeconds: 50, endSeconds: 90 });
+  });
+  it("refuses an ordinary graphic and audio there", () => {
+    expect(dropOnTimeline(items, { ...base, graphics, payload: { kind: "graphic", id: "g" }, lane: "captions", time: 5 })).toBeUndefined();
+    expect(laneAccepts("audio", "captions")).toBe(false);
+    expect(laneAccepts("black", "captions")).toBe(false);
+    expect(laneAccepts("graphic", "captions")).toBe(true);
+  });
+});

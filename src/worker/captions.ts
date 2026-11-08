@@ -1,7 +1,7 @@
 import type { ProjectDefinition } from "@/domain/project";
 import { captionOptionsSchema, type CaptionOptions } from "@/domain/captions";
 import { captionStyleFromGraphic, findCaptionLayer, type CaptionStyle } from "@/domain/caption-style";
-import { buildAss, wrapCuesForStyle } from "@/renderer/ass";
+import { buildAssGroups, wrapCuesForStyle } from "@/renderer/ass";
 import { formatSrt, formatVtt, type CaptionSegment } from "@/lib/captions";
 import { mapCaptionsToTimeline } from "@/renderer/caption-timeline";
 
@@ -39,10 +39,40 @@ export function resolveCaptionStyle(definition: ProjectDefinition, styleGraphicI
   return { style: captionStyleFromGraphic(graphic, width, height) };
 }
 
-/** ASS document for burned-in captions of the output-timeline cues. */
+/** Caption style spans of the composition (output seconds), in item order so a later span wins where they overlap. */
+export function captionStyleSpans(definition: ProjectDefinition) {
+  return definition.composition.items.flatMap((item) => (item.type === "caption-style" ? [item] : []));
+}
+
+/**
+ * Splits the output cues by caption style: a cue goes to the last span whose range holds its start, else to the default
+ * style (the one named in the options, or the built-in). Returns one group per style that has cues, default first.
+ */
+export function groupCuesByStyle(definition: ProjectDefinition, cues: readonly CaptionSegment[], options: CaptionOptions) {
+  const base = resolveCaptionStyle(definition, options.styleGraphicId);
+  const warnings = base.warning ? [base.warning] : [];
+  const spans = captionStyleSpans(definition);
+  const styles = new Map<string, CaptionStyle>();
+  for (const span of spans) {
+    if (styles.has(span.styleGraphicId)) continue;
+    const resolved = resolveCaptionStyle(definition, span.styleGraphicId);
+    if (resolved.warning) { warnings.push(resolved.warning); styles.set(span.styleGraphicId, base.style); } else styles.set(span.styleGraphicId, resolved.style);
+  }
+  const groups = new Map<string, { style: CaptionStyle; cues: CaptionSegment[] }>([["", { style: base.style, cues: [] }]]);
+  for (const cue of cues) {
+    const span = [...spans].reverse().find((candidate) => cue.startSeconds >= candidate.startSeconds && cue.startSeconds < candidate.endSeconds);
+    const key = span?.styleGraphicId ?? "";
+    let group = groups.get(key);
+    if (!group) { group = { style: styles.get(key) ?? base.style, cues: [] }; groups.set(key, group); }
+    group.cues.push(cue);
+  }
+  return { groups: Array.from(groups.values()).filter((group, index) => index === 0 || group.cues.length), style: base.style, warnings };
+}
+
+/** ASS document for burned-in captions of the output-timeline cues, with caption style spans applied. */
 export function buildBurnedCaptionAss(definition: ProjectDefinition, cues: Parameters<typeof wrapCuesForStyle>[0], options: CaptionOptions, fontName?: string) {
-  const { style, warning } = resolveCaptionStyle(definition, options.styleGraphicId);
-  const wrapped = wrapCuesForStyle(cues, style);
-  const ass = buildAss(wrapped, style, { width: definition.template?.width ?? 1920, height: definition.template?.height ?? 1080, fontName });
-  return { ass, style, warning, lines: wrapped.length };
+  const { groups, style, warnings } = groupCuesByStyle(definition, cues, options);
+  const wrapped = groups.map((group) => ({ style: group.style, cues: wrapCuesForStyle(group.cues, group.style) }));
+  const ass = buildAssGroups(wrapped, { width: definition.template?.width ?? 1920, height: definition.template?.height ?? 1080, fontName });
+  return { ass, style, warning: warnings.length ? warnings.join("; ") : undefined, lines: wrapped.reduce((sum, group) => sum + group.cues.length, 0), styles: groups.length };
 }

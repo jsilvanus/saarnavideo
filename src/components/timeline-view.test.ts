@@ -71,3 +71,11 @@ describe("timeline view blocks", () => {
     expect(video[2]).toMatchObject({ itemIndex: 3, lengthOnly: true, transition: { type: "cut", durationSeconds: 0 } });
   });
 });
+
+describe("caption style spans", () => {
+  it("shows a span on the captions lane as an editable block inside the picture", () => {
+    const items = [{ type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 30 }, { type: "caption-style", styleGraphicId: "cs", startSeconds: 5, endSeconds: 20 }] as unknown as TimelineItem[];
+    const { blocks } = buildBlocks(items, [{ id: "cs", name: "Iso teksti" }] as never, [], [{ id: "a" }], []);
+    expect(blocks.find((b) => b.lane === "captions")).toMatchObject({ itemIndex: 1, editable: true, label: "Iso teksti", start: 5, end: 20, bounds: { start: 0, end: 30 } });
+  });
+});

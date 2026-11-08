@@ -67,38 +67,53 @@ export function boxHeightFor(style: CaptionStyle, lineCount: number): number {
  * shadow are drawn on the text (BorderStyle 1).
  */
 export function buildAss(cues: readonly WrappedCue[], style: CaptionStyle, options: AssOptions): string {
-  const fontName = options.fontName ?? style.fontFamily;
-  const outlineColor = style.outline?.color ?? { r: 0, g: 0, b: 0, a: 1 };
-  const backColor = style.shadow?.color ?? { r: 0, g: 0, b: 0, a: 1 };
-  const marginL = style.x + style.padding;
-  const marginR = Math.max(0, options.width - (style.x + style.width) + style.padding);
-  const marginV = style.vertical === "top" ? style.y + style.padding : Math.max(0, options.height - (style.y + style.height) + style.padding);
-  const textStyle = [
-    "Caption", fontName, num(style.fontSize * ASS_FONT_CELL_FACTOR), assColor(style.color), assColor(style.color), assColor(outlineColor), assColor(backColor),
-    style.bold ? -1 : 0, 0, 0, 0, 100, 100, 0, 0, 1, num(style.outline?.width ?? 0), num(style.shadow?.depth ?? 0), alignment(style),
-    Math.round(marginL), Math.round(marginR), Math.round(marginV), 1,
-  ].join(",");
-  const boxColor = style.box ?? { r: 0, g: 0, b: 0, a: 0 };
-  const boxStyle = ["CaptionBox", fontName, 20, assColor(boxColor), assColor(boxColor), assColor(boxColor), assColor(boxColor), 0, 0, 0, 0, 100, 100, 0, 0, 1, 0, 0, 7, 0, 0, 0, 1].join(",");
-  // MarginV is ignored for middle alignment, so vertically centred text is placed explicitly at the box centre.
-  const anchorX = style.align === "left" ? style.x + style.padding : style.align === "right" ? style.x + style.width - style.padding : style.x + style.width / 2;
-  const prefix = style.vertical === "middle" ? `{\\pos(${Math.round(anchorX)},${Math.round(style.y + style.height / 2)})}` : "";
+  return buildAssGroups([{ cues, style }], options);
+}
+
+/** One caption style and the (already wrapped) cues drawn with it. */
+export type AssGroup = { cues: readonly WrappedCue[]; style: CaptionStyle };
+
+/** Style names of the n-th group: the first keeps the plain names `Caption` / `CaptionBox`. */
+const styleNames = (index: number) => (index === 0 ? { text: "Caption", box: "CaptionBox" } : { text: `Caption${index + 1}`, box: `CaptionBox${index + 1}` });
+
+/** Like buildAss, with several caption styles in one document (caption style spans): each group gets its own pair of ASS styles. */
+export function buildAssGroups(groups: readonly AssGroup[], options: AssOptions): string {
+  const styles: string[] = [];
   const dialogues: string[] = [];
-  for (const cue of cues) {
-    if (!(cue.endSeconds > cue.startSeconds) || !cue.lines.length) continue;
-    const times = `${assTime(cue.startSeconds)},${assTime(cue.endSeconds)}`;
-    if (style.box) {
-      const h = boxHeightFor(style, cue.lines.length);
-      const top = style.vertical === "top" ? style.y : style.vertical === "middle" ? style.y + (style.height - h) / 2 : style.y + style.height - h;
-      dialogues.push(`Dialogue: 0,${times},CaptionBox,,0,0,0,,{\\pos(${style.x},${Math.round(top)})\\bord0\\shad0\\p1}m 0 0 l ${style.width} 0 ${style.width} ${h} 0 ${h}`);
+  groups.forEach(({ cues, style }, index) => {
+    const names = styleNames(index);
+    const fontName = options.fontName ?? style.fontFamily;
+    const outlineColor = style.outline?.color ?? { r: 0, g: 0, b: 0, a: 1 };
+    const backColor = style.shadow?.color ?? { r: 0, g: 0, b: 0, a: 1 };
+    const marginL = style.x + style.padding;
+    const marginR = Math.max(0, options.width - (style.x + style.width) + style.padding);
+    const marginV = style.vertical === "top" ? style.y + style.padding : Math.max(0, options.height - (style.y + style.height) + style.padding);
+    styles.push(`Style: ${[
+      names.text, fontName, num(style.fontSize * ASS_FONT_CELL_FACTOR), assColor(style.color), assColor(style.color), assColor(outlineColor), assColor(backColor),
+      style.bold ? -1 : 0, 0, 0, 0, 100, 100, 0, 0, 1, num(style.outline?.width ?? 0), num(style.shadow?.depth ?? 0), alignment(style),
+      Math.round(marginL), Math.round(marginR), Math.round(marginV), 1,
+    ].join(",")}`);
+    const boxColor = style.box ?? { r: 0, g: 0, b: 0, a: 0 };
+    styles.push(`Style: ${[names.box, fontName, 20, assColor(boxColor), assColor(boxColor), assColor(boxColor), assColor(boxColor), 0, 0, 0, 0, 100, 100, 0, 0, 1, 0, 0, 7, 0, 0, 0, 1].join(",")}`);
+    // MarginV is ignored for middle alignment, so vertically centred text is placed explicitly at the box centre.
+    const anchorX = style.align === "left" ? style.x + style.padding : style.align === "right" ? style.x + style.width - style.padding : style.x + style.width / 2;
+    const prefix = style.vertical === "middle" ? `{\\pos(${Math.round(anchorX)},${Math.round(style.y + style.height / 2)})}` : "";
+    for (const cue of cues) {
+      if (!(cue.endSeconds > cue.startSeconds) || !cue.lines.length) continue;
+      const times = `${assTime(cue.startSeconds)},${assTime(cue.endSeconds)}`;
+      if (style.box) {
+        const h = boxHeightFor(style, cue.lines.length);
+        const top = style.vertical === "top" ? style.y : style.vertical === "middle" ? style.y + (style.height - h) / 2 : style.y + style.height - h;
+        dialogues.push(`Dialogue: 0,${times},${names.box},,0,0,0,,{\\pos(${style.x},${Math.round(top)})\\bord0\\shad0\\p1}m 0 0 l ${style.width} 0 ${style.width} ${h} 0 ${h}`);
+      }
+      dialogues.push(`Dialogue: 1,${times},${names.text},,0,0,0,,${prefix}${assText(cue.lines)}`);
     }
-    dialogues.push(`Dialogue: 1,${times},Caption,,0,0,0,,${prefix}${assText(cue.lines)}`);
-  }
+  });
   return [
     "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${options.width}`, `PlayResY: ${options.height}`, "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
     "[V4+ Styles]",
     "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-    `Style: ${textStyle}`, `Style: ${boxStyle}`, "",
+    ...styles, "",
     "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
     ...dialogues, "",
   ].join("\n");

@@ -48,3 +48,36 @@ describe("burned caption ass", () => {
     expect(resolveCaptionStyle(plain, undefined).warning).toBeUndefined();
   });
 });
+
+describe("caption style spans", () => {
+  const top = { id: "top", name: "Ylhäällä", width: 1920, height: 1080, backgroundColor: "transparent", layers: [{ id: "c", type: "caption" as const, x: 0, y: 0, width: 1920, height: 200, rotation: 0, style: { "vertical-align": "top" } }] };
+  const big = { ...top, id: "big", name: "Iso", layers: [{ ...top.layers[0], style: { "font-size": "90px" } }] };
+  const cues = [{ startSeconds: 1, endSeconds: 2, text: "Yksi" }, { startSeconds: 5, endSeconds: 6, text: "Kaksi" }, { startSeconds: 8, endSeconds: 9, text: "Kolme" }];
+  const withSpans = (items: ProjectDefinition["composition"]["items"]): ProjectDefinition => ({ ...definition, graphics: [top, big], composition: { ...definition.composition, items: [...definition.composition.items, ...items] } });
+
+  it("draws cues that start inside a span with its style and the rest with the default", () => {
+    const def = withSpans([{ type: "caption-style", styleGraphicId: "top", startSeconds: 4, endSeconds: 7 }]);
+    const built = buildBurnedCaptionAss(def, cues, { mode: "burn" });
+    expect(built.styles).toBe(2);
+    expect(built.ass).toMatch(/Style: Caption,/);
+    expect(built.ass).toMatch(/Style: Caption2,/);
+    expect(built.ass).toMatch(/Dialogue: 1,0:00:05\.00,0:00:06\.00,Caption2,,.*Kaksi/);
+    expect(built.ass).toMatch(/Dialogue: 1,0:00:01\.00,0:00:02\.00,Caption,,.*Yksi/);
+    expect(built.ass).toMatch(/Dialogue: 1,0:00:08\.00,0:00:09\.00,Caption,,.*Kolme/);
+  });
+
+  it("lets the later span win where spans overlap, and falls back with a warning for a missing style", () => {
+    const def = withSpans([{ type: "caption-style", styleGraphicId: "top", startSeconds: 0, endSeconds: 10 }, { type: "caption-style", styleGraphicId: "big", startSeconds: 4, endSeconds: 7 }, { type: "caption-style", styleGraphicId: "gone", startSeconds: 7.5, endSeconds: 10 }]);
+    const built = buildBurnedCaptionAss({ ...def, composition: { ...def.composition, items: def.composition.items } }, cues, { mode: "burn" });
+    expect(built.warning).toMatch(/gone/);
+    expect(built.ass).toMatch(/Dialogue: 1,0:00:01\.00,0:00:02\.00,Caption2,/);
+    expect(built.ass).toMatch(/Dialogue: 1,0:00:05\.00,0:00:06\.00,Caption3,/);
+    expect(built.ass).toMatch(/Dialogue: 1,0:00:08\.00,0:00:09\.00,Caption4,/);
+  });
+
+  it("keeps a render without spans exactly as before", () => {
+    const built = buildBurnedCaptionAss(definition, cues, { mode: "burn" });
+    expect(built.styles).toBe(1);
+    expect(built.ass).not.toMatch(/Caption2/);
+  });
+});
