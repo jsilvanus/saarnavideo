@@ -4,7 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 /**
  * A small fake of the Google endpoints SaarnaVideo talks to, for e2e tests (no real credentials exist):
  * POST /token (authorization_code and refresh_token grants), the resumable uploads of videos.insert and captions.insert
- * (init request answers a Location, the PUT carries the bytes) and thumbnails.set. Every request needs
+ * (init request answers a Location; the PUTs carry the bytes, whole or in chunks with Content-Range, answered 308 with
+ * a Range header until complete; "bytes * /N" asks for the status), thumbnails.set, playlists.list and playlistItems.insert. Every request needs
  * `Authorization: Bearer <accessToken>` for the token it handed out last. State is observable and configurable over
  * /__admin/state, /__admin/reset and /__admin/config so a test in another process can drive it.
  */
@@ -16,12 +17,21 @@ export type FakeYouTubeConfig = {
   failCaptions: boolean;
   /** Seconds a handed-out access token lives; 0 or less makes every token expired immediately, so each upload refreshes. */
   expiresIn: number;
+  /** The next N chunk PUTs answer 503 without storing the bytes. */
+  failChunks: number;
+  /** The next N chunk PUTs store the bytes but answer 503 (the answer is "lost"). */
+  loseChunkAnswers: number;
+  failPlaylist: boolean;
+  /** One-shot: invalidates the current access token (as if revoked), so the next Data API call gets a 401. */
+  revokeAccessToken: boolean;
+  playlists: Array<{ id: string; title: string; privacyStatus: string }>;
 };
 
 export type FakeYouTubeState = {
   config: FakeYouTubeConfig;
   tokenRequests: Array<{ grant: string; hasClientSecret: boolean }>;
-  videos: Array<{ id: string; title: string; description: string; privacyStatus: string; size: number; sha256: string; contentType: string }>;
+  videos: Array<{ id: string; title: string; description: string; privacyStatus: string; size: number; sha256: string; contentType: string; chunks: number; tags?: string[]; categoryId?: string; defaultLanguage?: string; publishAt?: string; madeForKids?: boolean; notifySubscribers: boolean }>;
+  playlistItems: Array<{ playlistId: string; videoId: string }>;
   thumbnails: Array<{ videoId: string; size: number }>;
   captions: Array<{ videoId: string; language: string; name: string; content: string }>;
   /** Every request as "METHOD path" (no query string, never a token). */
@@ -30,7 +40,8 @@ export type FakeYouTubeState = {
   unauthorized: number;
 };
 
-const defaults = (): FakeYouTubeConfig => ({ failVideoInit: 0, failThumbnails: false, failCaptions: false, expiresIn: 3600 });
+const defaults = (): FakeYouTubeConfig => ({ failVideoInit: 0, failThumbnails: false, failCaptions: false, expiresIn: 3600, failChunks: 0, loseChunkAnswers: 0, failPlaylist: false, revokeAccessToken: false, playlists: [{ id: "PLfakeServices", title: "Jumalanpalvelukset", privacyStatus: "public" }, { id: "PLfakeSermons", title: "Saarnat", privacyStatus: "unlisted" }] });
+const emptyState = (config: FakeYouTubeConfig): FakeYouTubeState => ({ config, tokenRequests: [], videos: [], playlistItems: [], thumbnails: [], captions: [], requests: [], unauthorized: 0 });
 
 export type FakeYouTubeServer = { url: string; server: Server; state: FakeYouTubeState; close(): Promise<void> };
 
@@ -51,14 +62,30 @@ function send(response: ServerResponse, status: number, body: unknown, headers: 
 const googleError = (response: ServerResponse, status: number, message: string) => send(response, status, { error: { code: status, message } });
 
 export async function startFakeYouTubeServer(overrides: Partial<FakeYouTubeConfig> = {}, port = 0): Promise<FakeYouTubeServer> {
-  const state: FakeYouTubeState = { config: { ...defaults(), ...overrides }, tokenRequests: [], videos: [], thumbnails: [], captions: [], requests: [], unauthorized: 0 };
-  /** Upload sessions opened by an init request, keyed by session id. */
-  const sessions = new Map<string, { kind: "video" | "caption"; meta: Record<string, any>; contentType: string }>();
+  const state: FakeYouTubeState = emptyState({ ...defaults(), ...overrides });
+  /** Upload sessions opened by an init request, keyed by session id; a finished session remembers its resource id. */
+  type Session = { kind: "video" | "caption"; meta: Record<string, any>; contentType: string; parts: Buffer[]; bytes: number; chunks: number; notify: boolean; done?: string };
+  const sessions = new Map<string, Session>();
   let counter = 0;
   let accessToken = "";
   let origin = "";
 
   const newToken = () => (accessToken = `fake-access-${++counter}`);
+
+  /** Completes an upload session: a video or caption resource is created from the bytes received. */
+  const finish = (session: Session): string => {
+    if (session.done) return session.done;
+    const content = Buffer.concat(session.parts);
+    if (session.kind === "video") {
+      const id = `video${++counter}`;
+      const { snippet = {}, status = {} } = session.meta;
+      state.videos.push({ id, title: snippet.title ?? "", description: snippet.description ?? "", privacyStatus: status.privacyStatus ?? "", size: content.length, sha256: createHash("sha256").update(content).digest("hex"), contentType: session.contentType, chunks: session.chunks, tags: snippet.tags, categoryId: snippet.categoryId, defaultLanguage: snippet.defaultLanguage, publishAt: status.publishAt, madeForKids: status.selfDeclaredMadeForKids, notifySubscribers: session.notify });
+      return (session.done = id);
+    }
+    const id = `caption${++counter}`;
+    state.captions.push({ videoId: session.meta.snippet?.videoId ?? "", language: session.meta.snippet?.language ?? "", name: session.meta.snippet?.name ?? "", content: content.toString("utf8") });
+    return (session.done = id);
+  };
 
   const server = createServer(async (request, response) => {
     try {
@@ -66,7 +93,7 @@ export async function startFakeYouTubeServer(overrides: Partial<FakeYouTubeConfi
       const body = await readBody(request);
       if (url.pathname.startsWith("/__admin/")) {
         if (url.pathname === "/__admin/state") return send(response, 200, state);
-        if (url.pathname === "/__admin/reset") { Object.assign(state, { config: { ...defaults(), ...overrides }, tokenRequests: [], videos: [], thumbnails: [], captions: [], requests: [], unauthorized: 0 }); sessions.clear(); return send(response, 200, {}); }
+        if (url.pathname === "/__admin/reset") { Object.assign(state, emptyState({ ...defaults(), ...overrides })); sessions.clear(); return send(response, 200, {}); }
         if (url.pathname === "/__admin/config") { Object.assign(state.config, JSON.parse(body.toString() || "{}")); return send(response, 200, state.config); }
         return send(response, 404, {});
       }
@@ -88,35 +115,53 @@ export async function startFakeYouTubeServer(overrides: Partial<FakeYouTubeConfi
       }
 
       // Everything below is the Data API: it needs the current access token.
+      if (state.config.revokeAccessToken) { state.config.revokeAccessToken = false; accessToken = `revoked-${++counter}`; }
       if (request.headers.authorization !== `Bearer ${accessToken}` || !accessToken) { state.unauthorized++; return googleError(response, 401, "Invalid Credentials"); }
 
       if (request.method === "POST" && url.pathname === "/upload/youtube/v3/videos") {
         if (state.config.failVideoInit) return googleError(response, state.config.failVideoInit, "Quota exceeded");
         const meta = JSON.parse(body.toString() || "{}");
         const id = `session-${++counter}`;
-        sessions.set(id, { kind: "video", meta, contentType: String(request.headers["x-upload-content-type"] ?? "") });
+        sessions.set(id, { kind: "video", meta, contentType: String(request.headers["x-upload-content-type"] ?? ""), parts: [], bytes: 0, chunks: 0, notify: url.searchParams.get("notifySubscribers") !== "false" });
         return send(response, 200, {}, { Location: `${origin}/upload-session/${id}` });
       }
       if (request.method === "POST" && url.pathname === "/upload/youtube/v3/captions") {
         if (state.config.failCaptions) return googleError(response, 403, "Insufficient Permission");
         const meta = JSON.parse(body.toString() || "{}");
         const id = `session-${++counter}`;
-        sessions.set(id, { kind: "caption", meta, contentType: "" });
+        sessions.set(id, { kind: "caption", meta, contentType: "", parts: [], bytes: 0, chunks: 0, notify: true });
         return send(response, 200, {}, { Location: `${origin}/upload-session/${id}` });
       }
       const sessionId = url.pathname.match(/^\/upload-session\/(.+)$/)?.[1];
       if (request.method === "PUT" && sessionId) {
         const session = sessions.get(sessionId);
         if (!session) return googleError(response, 404, "Unknown upload session");
-        sessions.delete(sessionId);
-        if (session.kind === "video") {
-          const id = `video${++counter}`;
-          state.videos.push({ id, title: session.meta.snippet?.title ?? "", description: session.meta.snippet?.description ?? "", privacyStatus: session.meta.status?.privacyStatus ?? "", size: body.length, sha256: createHash("sha256").update(body).digest("hex"), contentType: String(request.headers["content-type"] ?? "") });
-          return send(response, 200, { id });
+        const range = String(request.headers["content-range"] ?? "");
+        const rangeHeader = (): Record<string, string> => (session.bytes ? { Range: `bytes=0-${session.bytes - 1}` } : {});
+        if (/^bytes \*\/\d+$/.test(range)) return session.done ? send(response, 200, { id: session.done }) : send(response, 308, {}, rangeHeader());
+        let total = body.length;
+        if (range) {
+          const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range);
+          if (!match) return googleError(response, 400, "Bad Content-Range");
+          total = Number(match[3]);
+          if (Number(match[1]) !== session.bytes) return send(response, 308, {}, rangeHeader());
+          if (state.config.failChunks > 0) { state.config.failChunks--; return googleError(response, 503, "Backend Error"); }
         }
-        const id = `caption${++counter}`;
-        state.captions.push({ videoId: session.meta.snippet?.videoId ?? "", language: session.meta.snippet?.language ?? "", name: session.meta.snippet?.name ?? "", content: body.toString("utf8") });
-        return send(response, 200, { id });
+        session.parts.push(body); session.bytes += body.length; session.chunks++;
+        if (range && state.config.loseChunkAnswers > 0) { state.config.loseChunkAnswers--; if (session.bytes >= total) finish(session); return googleError(response, 503, "Backend Error"); }
+        if (session.bytes < total) return send(response, 308, {}, rangeHeader());
+        return send(response, 200, { id: finish(session) });
+      }
+      if (request.method === "GET" && url.pathname === "/youtube/v3/playlists") {
+        if (url.searchParams.get("mine") !== "true") return googleError(response, 400, "mine=true expected");
+        return send(response, 200, { items: state.config.playlists.map((item) => ({ id: item.id, snippet: { title: item.title }, status: { privacyStatus: item.privacyStatus }, contentDetails: { itemCount: 0 } })) });
+      }
+      if (request.method === "POST" && url.pathname === "/youtube/v3/playlistItems") {
+        const meta = JSON.parse(body.toString() || "{}");
+        const playlistId = meta.snippet?.playlistId ?? "";
+        if (state.config.failPlaylist || !state.config.playlists.some((item) => item.id === playlistId)) return send(response, 404, { error: { code: 404, message: "Playlist not found.", errors: [{ reason: "playlistNotFound" }] } });
+        state.playlistItems.push({ playlistId, videoId: meta.snippet?.resourceId?.videoId ?? "" });
+        return send(response, 200, { id: `item${++counter}` });
       }
       if (request.method === "POST" && url.pathname === "/upload/youtube/v3/thumbnails/set") {
         if (state.config.failThumbnails) return googleError(response, 403, "The authenticated user cannot upload custom video thumbnails");

@@ -11,7 +11,11 @@ import type { FeedKey } from "@/renderer/ffmpeg";
 import type { ProjectDefinition } from "@/domain/project";
 import { resolveSourcePaths } from "@/worker/source-resolution";
 import { withDownloadCookies } from "@/integrations/ytdlp-cookies";
-import { downloadYouTubeSource, uploadCaptionToYouTube, uploadToYouTube } from "@/integrations/youtube";
+import { downloadYouTubeSource, uploadCaptionToYouTube } from "@/integrations/youtube";
+import { createYouTubeClient } from "@/integrations/youtube-api";
+import { buildVideoResource, youtubePublishOptionsSchema, type YouTubePublishOptions, type YouTubeVideoResource } from "@/domain/youtube-publish";
+import { publishVideoToYouTube } from "@/worker/youtube-publish";
+import { recoverStalePublications, type PublicationRecoveryDb } from "@/worker/publication-recovery";
 import { getYouTubeAccessToken } from "@/integrations/youtube-oauth";
 import { validateSourceFile, formatBytes, type ResourceLimits } from "@/domain/validation";
 import { sttQueueMessage } from "@/worker/stt-queue";
@@ -552,6 +556,8 @@ async function processTranscriptionInner(job: MediaJobRow) {
 async function recoverInterruptedJobs() {
   const { resume, failed } = await recoverStaleJobs(prisma as unknown as RecoveryDb, WORKER_ID);
   if (failed) console.warn(`Marked ${failed} stale job(s) as failed: their worker stopped`);
+  const publications = await recoverStalePublications(prisma as unknown as PublicationRecoveryDb);
+  if (publications.requeued || publications.failed) console.warn(`Stale publications: ${publications.requeued} requeued to resume their upload, ${publications.failed} failed`);
   await reconcileImports().catch(error => console.error("Import reconcile failed:", error));
   for (const { id } of resume) {
     const job = await prisma.mediaJob.findUnique({ where: { id } });
@@ -589,7 +595,7 @@ const captionPublishDeps: CaptionPublishDeps = {
   log: async (jobId, level, message, data) => { console.warn(`[captions] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); },
 };
 
-type PublicationRow = { id: string; projectId: string; privacy: string; project: { title: string; preacher: string | null }; output: { storagePath: string; jobId: string | null } };
+type PublicationRow = { id: string; projectId: string; privacy: string; uploadUrl: string | null; project: { title: string; preacher: string | null }; output: { storagePath: string; jobId: string | null } };
 type PublicationInputs = { thumbnailPath?: string; title: string; description?: string };
 
 /** Facebook Page upload: the token comes from the environment (never the database) and stays out of logs and errors. */
@@ -600,30 +606,43 @@ async function runFacebookPublication(publication: PublicationRow, inputs: Publi
   const sidecar = jobId ? await deps.findSidecar(jobId) : null;
   const log = async (level: "INFO" | "WARN", message: string, data?: Record<string, unknown>) => { console.log(`[facebook] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); };
   const result = await publishVideoToFacebook({ filePath: publication.output.storagePath, ...inputs, published: publication.privacy === "PUBLIC", sidecar }, { config, log, client: { pollIntervalMs: Number(process.env.FACEBOOK_STATUS_POLL_MS ?? 5000), timeoutMs: Number(process.env.FACEBOOK_PROCESSING_TIMEOUT_MS ?? 30 * 60_000), retryDelayMs: Number(process.env.FACEBOOK_RETRY_DELAY_MS ?? 1000) } });
-  return result.videoId;
+  return { videoId: result.videoId, warnings: [] as string[] };
 }
 
-async function runYouTubePublication(publication: PublicationRow, inputs: PublicationInputs, _deps: CaptionPublishDeps) {
-  const result = await uploadToYouTube({ accessToken: await getYouTubeAccessToken(), filePath: publication.output.storagePath, ...inputs, privacyStatus: publication.privacy.toLowerCase() as "private" | "unlisted" | "public" });
-  if (result.thumbnailError && publication.output.jobId) await logJobEvent(publication.output.jobId, "WARN", "YouTube thumbnail upload failed; the video itself was published", { videoId: result.videoId, error: result.thumbnailError });
-  return result.videoId;
+/** YouTube: resumable chunked upload (the session is stored, so a restarted worker continues it), thumbnail, playlist; captions follow in processPublication. */
+async function runYouTubePublication(publication: PublicationRow, inputs: PublicationInputs & { resource: YouTubeVideoResource; options: YouTubePublishOptions }) {
+  const jobId = publication.output.jobId;
+  const client = createYouTubeClient({ token: forceRefresh => getYouTubeAccessToken({ forceRefresh }) });
+  return publishVideoToYouTube({ filePath: publication.output.storagePath, thumbnailPath: inputs.thumbnailPath, resource: inputs.resource, notifySubscribers: inputs.options.notifySubscribers, playlistId: inputs.options.playlistId, sessionUrl: publication.uploadUrl }, {
+    client,
+    saveSession: async url => { await prisma.publication.update({ where: { id: publication.id }, data: { uploadUrl: url } }); },
+    progress: async percent => { await prisma.publication.update({ where: { id: publication.id }, data: { progress: percent, heartbeatAt: new Date() } }); },
+    log: async (level, message, data) => { console.log(`[youtube] ${message}`, data ?? ""); if (jobId) await logJobEvent(jobId, level, message, data); },
+  });
 }
 
 async function processPublication() {
   const publication = await prisma.publication.findFirst({ where: { status: "QUEUED" }, orderBy: { createdAt: "asc" }, include: { project: true, output: true } }); if (!publication?.output) return false;
-  const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING" } }); if (!claimed.count) return false;
+  const claimed = await prisma.publication.updateMany({ where: { id: publication.id, status: "QUEUED" }, data: { status: "UPLOADING", workerId: WORKER_ID, heartbeatAt: new Date(), progress: 0 } }); if (!claimed.count) return false;
+  // Heartbeat: a publication whose worker stops is requeued (YouTube, resumable) or failed by recoverStalePublications.
+  const beat = setInterval(() => { void prisma.publication.updateMany({ where: { id: publication.id, status: "UPLOADING" }, data: { heartbeatAt: new Date() } }).catch(() => undefined); }, HEARTBEAT_MS);
   // The uploaders read local files: with S3 media the video, thumbnail and caption sidecar are downloaded first.
   const files = await openJobFiles({ store: await getMediaStore(), mediaRoot: MEDIA_ROOT, jobId: `publication-${publication.id}` });
   const deps: CaptionPublishDeps = { ...captionPublishDeps, findSidecar: async jobId => { const sidecar = await captionPublishDeps.findSidecar(jobId); return sidecar ? { ...sidecar, storagePath: await files.local(sidecar.storagePath) } : null; } };
   try {
-    const row = { ...publication, output: { ...publication.output, storagePath: await files.local(publication.output.storagePath) } };
+    const row: PublicationRow = { ...publication, output: { ...publication.output, storagePath: await files.local(publication.output.storagePath) } };
     const thumbnail = await prisma.output.findFirst({ where: { projectId: publication.projectId, type: "THUMBNAIL", preview: false }, orderBy: { createdAt: "desc" } });
-    const inputs: PublicationInputs = { thumbnailPath: thumbnail ? await files.local(thumbnail.storagePath).catch(() => undefined) : undefined, title: publication.project.title, description: publication.project.preacher ? `Preacher: ${publication.project.preacher}` : undefined };
-    const externalId = await (publication.provider === "FACEBOOK" ? runFacebookPublication : runYouTubePublication)(row, inputs, deps);
-    await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId, completedAt: new Date(), error: null } });
+    const parsedOptions = youtubePublishOptionsSchema.safeParse(publication.options ?? {});
+    const options: YouTubePublishOptions = parsedOptions.success ? parsedOptions.data : {};
+    const variables = (publication.project.definition as { variables?: Array<{ key: string; value: string }> } | null)?.variables;
+    const resource = buildVideoResource({ title: publication.project.title, preacher: publication.project.preacher, gospelRef: publication.project.gospelRef, variables }, publication.privacy, options, process.env.YOUTUBE_CATEGORY_ID?.trim() || undefined);
+    const inputs: PublicationInputs = { thumbnailPath: thumbnail ? await files.local(thumbnail.storagePath).catch(() => undefined) : undefined, title: resource.snippet.title, description: resource.snippet.description || undefined };
+    const result = publication.provider === "FACEBOOK" ? await runFacebookPublication(row, inputs, deps) : await runYouTubePublication(row, { ...inputs, resource, options });
+    const warnings = [...result.warnings];
     // Facebook uploads its captions as part of publishVideoToFacebook; YouTube captions go up after the video.
-    if (publication.provider === "YOUTUBE") await uploadCaptionsAfterVideo({ videoId: externalId, videoOutput: publication.output }, deps);
-  } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error) } }); } finally { await files.cleanup(); }
+    if (publication.provider === "YOUTUBE") { const captions = await uploadCaptionsAfterVideo({ videoId: result.videoId, videoOutput: publication.output }, deps); if (captions.error) warnings.push(captions.error); }
+    await prisma.publication.update({ where: { id: publication.id }, data: { status: "COMPLETED", externalId: result.videoId, completedAt: new Date(), error: null, progress: 100, uploadUrl: null, warning: warnings.length ? warnings.join("\n").slice(0, 2000) : null } });
+  } catch (error) { await prisma.publication.update({ where: { id: publication.id }, data: { status: "FAILED", error: error instanceof Error ? error.message : String(error), uploadUrl: null } }); } finally { clearInterval(beat); await files.cleanup(); }
   return true;
 }
 

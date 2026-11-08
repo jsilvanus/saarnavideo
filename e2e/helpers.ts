@@ -181,7 +181,7 @@ export async function renderPublishableProject(title: string) {
   return { project, outputs, video: outputs.find((output) => output.type === "VIDEO" && !output.preview)!, srt: outputs.find((output) => output.type === "CAPTIONS_SRT")! };
 }
 
-export type Publication = { id: string; provider: string; status: string; privacy: string; externalId: string | null; error: string | null };
+export type Publication = { id: string; provider: string; status: string; privacy: string; externalId: string | null; error: string | null; warning?: string | null; progress?: number | null };
 
 /** Waits until the worker has finished (COMPLETED or FAILED) a publication of the project. */
 export async function waitForPublication(projectId: string, id: string, timeoutMs = 60_000): Promise<Publication> {

@@ -42,6 +42,13 @@ export async function exchangeYouTubeCode(code: string) {
   return prisma.youTubeConnection.upsert({ where: { provider: "youtube" }, update: data, create: { provider: "youtube", ...data } });
 }
 
+/** invalid_grant = the refresh token was revoked or expired (Google expires them after 7 days while the consent screen is in "Testing"). */
+async function refreshErrorMessage(response: Response): Promise<string> {
+  const body = await response.json().catch(() => ({})) as { error?: string; error_description?: string };
+  if (body.error === "invalid_grant") return "YouTube access was revoked or has expired: disconnect and connect the YouTube account again (an OAuth app in \"Testing\" status loses access after 7 days, see docs/YOUTUBE_OAUTH_SETUP.md)";
+  return `YouTube token refresh failed (${response.status})${body.error ? `: ${body.error}${body.error_description ? ` (${body.error_description})` : ""}` : ""}`;
+}
+
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const isFresh = (connection: { tokenExpiry: Date | null }) => Boolean(connection.tokenExpiry && connection.tokenExpiry.getTime() > Date.now() + 60_000);
 
@@ -50,22 +57,27 @@ const isFresh = (connection: { tokenExpiry: Date | null }) => Boolean(connection
  * workers never refresh at once (a second refresh could invalidate the first one's refresh token); a caller that
  * does not get the lease waits and reads the token the winner stored.
  */
-export async function getYouTubeAccessToken(): Promise<string> {
+export async function getYouTubeAccessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
+  // forceRefresh: the API refused the stored token (401) although it has not expired, e.g. after a password change.
+  let staleToken = options.forceRefresh ? (await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" }, select: { accessToken: true } }))?.accessToken : undefined;
   for (let attempt = 0; attempt < 40; attempt++) {
     const connection = await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" } });
     if (!connection) throw new Error("YouTube account is not connected");
-    if (isFresh(connection)) return decryptYouTubeToken(connection.accessToken);
+    if (isFresh(connection) && connection.accessToken !== staleToken) return decryptYouTubeToken(connection.accessToken);
     const owner = `youtube-refresh-${randomUUID()}`;
     if (await acquireLease(prisma, "youtube-token-refresh", owner, 30_000)) {
       try {
         const latest = await prisma.youTubeConnection.findUnique({ where: { provider: "youtube" } });
         if (!latest) throw new Error("YouTube account is not connected");
-        if (isFresh(latest)) return decryptYouTubeToken(latest.accessToken); // refreshed by someone else meanwhile
+        if (isFresh(latest) && latest.accessToken !== staleToken) return decryptYouTubeToken(latest.accessToken); // refreshed by someone else meanwhile
         const { clientId, clientSecret } = config();
         const response = await requestToken({ client_id: clientId, client_secret: clientSecret, refresh_token: decryptYouTubeToken(latest.refreshToken), grant_type: "refresh_token" });
-        if (!response.ok) throw new Error(`YouTube token refresh failed (${response.status})`);
-        const token = await response.json() as { access_token: string; expires_in?: number };
-        await prisma.youTubeConnection.update({ where: { id: latest.id }, data: { accessToken: encryptYouTubeToken(token.access_token), tokenExpiry: tokenExpiry(token.expires_in) } });
+        if (!response.ok) throw new Error(await refreshErrorMessage(response));
+        const token = await response.json() as { access_token: string; expires_in?: number; refresh_token?: string };
+        const accessToken = encryptYouTubeToken(token.access_token);
+        // Google may rotate the refresh token; keep the new one or the next refresh fails.
+        await prisma.youTubeConnection.update({ where: { id: latest.id }, data: { accessToken, tokenExpiry: tokenExpiry(token.expires_in), ...(token.refresh_token ? { refreshToken: encryptYouTubeToken(token.refresh_token) } : {}) } });
+        staleToken = undefined;
         return token.access_token;
       } finally {
         await releaseLease(prisma, "youtube-token-refresh", owner).catch(() => undefined);
