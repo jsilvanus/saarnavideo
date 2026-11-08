@@ -18,7 +18,7 @@ export function captionTrackName(language: string): string {
  * Uploads the sidecar caption track of a published video. Fails soft: any problem (no sidecar, unknown
  * language, missing OAuth scope, API error) is logged and never throws, so it cannot fail the video publication.
  */
-export async function uploadCaptionsAfterVideo(input: { videoId: string; videoOutput: { jobId: string | null } }, deps: CaptionPublishDeps): Promise<{ uploaded: boolean }> {
+export async function uploadCaptionsAfterVideo(input: { videoId: string; videoOutput: { jobId: string | null } }, deps: CaptionPublishDeps): Promise<{ uploaded: boolean; error?: string }> {
   const jobId = input.videoOutput.jobId;
   try {
     if (!jobId) return { uploaded: false };
@@ -32,6 +32,6 @@ export async function uploadCaptionsAfterVideo(input: { videoId: string; videoOu
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     try { await deps.log(jobId, "WARN", "YouTube caption upload failed; the video itself was published", { videoId: input.videoId, error: message }); } catch { /* logging must not fail the publication */ }
-    return { uploaded: false };
+    return { uploaded: false, error: message };
   }
 }

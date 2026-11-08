@@ -18,7 +18,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params;
   const project = await prisma.project.findUnique({
     where: { id },
-    include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 10 }, outputs: { orderBy: { createdAt: "desc" } }, publications: { orderBy: { createdAt: "desc" } }, assets: true },
+    include: { sources: true, jobs: { orderBy: { createdAt: "desc" }, take: 10 }, outputs: { orderBy: { createdAt: "desc" } }, publications: { orderBy: { createdAt: "desc" }, omit: { uploadUrl: true } }, assets: true },
   });
   if (!project) return jsonError("Project not found", 404);
   return NextResponse.json(jsonSafe(project));

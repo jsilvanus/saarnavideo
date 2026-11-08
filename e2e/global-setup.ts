@@ -131,7 +131,7 @@ export default async function setup(project: TestProject) {
   Object.assign(env, { FACEBOOK_PAGE_ID: fakeGraph.state.config.pageId, FACEBOOK_PAGE_ACCESS_TOKEN: fakeGraph.state.config.expectedToken, FACEBOOK_GRAPH_BASE_URL: fakeGraph.url, FACEBOOK_STATUS_POLL_MS: "200", FACEBOOK_RETRY_DELAY_MS: "50" });
   // Fake Google endpoints: OAuth token exchange/refresh and the YouTube upload API.
   const fakeYouTube = await startFakeYouTubeServer();
-  Object.assign(env, { YOUTUBE_CLIENT_ID: "e2e-client", YOUTUBE_CLIENT_SECRET: "e2e-secret", YOUTUBE_REDIRECT_URI: "http://localhost/api/integrations/youtube/callback", YOUTUBE_TOKEN_ENCRYPTION_KEY: "a".repeat(64), YOUTUBE_API_BASE_URL: fakeYouTube.url, YOUTUBE_OAUTH_TOKEN_URL: `${fakeYouTube.url}/token` });
+  Object.assign(env, { YOUTUBE_CLIENT_ID: "e2e-client", YOUTUBE_CLIENT_SECRET: "e2e-secret", YOUTUBE_REDIRECT_URI: "http://localhost/api/integrations/youtube/callback", YOUTUBE_TOKEN_ENCRYPTION_KEY: "a".repeat(64), YOUTUBE_API_BASE_URL: fakeYouTube.url, YOUTUBE_OAUTH_TOKEN_URL: `${fakeYouTube.url}/token`, YOUTUBE_UPLOAD_CHUNK_BYTES: String(256 * 1024), YOUTUBE_RETRY_DELAY_MS: "20" });
   // E2E_STORAGE=s3 runs the same suite with media in a fake S3 bucket (see src/lib/media-store); tests that look at local files skip themselves.
   const fakeS3 = process.env.E2E_STORAGE === "s3" ? await startFakeS3() : null;
   if (fakeS3) Object.assign(env, { MEDIA_STORAGE: "s3", MEDIA_S3_BUCKET: "e2e-media", MEDIA_S3_ENDPOINT: fakeS3.url, AWS_ACCESS_KEY_ID: "e2e", AWS_SECRET_ACCESS_KEY: "e2e" });

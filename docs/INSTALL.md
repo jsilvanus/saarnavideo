@@ -170,6 +170,8 @@ See [INTEGRATIONS.md](INTEGRATIONS.md#fffleet-render-and-download-on-workers).
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | One Facebook Page (app and worker). The token is only read from the environment |
 | `FACEBOOK_GRAPH_VERSION` | Default `v24.0` |
 | `FACEBOOK_GRAPH_BASE_URL`, `FACEBOOK_STATUS_POLL_MS`, `FACEBOOK_PROCESSING_TIMEOUT_MS` | Tests, proxies and tuning |
+| `YOUTUBE_CATEGORY_ID` | Default YouTube category of uploads (default `29`, Nonprofits & Activism) |
+| `YOUTUBE_UPLOAD_CHUNK_BYTES`, `YOUTUBE_RETRY_DELAY_MS` | Worker: resumable upload chunk size (default 8 MiB, rounded to 256 KiB) and first retry delay (default 1000 ms) |
 | `YOUTUBE_API_BASE_URL`, `YOUTUBE_OAUTH_TOKEN_URL` | Test-only overrides; leave unset |
 
 ## First run checklist

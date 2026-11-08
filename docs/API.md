@@ -537,6 +537,35 @@ connection, or `FACEBOOK_PAGE_ID`/`FACEBOOK_PAGE_ACCESS_TOKEN` missing), `404` w
 `GET /projects/{projectId}` lists `publications` with `status` (`QUEUED`, `UPLOADING`, `COMPLETED`, `FAILED`),
 `externalId` (YouTube video id or Facebook video id) and a readable `error` on failure. See `docs/FACEBOOK_SETUP.md`.
 
+**YouTube options** (optional `youtube` object, platform `YOUTUBE` only, `400` otherwise; schema
+`youtubePublishOptionsSchema` in `src/domain/youtube-publish.ts`):
+
+```json
+{ "platform": "YOUTUBE", "privacy": "PRIVATE",
+  "youtube": { "title": "Messu {{pyhapaiva}}", "description": "...", "tags": ["messu"], "categoryId": "29",
+               "language": "fi", "playlistId": "PL...", "publishAt": "2026-11-15T10:00:00+02:00",
+               "madeForKids": false, "notifySubscribers": true } }
+```
+
+Empty fields use the defaults: the project title, a description from the preacher and Gospel reference, category
+`YOUTUBE_CATEGORY_ID` (default `29`), not made for kids. `{{name}}` project variables are filled in; `<` and `>` are
+removed and title (100 characters), description (5000 bytes) and tags (500 characters) are cut to YouTube's limits.
+`publishAt` schedules the release: it must be in the future and needs `privacy: "PRIVATE"` (`400` otherwise); YouTube
+makes the video public then. `playlistId` adds the video to that playlist after the upload. Publications also carry
+`progress` (0..100 while uploading), `options` and `warning` (thumbnail, caption track or playlist problems after the
+video was published; they never fail the publication).
+
+#### List the channel's playlists
+
+```
+GET /integrations/youtube/playlists
+
+Response: { "playlists": [{ "id": "PL...", "title": "Jumalanpalvelukset", "privacyStatus": "public", "itemCount": 12 }] }
+```
+
+`409` when no account is connected, `403` when the stored grant lacks `youtube.force-ssl` (reconnect), `502` for
+other YouTube errors. `GET /integrations/youtube/status` returns `playlists: false` for such an old grant.
+
 #### Create YouTube Publication (legacy description)
 
 ```

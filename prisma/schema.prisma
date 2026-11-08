@@ -200,6 +200,16 @@ model Publication {
   status PublicationStatus @default(QUEUED)
   privacy PrivacyState @default(PRIVATE)
   error String?
+  /// Per-publication settings (YouTube: title, description, tags, playlistId, publishAt, ...; see src/domain/youtube-publish.ts).
+  options Json?
+  /// Soft problems after the video was published (thumbnail, captions, playlist), shown beside the publication.
+  warning String?
+  /// Upload progress 0..100 while UPLOADING.
+  progress Int?
+  /// Resumable upload session (YouTube): lets a restarted worker continue instead of uploading the video twice. Never returned by the API.
+  uploadUrl String?
+  heartbeatAt DateTime?
+  workerId String?
   createdAt DateTime @default(now())
   completedAt DateTime?
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

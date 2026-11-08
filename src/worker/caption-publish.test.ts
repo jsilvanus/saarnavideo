@@ -24,12 +24,12 @@ describe("uploadCaptionsAfterVideo", () => {
   });
   it("fails soft when the API call throws", async () => {
     const d = deps({ upload: vi.fn(async () => { throw new Error("403 insufficientPermissions"); }) });
-    await expect(uploadCaptionsAfterVideo({ videoId: "v", videoOutput: { jobId: "j" } }, d)).resolves.toEqual({ uploaded: false });
+    await expect(uploadCaptionsAfterVideo({ videoId: "v", videoOutput: { jobId: "j" } }, d)).resolves.toMatchObject({ uploaded: false });
     expect(d.log).toHaveBeenCalledWith("j", "WARN", expect.stringContaining("failed"), expect.objectContaining({ error: "403 insufficientPermissions" }));
   });
   it("fails soft even when token lookup or logging throws", async () => {
     const d = deps({ getAccessToken: async () => { throw new Error("no token"); }, log: vi.fn(async () => { throw new Error("db down"); }) });
-    await expect(uploadCaptionsAfterVideo({ videoId: "v", videoOutput: { jobId: "j" } }, d)).resolves.toEqual({ uploaded: false });
+    await expect(uploadCaptionsAfterVideo({ videoId: "v", videoOutput: { jobId: "j" } }, d)).resolves.toMatchObject({ uploaded: false });
   });
   it("names tracks in their own language", () => expect(captionTrackName("sv")).toBe("svenska"));
 });

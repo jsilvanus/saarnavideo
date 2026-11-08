@@ -144,7 +144,54 @@ describe("YouTube publishing (fake Google endpoints)", () => {
     expect(done.externalId).toBe(fake.videos[0].id);
     expect(fake.thumbnails).toHaveLength(0);
     expect(fake.captions).toHaveLength(0);
+    expect(done.warning).toMatch(/thumbnail upload failed \(403\)/);
+    expect(done.warning).toMatch(/caption upload initialization failed \(403\)/);
     // A retry would upload the video a second time, so the failed side uploads must not have been retried.
     expect(fake.requests.filter((request) => request === "POST /upload/youtube/v3/videos")).toHaveLength(1);
+  });
+
+  it("publishes with the chosen title, description, tags, schedule and playlist", async () => {
+    await connect();
+    const playlists = await api<{ playlists: Array<{ id: string; title: string }> }>("/api/integrations/youtube/playlists");
+    expect(playlists.playlists.map((item) => item.title)).toEqual(["Jumalanpalvelukset", "Saarnat"]);
+    const { project } = await renderPublishableProject("YouTube tiedot");
+    const publishAt = new Date(Date.now() + 86_400_000).toISOString();
+    // A scheduled release must be uploaded private.
+    await publish(project.id, { platform: "YOUTUBE", privacy: "PUBLIC", youtube: { publishAt } }, 400);
+    await publish(project.id, { platform: "YOUTUBE", privacy: "PRIVATE", youtube: { publishAt: "2020-01-01T00:00:00Z" } }, 400);
+    await publish(project.id, { platform: "FACEBOOK", youtube: { title: "x" } }, 400);
+    const queued = await publish(project.id, { platform: "YOUTUBE", privacy: "PRIVATE", youtube: { title: "Sunnuntain messu", description: "Kuvaus <b>tässä</b>", tags: ["messu", "Riihimäki"], playlistId: playlists.playlists[1].id, publishAt, language: "fi", notifySubscribers: false } });
+    expect(JSON.stringify(queued)).not.toContain("uploadUrl");
+    const done = await waitForPublication(project.id, queued.id);
+    expect(done).toMatchObject({ status: "COMPLETED", error: null, warning: null, progress: 100 });
+    const fake = await fakeYouTubeState(fakeUrl);
+    expect(fake.videos).toEqual([expect.objectContaining({ id: done.externalId, title: "Sunnuntain messu", description: "Kuvaus btässä/b", tags: ["messu", "Riihimäki"], privacyStatus: "private", publishAt: new Date(publishAt).toISOString(), defaultLanguage: "fi", madeForKids: false, notifySubscribers: false })]);
+    expect(fake.playlistItems).toEqual([{ playlistId: "PLfakeSermons", videoId: done.externalId }]);
+  });
+
+  it("survives refused chunks and a lost final answer without uploading twice", async () => {
+    await connect();
+    const { project, video } = await renderPublishableProject("YouTube katkos");
+    await fakeYouTubeConfigure(fakeUrl, { failChunks: 2, loseChunkAnswers: 1 });
+    const done = await waitForPublication(project.id, (await publish(project.id, { platform: "YOUTUBE" })).id);
+    expect(done).toMatchObject({ status: "COMPLETED", error: null });
+    const fake = await fakeYouTubeState(fakeUrl);
+    expect(fake.videos).toHaveLength(1);
+    expect(fake.requests.filter((request) => request === "POST /upload/youtube/v3/videos")).toHaveLength(1);
+    const file = `${mediaRoot}/youtube-chunks-${video.id}.mp4`;
+    await download(video.id, file);
+    expect(fake.videos[0].sha256).toBe(createHash("sha256").update(await readFile(file)).digest("hex"));
+  });
+
+  it("refreshes a revoked access token and reports a missing playlist as a warning", async () => {
+    await connect();
+    const { project } = await renderPublishableProject("YouTube soittolista puuttuu");
+    await fakeYouTubeConfigure(fakeUrl, { revokeAccessToken: true });
+    const done = await waitForPublication(project.id, (await publish(project.id, { platform: "YOUTUBE", youtube: { playlistId: "PLgone" } })).id);
+    expect(done).toMatchObject({ status: "COMPLETED", error: null });
+    expect(done.warning).toMatch(/playlistNotFound/);
+    const fake = await fakeYouTubeState(fakeUrl);
+    expect(fake.videos).toHaveLength(1);
+    expect(fake.tokenRequests.map((request) => request.grant)).toContain("refresh_token");
   });
 });
