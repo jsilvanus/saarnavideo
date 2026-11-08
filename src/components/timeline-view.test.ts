@@ -53,6 +53,21 @@ describe("timeline view blocks", () => {
   it("lets the length of a standalone slate be edited, not its start", () => {
     const items = [{ type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 20 }, { type: "slate", mode: "standalone", durationSeconds: 5, transitionIn: { type: "crossfade", durationSeconds: 1 }, data: {} }] as unknown as TimelineItem[];
     const { blocks } = buildBlocks(items, [], [], [{ id: "a" }], []);
-    expect(blocks.find((b) => b.itemIndex === 1)).toMatchObject({ lane: "video", editable: true, lengthOnly: true, crossfade: 1, start: 19, end: 24 });
+    expect(blocks.find((b) => b.itemIndex === 1)).toMatchObject({ lane: "video", editable: true, lengthOnly: true, transition: { type: "crossfade", durationSeconds: 1 }, start: 19, end: 24 });
+  });
+
+  it("offers the transition into every clip but the first, pointing at the item's place among all items", () => {
+    const items = [
+      { type: "source-clip", sourceId: "a", startSeconds: 0, endSeconds: 20 },
+      { type: "overlay", template: "rich", startSeconds: 1, endSeconds: 3, data: {} },
+      { type: "source-clip", sourceId: "a", startSeconds: 30, endSeconds: 40 },
+      { type: "slate", mode: "standalone", durationSeconds: 4, data: {} },
+    ] as unknown as TimelineItem[];
+    const { blocks } = buildBlocks(items, [], [], [{ id: "a" }], []);
+    const video = blocks.filter((b) => b.lane === "video");
+    expect(video[0].editable).toBeFalsy();
+    expect(video[0].transition).toBeUndefined();
+    expect(video[1]).toMatchObject({ itemIndex: 2, editable: true, transitionOnly: true, transition: { type: "cut", durationSeconds: 0 } });
+    expect(video[2]).toMatchObject({ itemIndex: 3, lengthOnly: true, transition: { type: "cut", durationSeconds: 0 } });
   });
 });
