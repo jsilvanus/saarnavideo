@@ -99,7 +99,19 @@ export const feedOverlaySchema = z.object({
   opacity: z.number().min(0).max(1).default(1),
 }).refine(...endAfterStart);
 
-export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema, overlaySchema, slateSchema, audioClipSchema, feedOverlaySchema]);
+/**
+ * A different burned-caption style for a stretch of the finished video. `styleGraphicId` is a project graphic with a
+ * caption layer; cues that start inside [startSeconds, endSeconds) (output-timeline seconds) are drawn with it, the rest
+ * with the style chosen at render time (or the built-in default). Where spans overlap the later item wins. Takes no time.
+ */
+export const captionStyleSpanSchema = z.object({
+  type: z.literal("caption-style"),
+  styleGraphicId: z.string().min(1),
+  startSeconds: z.number().nonnegative(),
+  endSeconds: z.number().positive(),
+}).refine(...endAfterStart);
+
+export const timelineItemSchema = z.discriminatedUnion("type", [sourceClipSchema, overlaySchema, slateSchema, audioClipSchema, feedOverlaySchema, captionStyleSpanSchema]);
 
 export const semanticSegmentSchema = z.object({
   id: z.string().min(1),
@@ -240,6 +252,7 @@ export function validateCompositionSources(definition: ProjectDefinition, source
   const missingSourceIds = definition.composition.items.filter((item): item is Extract<TimelineItem, { type: "source-clip" | "feed-overlay" }> => item.type === "source-clip" || item.type === "feed-overlay").map((item) => item.sourceId).filter((sourceId) => !sourceIdSet.has(sourceId));
   if (missingSourceIds.length > 0) throw new Error(`Composition references missing sources: ${Array.from(new Set(missingSourceIds)).join(", ")}`);
   const graphicIds = new Set(definition.graphics.map((graphic) => graphic.id));
-  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem | AudioClipItem => item.type !== "source-clip" && item.type !== "feed-overlay" && !!item.graphicId).map((item) => item.graphicId!).filter((id) => !graphicIds.has(id));
+  const missingGraphics = definition.composition.items.filter((item): item is GraphicCarrierItem | AudioClipItem => item.type !== "source-clip" && item.type !== "feed-overlay" && item.type !== "caption-style" && !!item.graphicId).map((item) => item.graphicId!)
+    .concat(definition.composition.items.flatMap((item) => (item.type === "caption-style" ? [item.styleGraphicId] : []))).filter((id) => !graphicIds.has(id));
   if (missingGraphics.length > 0) throw new Error(`Composition references missing graphics: ${Array.from(new Set(missingGraphics)).join(", ")}`);
 }

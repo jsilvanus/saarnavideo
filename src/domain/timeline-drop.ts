@@ -1,4 +1,5 @@
 import type { Graphic } from "@/domain/graphics";
+import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import type { Section } from "@/domain/sections";
 import type { TimelineItem } from "@/domain/project";
 import { layoutTimeline } from "@/domain/timeline";
@@ -7,10 +8,12 @@ import { overlayStoredRange } from "@/renderer/overlay-timing";
 /** What the resource bin drags: a graphic or a library audio asset. */
 /** `black` is the black screen: a slate without a graphic (the template background colour), `id` is ignored. */
 export type DropPayload = { kind: "graphic" | "audio" | "black"; id: string };
-export type DropLane = "video" | "graphics" | "audio";
+export type DropLane = "video" | "graphics" | "audio" | "captions";
 
 /** Default length of a graphic dropped on the graphics lane, and of its slate on the video lane (seconds). */
 export const DROPPED_GRAPHIC_SECONDS = 5;
+/** Default length of a caption style span dropped on the captions lane (seconds), cut at the end of the video. */
+export const DROPPED_CAPTION_SPAN_SECONDS = 60;
 
 type DropContext = {
   payload: DropPayload;
@@ -32,7 +35,8 @@ const ms = (seconds: number) => Math.round(seconds * 1000) / 1000;
  * - a graphic on the **graphics** lane becomes an overlay starting at the pointer: anchored to the section of the clip
  *   under it (stored in that section's source seconds, so it follows reordering), else in plain output seconds;
  * - audio on the **audio** lane becomes a voiceover mixed in from the pointer (source audio ducked to 25 %);
- * - audio on the **video** lane becomes a standalone voiceover section, placed like a slate.
+ * - audio on the **video** lane becomes a standalone voiceover section, placed like a slate;
+ * - a caption style graphic on the **captions** lane becomes a caption style span from the pointer (output seconds).
  */
 export function dropOnTimeline(items: TimelineItem[], { payload, lane, time, graphics, sections, audioAssets }: DropContext): TimelineItem[] | undefined {
   const slots = layoutTimeline(items);
@@ -45,7 +49,13 @@ export function dropOnTimeline(items: TimelineItem[], { payload, lane, time, gra
   }
 
   if (payload.kind === "graphic") {
-    if (!graphics.some(graphic => graphic.id === payload.id)) return undefined;
+    const graphic = graphics.find(candidate => candidate.id === payload.id);
+    if (!graphic) return undefined;
+    if (lane === "captions") {
+      if (!isCaptionStyleGraphic(graphic) || total <= 0) return undefined;
+      const start = ms(Math.min(at, Math.max(0, total - 0.5)));
+      return [...items, { type: "caption-style", styleGraphicId: graphic.id, startSeconds: start, endSeconds: ms(Math.min(total, start + DROPPED_CAPTION_SPAN_SECONDS)) } as TimelineItem];
+    }
     if (lane === "video") return insertBase(items, at, { type: "slate", graphicId: payload.id, template: "rich", mode: "standalone", durationSeconds: DROPPED_GRAPHIC_SECONDS } as unknown as TimelineItem);
     if (lane !== "graphics") return undefined;
     if (total <= 0) return undefined;
@@ -84,5 +94,6 @@ function insertBase(items: TimelineItem[], time: number, item: TimelineItem): Ti
 /** Whether a resource can be dropped on a lane at all (used to show the drop marker only where it means something). */
 export function laneAccepts(kind: DropPayload["kind"], lane: DropLane): boolean {
   if (kind === "black") return lane === "video";
+  if (lane === "captions") return kind === "graphic";
   return kind === "graphic" ? lane !== "audio" : lane !== "graphics";
 }

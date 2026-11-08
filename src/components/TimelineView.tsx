@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Graphic } from "@/domain/graphics";
 import type { Section } from "@/domain/sections";
-import type { TimelineItem } from "@/domain/project";
+import { isBaseItem, type TimelineItem, type Transition } from "@/domain/project";
 import { useT } from "@/i18n/I18nProvider";
 import { makeT, type TFunction, type MessageKey } from "@/i18n/translate";
 import { layoutTimeline } from "@/domain/timeline";
@@ -13,6 +13,7 @@ import { dropOnTimeline, laneAccepts, type DropLane, type DropPayload } from "@/
 import { RESOURCE_TYPE_PREFIX } from "./ResourceBin";
 import PodcastSlots, { type PodcastSlot } from "./PodcastSlots";
 import { formatTime, sourceLabel } from "./format";
+import { isCaptionStyleGraphic } from "@/domain/caption-style";
 import styles from "./TimelineView.module.css";
 
 type Source = { id: string; originalName?: string | null; youtubeUrl?: string | null };
@@ -24,7 +25,7 @@ type Props = {
   sources: Source[];
   audioAssets?: AudioAsset[];
   /** Writes new start/end seconds onto the timeline item at `index` (source seconds for a section overlay, output seconds otherwise). Without it the view is read-only. */
-  onChange?: (index: number, patch: { startSeconds?: number; endSeconds?: number; durationSeconds?: number; transitionIn?: { type: "crossfade" | "cut"; durationSeconds: number } }) => void;
+  onChange?: (index: number, patch: { startSeconds?: number; endSeconds?: number; durationSeconds?: number; transitionIn?: Transition }) => void;
   /** Receives the composition items after a resource from the resource bin was dropped on a lane. Without it the lanes accept no drops. */
   onItemsChange?: (items: TimelineItem[]) => void;
   /** The podcast intro and outro (library audio asset ids). With `onPodcastSlot` they show as two slots at the ends of the audio lane. */
@@ -34,22 +35,25 @@ type Props = {
   onSections?: (sections: Section[]) => void;
 };
 type Orientation = "horizontal" | "vertical";
-type Lane = "video" | "graphics" | "audio" | "sequences";
+type Lane = "video" | "graphics" | "audio" | "captions" | "sequences";
 type Block = {
-  key: string; lane: Lane; start: number; end: number; label: string; detail: string; tone: "clip" | "slate" | "graphic" | "audio" | "voice-picture" | "sequence";
+  key: string; lane: Lane; start: number; end: number; label: string; detail: string; tone: "clip" | "slate" | "graphic" | "audio" | "voice-picture" | "sequence" | "caption";
   /** An overlay or overlay slate: its start and end can be edited. `itemIndex` is its place in the composition items. */
   itemIndex?: number;
   /** A sequence: the id of its COMPOSITION section. */
   sectionId?: string;
   editable?: boolean;
-  /** A standalone slate: only its length (and the crossfade into it) can be edited, not where it starts. `crossfade` is the current crossfade into it in seconds. */
+  /** A standalone slate: only its length (and the transition into it) can be edited, not where it starts. */
   lengthOnly?: boolean;
-  crossfade?: number;
+  /** A source clip: only the transition into it can be edited (cut, fade or crossfade), not its times. */
+  transitionOnly?: boolean;
+  /** The transition into a base item (slate or clip); undefined for the first item, which has nothing to transition from. */
+  transition?: Transition;
   /** Output seconds the block must stay inside (its clip, or the whole picture timeline). */
   bounds?: TimeRange;
 };
 
-const LANES: Array<{ id: Lane; labelKey: MessageKey }> = [{ id: "video", labelKey: "tl.lane.video" }, { id: "graphics", labelKey: "tl.lane.graphics" }, { id: "audio", labelKey: "tl.lane.audio" }, { id: "sequences", labelKey: "tl.lane.sequences" }];
+const LANES: Array<{ id: Lane; labelKey: MessageKey }> = [{ id: "video", labelKey: "tl.lane.video" }, { id: "graphics", labelKey: "tl.lane.graphics" }, { id: "audio", labelKey: "tl.lane.audio" }, { id: "captions", labelKey: "tl.lane.captions" }, { id: "sequences", labelKey: "tl.lane.sequences" }];
 const STORAGE_KEY = "saarnavideo.timelineOrientation";
 /** Narrower than this the timeline opens vertical (lanes as columns), wider it opens horizontal. */
 const DESKTOP_QUERY = "(min-width: 760px)";
@@ -120,6 +124,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
       return;
     }
     if (!onChange || block.itemIndex === undefined) return;
+    if (block.transitionOnly) return;
     if (block.lengthOnly) {
       if (Math.abs(range.end - range.start - (block.end - block.start)) > 1e-6) onChange(block.itemIndex, { durationSeconds: Math.max(0.5, snapTime(range.end - range.start)) });
       return;
@@ -134,7 +139,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
   const horizontal = orientation === "horizontal";
   function startDrag(event: ReactPointerEvent<HTMLElement>, block: Block, mode: "start" | "end" | "move") {
     if (!block.editable || !(onChange || onSections)) return;
-    if (block.lengthOnly && mode !== "end") return;
+    if (block.transitionOnly || (block.lengthOnly && mode !== "end")) return;
     const track = event.currentTarget.closest<HTMLElement>("[data-track]");
     if (!track) return;
     event.preventDefault();
@@ -167,7 +172,7 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
   }
 
   function onBlockKey(event: KeyboardEvent<HTMLElement>, block: Block) {
-    if (!block.editable || !(onChange || onSections)) return;
+    if (!block.editable || block.transitionOnly || !(onChange || onSections)) return;
     const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
     const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
     if (!back && !forward) return;
@@ -180,7 +185,14 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
 
   const droppable = Boolean(onItemsChange);
   const hasSequences = blocks.some(b => b.lane === "sequences");
-  const lanes = LANES.filter(l => l.id !== "sequences" || onSections || hasSequences);
+  const captionStyles = graphics.filter(isCaptionStyleGraphic);
+  const hasCaptionSpans = blocks.some(b => b.lane === "captions");
+  const lanes = LANES.filter(l => (l.id !== "sequences" || onSections || hasSequences) && (l.id !== "captions" || hasCaptionSpans || (onItemsChange && captionStyles.length > 0)));
+  const addCaptionSpan = (styleGraphicId: string) => {
+    if (!onItemsChange || !styleGraphicId) return;
+    const next = dropOnTimeline(items as TimelineItem[], { payload: { kind: "graphic", id: styleGraphicId }, lane: "captions", time: 0, graphics, sections, audioAssets });
+    if (next) { onItemsChange(next); setSelectedKey(`caption-${next.length - 1}`); }
+  };
   const addSequence = () => {
     if (!onSections) return;
     const at = Math.min(Math.max(0, total - 10), Math.max(0, ...sections.filter(s => s.scope === "COMPOSITION" && s.endSeconds !== undefined).map(s => s.endSeconds as number)));
@@ -204,11 +216,14 @@ export default function TimelineView({ items, graphics = [], sections = [], sour
       : orientation === "horizontal" ? <Horizontal blocks={blocks} view={view} /> : <Vertical blocks={blocks} view={view} />}
     {onPodcastSlot && <PodcastSlots introAssetId={podcast?.introAssetId} outroAssetId={podcast?.outroAssetId} audioAssets={audioAssets} onChange={onPodcastSlot} />}
     {onSections && <p><button type="button" onClick={addSequence}>{t("tl.sequence.add")}</button></p>}
+    {onItemsChange && captionStyles.length > 0 && total > 0.001 && <p><label>{t("tl.captionSpan.add")} <select value="" onChange={e => addCaptionSpan(e.target.value)}><option value="">…</option>{captionStyles.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label></p>}
     {(onChange || onSections) && blocks.some(b => b.editable) && !editing && <p className="muted">{t("tl.edit.hint")}</p>}
-    {editing && editing.lengthOnly && editing.itemIndex !== undefined && onChange && <label className={styles["time-editor"]}>{t("tl.crossfade")}<input type="number" step="0.1" min="0" value={editing.crossfade ?? 0} onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 0) onChange(editing.itemIndex as number, { transitionIn: n > 0 ? { type: "crossfade", durationSeconds: n } : { type: "cut", durationSeconds: 0 } }); }} /></label>}
-    {editing && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)}
+    {editing && editing.transition && editing.itemIndex !== undefined && onChange && <TransitionEditor key={editing.key} transition={editing.transition} onChange={transitionIn => onChange(editing.itemIndex as number, { transitionIn })} />}
+    {editing && editing.transitionOnly && <p className={styles["time-editor"]}><strong>{editing.label}</strong><button type="button" onClick={() => setSelectedKey(null)}>{t("tl.edit.close")}</button></p>}
+    {editing && !editing.transitionOnly && <GraphicTimes key={`${editing.key}:${editing.start}:${editing.end}`} block={editing} total={total} onCommit={range => commitRange(editing, range)} onClose={() => setSelectedKey(null)}
       onRename={editing.sectionId && onSections ? label => onSections(sections.map(s => s.id === editing.sectionId ? { ...s, label } : s)) : undefined}
-      onRemove={editing.sectionId && onSections ? () => { setSelectedKey(null); onSections(sections.filter(s => s.id !== editing.sectionId && s.parentId !== editing.sectionId)); } : undefined} />}
+      onRemove={editing.sectionId && onSections ? () => { setSelectedKey(null); onSections(sections.filter(s => s.id !== editing.sectionId && s.parentId !== editing.sectionId)); }
+        : editing.lane === "captions" && onItemsChange && editing.itemIndex !== undefined ? () => { setSelectedKey(null); onItemsChange((items as TimelineItem[]).filter((_, i) => i !== editing.itemIndex)); } : undefined} />}
   </div>;
 }
 
@@ -266,7 +281,7 @@ function BlockView({ block, view, style }: { block: Block; view: View; style: Re
   if (!editable) return <div className={classes} style={style} title={title}><strong>{block.label}</strong>{block.detail && <small>{block.detail}</small>}</div>;
   return <div className={classes} style={style} title={title} role="button" tabIndex={0} aria-pressed={view.selectedKey === block.key}
     onPointerDown={event => view.startDrag(event, block, "move")} onClick={event => event.stopPropagation()} onKeyDown={event => view.onBlockKey(event, block)}>
-    {!block.lengthOnly && <span className={`${styles["handle"]} ${styles["handle-start"]}`} role="separator" aria-label={t("tl.edit.handleStart")} onPointerDown={event => view.startDrag(event, block, "start")} />}
+    {!block.lengthOnly && !block.transitionOnly && <span className={`${styles["handle"]} ${styles["handle-start"]}`} role="separator" aria-label={t("tl.edit.handleStart")} onPointerDown={event => view.startDrag(event, block, "start")} />}
     <strong>{block.label}</strong>{block.detail && <small>{block.detail}</small>}
     <span className={`${styles["handle"]} ${styles["handle-end"]}`} role="separator" aria-label={t("tl.edit.handleEnd")} onPointerDown={event => view.startDrag(event, block, "end")} />
   </div>;
@@ -289,8 +304,27 @@ function GraphicTimes({ block, total, onCommit, onClose, onRename, onRemove }: {
     <label>{t("tl.edit.start")}<input type="number" step="0.1" min={bounds.start} max={bounds.end} value={start} onChange={e => setStart(e.target.value)} onBlur={() => apply("start", start)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
     <label>{t("tl.edit.end")}<input type="number" step="0.1" min={bounds.start} max={bounds.end} value={end} onChange={e => setEnd(e.target.value)} onBlur={() => apply("end", end)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
     <span className="muted">{t("tl.edit.within", { start: formatTime(bounds.start), end: formatTime(bounds.end) })}</span>
-    {onRemove && <button type="button" onClick={onRemove}>{t("tl.sequence.remove")}</button>}
+    {onRemove && <button type="button" onClick={onRemove}>{t("tl.edit.remove")}</button>}
     <button type="button" onClick={onClose}>{t("tl.edit.close")}</button>
+  </div>;
+}
+
+const TRANSITION_TYPES: Transition["type"][] = ["cut", "fade", "crossfade"];
+
+/** The transition into a slate or clip: cut, fade (through black) or crossfade, and its length (0.1 s steps). */
+function TransitionEditor({ transition, onChange }: { transition: Transition; onChange: (next: Transition) => void }) {
+  const t = useT();
+  const [seconds, setSeconds] = useState(String(transition.durationSeconds));
+  const commit = (type: Transition["type"], value: string) => {
+    const n = Number(value);
+    const durationSeconds = type === "cut" ? 0 : snapTime(Number.isFinite(n) && n > 0 ? n : 1);
+    if (type !== transition.type || durationSeconds !== transition.durationSeconds) onChange({ type, durationSeconds });
+  };
+  return <div className={styles["time-editor"]}>
+    <label>{t("tl.transition")}<select value={transition.type} onChange={e => { const type = e.target.value as Transition["type"]; const value = type !== "cut" && transition.type === "cut" ? "1" : seconds; setSeconds(value); commit(type, value); }}>
+      {TRANSITION_TYPES.map(type => <option key={type} value={type}>{t(`tl.transition.${type}` as MessageKey)}</option>)}
+    </select></label>
+    {transition.type !== "cut" && <label>{t("tl.transition.seconds")}<input type="number" step="0.1" min="0.1" value={seconds} onChange={e => setSeconds(e.target.value)} onBlur={() => commit(transition.type, seconds)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>}
   </div>;
 }
 
@@ -309,13 +343,16 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
   const sourceName = (id: string) => { const source = sources.find(s => s.id === id); return source ? sourceLabel(source) : t("tl.source"); };
   const blocks: Block[] = [];
   const slots = layoutTimeline(items);
-  slots.forEach(({ item, outputStart, duration }, index) => {
-    const start = outputStart, end = outputStart + duration, key = `base-${index}`;
+  // Slot n is the n-th base item; its place among all items (overlays included) is what onChange needs.
+  const baseIndexes = items.flatMap((item, i) => (isBaseItem(item) ? [i] : []));
+  slots.forEach(({ item, outputStart, duration }, slot) => {
+    const start = outputStart, end = outputStart + duration, key = `base-${slot}`, index = baseIndexes[slot];
+    const transition = slot === 0 ? undefined : item.transitionIn ?? { type: "cut" as const, durationSeconds: 0 };
     if (item.type === "source-clip") {
       const section = sections.find(s => s.scope === "SOURCE" && s.sourceId === item.sourceId && s.startSeconds === item.startSeconds && s.endSeconds === item.endSeconds);
-      blocks.push({ key, lane: "video", start, end, label: section?.label ?? t("tl.clip"), detail: `${sourceName(item.sourceId)} · ${formatTime(duration)}`, tone: "clip" });
+      blocks.push({ key, lane: "video", start, end, label: section?.label ?? t("tl.clip"), detail: `${sourceName(item.sourceId)} · ${formatTime(duration)}`, tone: "clip", ...(transition ? { itemIndex: index, editable: true, transitionOnly: true, transition } : {}) });
     } else if (item.type === "slate") {
-      blocks.push({ key, lane: "video", start, end, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || t(item.mode === "overlay" ? "tl.slate" : "tl.black"), detail: `${formatTime(duration)}`, tone: "slate", itemIndex: index, editable: true, lengthOnly: true, crossfade: item.transitionIn?.type === "crossfade" ? item.transitionIn.durationSeconds : 0, bounds: { start, end: start + 3600 } });
+      blocks.push({ key, lane: "video", start, end, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || t(item.mode === "overlay" ? "tl.slate" : "tl.black"), detail: `${formatTime(duration)}`, tone: "slate", itemIndex: index, editable: true, lengthOnly: true, transition, bounds: { start, end: start + 3600 } });
     } else {
       blocks.push({ key, lane: "video", start, end, label: item.graphicId ? graphicName(item.graphicId) : t("tl.voicePicture"), detail: t("tl.voicePictureDetail"), tone: "voice-picture" });
       blocks.push({ key: `${key}-audio`, lane: "audio", start, end, label: audioName(item.assetId), detail: t("tl.ownSection"), tone: "audio" });
@@ -331,6 +368,8 @@ export function buildBlocks(items: TimelineItem[], graphics: Graphic[], sections
       const clip = item.type === "overlay" ? overlayOutputBounds(item, items, { sections }) : undefined;
       const bounds = clip ? { start: clip.startSeconds, end: clip.endSeconds } : { start: 0, end: Math.max(pictureEnd, range.endSeconds) };
       blocks.push({ key: `graphic-${index}`, lane: "graphics", start: range.startSeconds, end: range.endSeconds, label: item.graphicId ? graphicName(item.graphicId) : item.data?.title || item.data?.text || t("tl.graphic"), detail: item.type === "slate" ? t("tl.overlayBackground") : t("tl.overlay"), tone: "graphic", itemIndex: index, editable: true, bounds });
+    } else if (item.type === "caption-style") {
+      blocks.push({ key: `caption-${index}`, lane: "captions", start: item.startSeconds, end: item.endSeconds, label: graphics.find(g => g.id === item.styleGraphicId)?.name ?? t("tl.captionSpan"), detail: t("tl.captionSpan"), tone: "caption", itemIndex: index, editable: true, bounds: { start: 0, end: Math.max(pictureEnd, item.endSeconds) } });
     } else if (item.type === "feed-overlay") {
       blocks.push({ key: `feed-${index}`, lane: "graphics", start: item.startSeconds, end: item.endSeconds, label: t("tl.feedGraphics"), detail: t("tl.feedGraphicsDetail"), tone: "graphic" });
     } else if (item.type === "audio-clip" && item.mode === "mix") {
