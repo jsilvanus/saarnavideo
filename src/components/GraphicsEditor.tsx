@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { applyVariables, type ProjectVariable } from "@/domain/variables";
 import { KEYFRAMES } from "./graphics-editor/constants";
 import { GraphicsEditorToolbar } from "./graphics-editor/GraphicsEditorToolbar";
@@ -52,7 +52,13 @@ export default function GraphicsEditor({ projectId, graphicId, item, assets, tit
   const layersRef = useRef(layers);
   layersRef.current = layers;
   // A ref always pointing at the latest commit/select functions — used by the keyboard handler which is registered once.
-  const kbRef = useRef({ layers, selectedIds, commit: (n: Layer[]) => n, setSelectedIds, setPrimaryId });
+  const kbRef = useRef<{
+    layers: Layer[];
+    selectedIds: Set<string>;
+    commit: (next: Layer[]) => void;
+    setSelectedIds: Dispatch<SetStateAction<Set<string>>>;
+    setPrimaryId: Dispatch<SetStateAction<string | null>>;
+  }>({ layers, selectedIds, commit: () => {}, setSelectedIds, setPrimaryId });
   kbRef.current = { layers, selectedIds, commit: (next: Layer[]) => { setLayers(next); lastEmitted.current = JSON.stringify(next); onChange({ ...item, template: "rich", data: { ...(item.data ?? {}), layers: JSON.stringify(next) } }); }, setSelectedIds, setPrimaryId };
 
   // The stage is laid out at its real size (output frame + margin, in output pixels) and scaled to fit. Layers are drawn where the renderer puts them (frame-layout.ts); stored coordinates stay design pixels.
