@@ -17,8 +17,8 @@ export const GraphicsEditorToolbar: FC<{
       <button onClick={() => onAdd("image")}>{t("ge.addImage")}</button>
       <button onClick={() => onAdd("caption")} title={t("ge.addCaptionTitle")}>{t("ge.addCaption")}</button>
       <span className="ge-spacer" />
-      <button onClick={onDuplicate}>{t("ge.duplicate")}</button>
-      <button onClick={onDelete}>{t("ge.delete")}</button>
+      <button onClick={onDuplicate} title="Ctrl+D">{t("ge.duplicate")}</button>
+      <button onClick={onDelete} title="Del">{t("ge.delete")}</button>
       {hasVariables && <button className={showValues ? "ge-active" : ""} onClick={onToggleValues} title={t("ge.showValuesTitle")}>{"{{ }}"}</button>}
       <button className={grid ? "ge-active" : ""} onClick={onToggleGrid}>{t("ge.grid")}</button>
       <button className={safe ? "ge-active" : ""} onClick={onToggleSafe}>{t("ge.safeArea")}</button>

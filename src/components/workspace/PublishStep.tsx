@@ -27,12 +27,10 @@ export default function PublishStep() {
     durationNotice,
     captionStyles,
     createCaptionStyle,
-    stopJob,
     generate,
     previewRender,
-    activeJob,
-    previewJob,
     latestPreview,
+    previewJob,
   } = useOpenWorkspace();
   const t = useT();
   return (
@@ -93,24 +91,6 @@ export default function PublishStep() {
                 {t("quick.finalVideo")}
               </button>
             </div>
-            {selected.jobs?.map((j) => (
-              <div key={j.id} className="job-row">
-                <strong>
-                  {j.preview ? t("pub.jobPreviewPrefix") : ""}
-                  {j.type === "PODCAST" ? t("pub.jobPodcastPrefix") : ""}
-                  {jobStatusLabel(t, j.status)}
-                </strong>
-                <span>{j.progress}%</span>
-                {j.errorMessage && <small>{j.errorMessage}</small>}
-                {["QUEUED", "ACQUIRING_SOURCE", "PROCESSING", "RENDERING"].includes(j.status) && (
-                  <button className="stop-button" onClick={() => void stopJob(j)}>
-                    {t("common.stop")}
-                  </button>
-                )}
-              </div>
-            ))}
-            {!selected.jobs?.length && <p className="muted">{t("pub.noJobs")}</p>}
-            {activeJob && <small className="muted">{t("pub.running", { progress: activeJob.progress })}</small>}
           </div>
         </Panel>
         <Panel title={t("pub.preview.title")}>
